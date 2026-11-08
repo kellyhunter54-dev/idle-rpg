@@ -451,7 +451,6 @@ export const SPLIT = {
     actionMult: 0.3, // specials over three times as often
     kit: ['charge', 'charge', 'charge', 'rain'] as BossMove[],
     puddleMult: 1.35,
-    trailEvery: 28, // goo drop spacing while charging (normally 45)
     chargeLen: 900, // charges cross most of the room
     chargeSpeed: 1250,
     globes: false, // the checkerboard globes (off: phase 3 is all about the minis)
@@ -480,7 +479,9 @@ export const SPLIT = {
   /** Slime goo: landing puddles and trails. Standing in it or bumping a split-off roots you. */
   gooLife: 7,
   gooPuddle: 62,
-  gooDrop: 24,
+  gooDrop: 26,
+  /** Spacing between trail drops: leaves a gap you can slip through between puddles. */
+  trailEvery: 85,
   rootGoo: 1.0,
   rootBump: 1.4,
   rootImmune: 0, // no grace: goo under you roots you again the moment a root ends

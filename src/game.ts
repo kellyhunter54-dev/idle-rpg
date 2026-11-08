@@ -1893,7 +1893,7 @@ export class Game {
   /** Drops goo drops behind a moving split slime (every ~50 units). */
   private trailGoo(m: Mob, moved: number, airborne = false) {
     m.gooDist += moved;
-    if (m.gooDist < (airborne ? 70 : m.phase === 2 ? SPLIT.wild.trailEvery : 45)) return;
+    if (m.gooDist < SPLIT.trailEvery) return;
     m.gooDist = 0;
     // no unmarked goo on top of you: mid-air drops skip the spot you're standing on
     if (airborne && dist(m, this.player) < 70) return;
