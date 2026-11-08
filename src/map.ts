@@ -5,7 +5,7 @@ export const TILE = 64;
 /** Width of each zone in tiles. */
 export const ZONE_TILES = 40;
 
-export const Tile = { Floor: 0, Rock: 1, Tree: 2, Gate: 3, Altar: 4 } as const;
+export const Tile = { Floor: 0, Rock: 1, Tree: 2, Gate: 3, Altar: 4, Pillar: 5 } as const;
 
 export const PHYS = {
   playerSpeed: 230,
@@ -37,6 +37,11 @@ export interface GameMap {
   entrances: Vec2[]; // per zone, world units (where you arrive / respawn)
   altars: Vec2[]; // per zone boss altar centre, world units
   zoneFloor: number[][]; // per zone: indexes of floor tiles where mobs may spawn
+  kind: 'world' | 'lair';
+  /** Lairs: which CHAPTERS palette to use. */
+  palette?: number;
+  /** Lairs: the exit portal back to the world. */
+  exit?: Vec2;
 }
 
 function mulberry32(seed: number) {
@@ -154,7 +159,43 @@ export function generateWorld(zones: number): GameMap {
     }
   }
 
-  return { w, h, tiles, variant, zoneW, zones, entrances, altars, zoneFloor };
+  return { w, h, tiles, variant, zoneW, zones, entrances, altars, zoneFloor, kind: 'world' };
+}
+
+/**
+ * A boss lair: a round chamber with a ring of brazier pillars, a summoning circle in the
+ * middle (altars[0]) and an exit portal near the bottom of the screen.
+ */
+export function generateLair(chapter: number): GameMap {
+  const w = 24;
+  const h = 24;
+  const c = 11.5;
+  const radius = 10;
+  const tiles = new Uint8Array(w * h).fill(Tile.Rock);
+  const rand = mulberry32(777 + chapter);
+  const variant = new Uint8Array(w * h);
+  for (let i = 0; i < variant.length; i++) variant[i] = Math.floor(rand() * 4);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const d = Math.hypot(x + 0.5 - (c + 0.5), y + 0.5 - (c + 0.5));
+      if (d <= radius) tiles[y * w + x] = d <= 2.3 ? Tile.Altar : Tile.Floor;
+    }
+  // brazier pillars
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2 + Math.PI / 6;
+    const px = Math.round(c + Math.cos(a) * 6.5);
+    const py = Math.round(c + Math.sin(a) * 6.5);
+    tiles[py * w + px] = Tile.Pillar;
+  }
+  const centre = { x: (c + 0.5) * TILE, y: (c + 0.5) * TILE };
+  // entrance toward the bottom of the screen (+x +y in world space)
+  const dir = Math.SQRT1_2;
+  const entrance = { x: centre.x + dir * 7.2 * TILE, y: centre.y + dir * 7.2 * TILE };
+  const exit = { x: centre.x + dir * 8.6 * TILE, y: centre.y + dir * 8.6 * TILE };
+  return {
+    w, h, tiles, variant, zoneW: w, zones: 1, entrances: [entrance], altars: [centre], zoneFloor: [[]],
+    kind: 'lair', palette: chapter, exit,
+  };
 }
 
 export function zoneAtX(m: GameMap, x: number): number {

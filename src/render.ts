@@ -72,7 +72,9 @@ export class Renderer {
   draw(g: Game, time: number) {
     const { ctx, w, h } = this;
     if (w === 0 || h === 0) return;
-    const chOf = (tx: number) => CHAPTERS[ZONES[Math.min(ZONES.length - 1, Math.floor(tx / g.map.zoneW))].chapter];
+    const lair = g.map.kind === 'lair';
+    const chOf = (tx: number) =>
+      CHAPTERS[g.map.palette ?? ZONES[Math.min(ZONES.length - 1, Math.floor(tx / g.map.zoneW))].chapter];
     const p = g.player;
 
     // zoom: about 11-14 tiles across, never too tiny on phones
@@ -107,7 +109,11 @@ export class Renderer {
         const i = ty * g.map.w + tx;
         const v = g.map.variant[i];
         const tc = chOf(tx);
-        ctx.fillStyle = (tx + ty) % 2 === 0 ? tc.floor[0] : tc.floor[1];
+        if (lair) {
+          // lairs: dark flagstones
+          if (g.map.tiles[i] === Tile.Rock) continue;
+          ctx.fillStyle = shade((tx + ty) % 2 === 0 ? tc.floor[0] : tc.floor[1], -0.55);
+        } else ctx.fillStyle = (tx + ty) % 2 === 0 ? tc.floor[0] : tc.floor[1];
         ctx.fillRect(tx * TILE, ty * TILE, TILE + 0.5, TILE + 0.5);
         if (v === 0) {
           // little tufts / pebbles for texture
@@ -158,6 +164,7 @@ export class Renderer {
       for (let tx = minTx; tx <= maxTx; tx++) {
         const tile = g.map.tiles[ty * g.map.w + tx];
         if (tile === Tile.Floor || tile === Tile.Altar) continue;
+        if (lair && tile === Tile.Rock && !this.touchesFloor(g, tx, ty)) continue;
         const cx = (tx + 0.5) * TILE;
         const cy = (ty + 0.5) * TILE;
         // fade obstacles that stand in front of the hero
@@ -169,11 +176,17 @@ export class Renderer {
           draw: () => {
             const tc = chOf(tx);
             if (tile === Tile.Gate) this.drawGate(cx, cy, time);
+            else if (tile === Tile.Pillar) this.drawBrazier(cx, cy, tc.rock, time);
             else if (tile === Tile.Tree) this.drawTree(cx, cy, tc.tree, front, g.map.variant[ty * g.map.w + tx]);
             else this.drawRock(cx, cy, tc.rock, front);
           },
         });
       }
+    }
+    if (!lair) g.map.altars.forEach((a, z) => list.push({ depth: a.x + a.y + 40, draw: () => this.drawLairDoor(g, a, z, time) }));
+    if (lair && g.map.exit) {
+      const ex = g.map.exit;
+      list.push({ depth: ex.x + ex.y + 60, draw: () => this.drawExitPortal(ex, time) });
     }
     for (const m of g.mobs) list.push({ depth: m.x + m.y, draw: () => this.drawMob(m, time, g.state.level) });
     for (const c of g.party) list.push({ depth: c.x + c.y, draw: () => this.drawCompanion(g, c, time) });
@@ -199,7 +212,7 @@ export class Renderer {
     // ---- mood: vignette + skill flash ----
     const vg = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.35, w / 2, h / 2, Math.max(w, h) * 0.75);
     vg.addColorStop(0, 'rgba(0,0,0,0)');
-    vg.addColorStop(1, 'rgba(0,0,0,0.6)');
+    vg.addColorStop(1, lair ? 'rgba(0,0,0,0.85)' : 'rgba(0,0,0,0.6)');
     ctx.fillStyle = vg;
     ctx.fillRect(0, 0, w, h);
     if (g.anim.flash > 0) {
@@ -523,14 +536,24 @@ export class Renderer {
     }
   }
 
-  /** Boss altars: grey when sealed, pulsing red when ready, dim when the boss is resting. */
+  /** Ground under lair doors (world) or the summoning circle (inside a lair). */
   private drawAltars(g: Game, time: number) {
     const ctx = this.ctx;
-    g.map.altars.forEach((a, z) => {
+    const lair = g.map.kind === 'lair';
+    g.map.altars.forEach((a, idx) => {
+      const z = lair ? g.inLair : idx;
       const st = g.bossStatus(z);
       const color = st === 'locked' ? '#6b6b6b' : st === 'cooldown' ? '#8a6d2b' : '#c1121f';
       const pulse = st === 'ready' || st === 'fighting' ? 0.5 + 0.5 * Math.sin(time * 3) : 0.3;
-      ctx.fillStyle = 'rgba(20,16,12,0.65)';
+      if (!lair) {
+        // trodden dark earth in front of the door
+        ctx.fillStyle = 'rgba(15,12,9,0.6)';
+        ctx.beginPath();
+        ctx.arc(a.x, a.y, 120, 0, Math.PI * 2);
+        ctx.fill();
+        return;
+      }
+      ctx.fillStyle = 'rgba(30,8,8,0.55)';
       ctx.beginPath();
       ctx.arc(a.x, a.y, 150, 0, Math.PI * 2);
       ctx.fill();
@@ -544,16 +567,159 @@ export class Renderer {
       ctx.beginPath();
       ctx.arc(a.x, a.y, 95, 0, Math.PI * 2);
       ctx.stroke();
-      // rune spokes
-      for (let i = 0; i < 8; i++) {
-        const ang = (i / 8) * Math.PI * 2 + time * 0.15;
+      // pentagram-ish star and rune spokes
+      ctx.beginPath();
+      for (let k = 0; k <= 5; k++) {
+        const ang = (k * 4 * Math.PI) / 5 - Math.PI / 2 + time * 0.1;
+        const fn = k === 0 ? 'moveTo' : 'lineTo';
+        ctx[fn](a.x + Math.cos(ang) * 92, a.y + Math.sin(ang) * 92);
+      }
+      ctx.stroke();
+      for (let k = 0; k < 12; k++) {
+        const ang = (k / 12) * Math.PI * 2 - time * 0.15;
         ctx.beginPath();
-        ctx.moveTo(a.x + Math.cos(ang) * 100, a.y + Math.sin(ang) * 100);
-        ctx.lineTo(a.x + Math.cos(ang) * 135, a.y + Math.sin(ang) * 135);
+        ctx.moveTo(a.x + Math.cos(ang) * 104, a.y + Math.sin(ang) * 104);
+        ctx.lineTo(a.x + Math.cos(ang) * 132, a.y + Math.sin(ang) * 132);
         ctx.stroke();
       }
       ctx.globalAlpha = 1;
     });
+    if (lair && g.map.exit) {
+      const e = g.map.exit;
+      ctx.fillStyle = 'rgba(90,150,255,0.18)';
+      ctx.beginPath();
+      ctx.arc(e.x, e.y, 46 + 4 * Math.sin(time * 3), 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  private touchesFloor(g: Game, tx: number, ty: number): boolean {
+    for (let dy = -1; dy <= 1; dy++)
+      for (let dx = -1; dx <= 1; dx++) {
+        const x = tx + dx;
+        const y = ty + dy;
+        if (x < 0 || y < 0 || x >= g.map.w || y >= g.map.h) continue;
+        const t = g.map.tiles[y * g.map.w + x];
+        if (t === Tile.Floor || t === Tile.Altar) return true;
+      }
+    return false;
+  }
+
+  /** World: stone archway with a swirling portal leading into a boss lair. */
+  private drawLairDoor(g: Game, a: { x: number; y: number }, z: number, time: number) {
+    const ctx = this.ctx;
+    const k = this.k;
+    const sx = this.px(a.x, a.y);
+    const sy = this.py(a.x, a.y);
+    if (sx < -200 || sx > this.w + 200 || sy < -250 || sy > this.h + 150) return;
+    const st = g.bossStatus(z);
+    const w = 120 * k;
+    const h = 150 * k;
+    // pillars + lintel
+    ctx.fillStyle = '#4a4238';
+    ctx.fillRect(sx - w / 2 - 16 * k, sy - h, 22 * k, h);
+    ctx.fillRect(sx + w / 2 - 6 * k, sy - h, 22 * k, h);
+    ctx.fillStyle = '#5b5246';
+    ctx.beginPath();
+    ctx.moveTo(sx - w / 2 - 24 * k, sy - h);
+    ctx.quadraticCurveTo(sx, sy - h - 60 * k, sx + w / 2 + 24 * k, sy - h);
+    ctx.lineTo(sx + w / 2 + 24 * k, sy - h + 18 * k);
+    ctx.quadraticCurveTo(sx, sy - h - 40 * k, sx - w / 2 - 24 * k, sy - h + 18 * k);
+    ctx.closePath();
+    ctx.fill();
+    // portal
+    const inner = st === 'locked' ? '#2a2a2a' : st === 'cooldown' ? '#3d2e12' : '#3a0a0a';
+    const glow = st === 'locked' ? '#555' : st === 'cooldown' ? '#b08d1e' : '#e01e37';
+    const grad = ctx.createRadialGradient(sx, sy - h * 0.5, 4, sx, sy - h * 0.5, w * 0.6);
+    grad.addColorStop(0, glow);
+    grad.addColorStop(0.5, inner);
+    grad.addColorStop(1, '#050303');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.moveTo(sx - w / 2 + 6 * k, sy);
+    ctx.lineTo(sx - w / 2 + 6 * k, sy - h + 10 * k);
+    ctx.quadraticCurveTo(sx, sy - h - 34 * k, sx + w / 2 - 6 * k, sy - h + 10 * k);
+    ctx.lineTo(sx + w / 2 - 6 * k, sy);
+    ctx.closePath();
+    ctx.fill();
+    if (st !== 'locked') {
+      ctx.strokeStyle = glow;
+      ctx.globalAlpha = 0.5;
+      ctx.lineWidth = 2;
+      for (let i = 0; i < 3; i++) {
+        ctx.beginPath();
+        ctx.ellipse(sx, sy - h * 0.5, (w * 0.32 - i * 9 * k) * (1 + 0.08 * Math.sin(time * 2 + i)), h * 0.32 - i * 9 * k, time * (0.6 + i * 0.3), 0, Math.PI * 1.4);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+    } else {
+      // chains across a sealed door
+      ctx.strokeStyle = '#8a8a8a';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(sx - w / 2, sy - h * 0.8);
+      ctx.lineTo(sx + w / 2, sy - h * 0.25);
+      ctx.moveTo(sx + w / 2, sy - h * 0.8);
+      ctx.lineTo(sx - w / 2, sy - h * 0.25);
+      ctx.stroke();
+    }
+    // name plate
+    ctx.font = 'bold 12px Georgia, serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.fillStyle = st === 'locked' ? '#9a9a9a' : '#e8d7a9';
+    outlineText(ctx, `${CHAPTERS[ZONES[z].chapter].boss}'s Lair${st === 'locked' ? ' (sealed)' : ''}`, sx, sy - h - 44 * k);
+  }
+
+  /** Lair: shimmering blue portal back to the world. */
+  private drawExitPortal(e: { x: number; y: number }, time: number) {
+    const ctx = this.ctx;
+    const k = this.k;
+    const sx = this.px(e.x, e.y);
+    const sy = this.py(e.x, e.y);
+    const g = ctx.createLinearGradient(0, sy - 110 * k, 0, sy);
+    g.addColorStop(0, 'rgba(90,150,255,0)');
+    g.addColorStop(1, `rgba(90,150,255,${0.45 + 0.15 * Math.sin(time * 3)})`);
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.ellipse(sx, sy - 50 * k, 34 * k, 60 * k, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.font = 'bold 11px Georgia, serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.fillStyle = '#bcd4ff';
+    outlineText(ctx, 'Exit', sx, sy - 115 * k);
+  }
+
+  /** Lair: stone column with a burning brazier on top. */
+  private drawBrazier(x: number, y: number, color: string, time: number) {
+    const ctx = this.ctx;
+    const k = this.k;
+    const sx = this.px(x, y);
+    const sy = this.py(x, y);
+    const hgt = 70 * k;
+    // light pool
+    const lg = ctx.createRadialGradient(sx, sy - hgt, 0, sx, sy - hgt, 160 * k);
+    lg.addColorStop(0, 'rgba(255,150,50,0.22)');
+    lg.addColorStop(1, 'rgba(255,150,50,0)');
+    ctx.fillStyle = lg;
+    ctx.fillRect(sx - 160 * k, sy - hgt - 160 * k, 320 * k, 320 * k);
+    ctx.fillStyle = shade(color, -0.3);
+    ctx.fillRect(sx - 12 * k, sy - hgt, 24 * k, hgt);
+    ctx.fillStyle = shade(color, -0.05);
+    ctx.fillRect(sx - 18 * k, sy - hgt - 8 * k, 36 * k, 10 * k);
+    // flame
+    const f = Math.sin(time * 10 + x) * 3 * k;
+    ctx.fillStyle = '#ff7b00';
+    ctx.beginPath();
+    ctx.moveTo(sx - 12 * k, sy - hgt - 8 * k);
+    ctx.quadraticCurveTo(sx + f, sy - hgt - 46 * k, sx + 12 * k, sy - hgt - 8 * k);
+    ctx.fill();
+    ctx.fillStyle = '#ffd166';
+    ctx.beginPath();
+    ctx.moveTo(sx - 6 * k, sy - hgt - 8 * k);
+    ctx.quadraticCurveTo(sx - f, sy - hgt - 30 * k, sx + 6 * k, sy - hgt - 8 * k);
+    ctx.fill();
   }
 
   private drawGoal(gl: { x: number; y: number }, time: number) {
@@ -589,8 +755,8 @@ export class Renderer {
 
   private minimap(g: Game) {
     const ctx = this.ctx;
-    const mw = Math.min(240, this.w * 0.36);
-    const k = mw / g.map.w;
+    const k = Math.min(Math.min(240, this.w * 0.36) / g.map.w, 100 / g.map.h);
+    const mw = g.map.w * k;
     const mh = g.map.h * k;
     const x0 = this.w - mw - 10;
     const y0 = 42;
@@ -607,8 +773,8 @@ export class Renderer {
       ctx.fillRect(x0 + tx * k, y0 + ((i - tx) / g.map.w) * k, k + 0.3, k + 0.3);
     }
     const toMini = (x: number, y: number): [number, number] => [x0 + (x / TILE) * k, y0 + (y / TILE) * k];
-    g.map.altars.forEach((a, z) => {
-      const st = g.bossStatus(z);
+    g.map.altars.forEach((a, idx) => {
+      const st = g.bossStatus(g.map.kind === 'lair' ? g.inLair : idx);
       ctx.fillStyle = st === 'locked' ? '#777' : st === 'cooldown' ? '#8a6d2b' : '#ff2a4d';
       const [ax, ay] = toMini(a.x, a.y);
       circle(ctx, ax, ay, 4);

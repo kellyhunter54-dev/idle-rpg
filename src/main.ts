@@ -42,6 +42,12 @@ function startGame(slot: number) {
   document.getElementById('autobtn')!.addEventListener('click', toggleAuto);
   const pollInput = setupInput(game.input, canvas, (x, y) => renderer.screenToWorld(x, y), toggleAuto);
 
+  window.addEventListener('keydown', (e) => {
+    const t = e.target as HTMLElement | null;
+    if (t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT')) return;
+    if (e.code === 'KeyE' && !e.repeat && game.inLair >= 0) ui.trySummon();
+  });
+
   const switchCharacter = () => {
     saveGame(game.state);
     location.reload();

@@ -45,7 +45,8 @@ One-time setup: repo **Settings → Pages → Source: GitHub Actions**.
 One connected world split into zones (`ZONES` in `src/data.ts`): Sprout Meadow (Lv 1-10), Whisper Woods (Lv 10-20), Ember Canyon (Lv 20-30). Purple barrier gates between zones stop monsters but not the hero. Monster level rises from a zone's entrance to its far end.
 
 - Monsters above your level deal more damage and take less; monsters far below give almost no EXP (`expLevelMult`, `dealtLevelMult`, `takenLevelMult`).
-- Each zone's boss waits on an altar near the far end. Walk onto it (or use Fight boss) to start. Bosses must be beaten in order and can be repeated after a short rest.
+- Each zone's boss sleeps in a **lair**: an archway near the far east end of the zone leads into a separate chamber. Summon the boss at the circle (E or the Summon button), leave by the Exit portal. Bosses must be beaten in order and can be re-summoned after a short rest.
+- Summoning offerings: `ZONES[z].offering` lists the items needed to summon each boss. They are empty for now; the check (`Game.summonCheck`) and the item bag (`state.items`) are already wired up.
 - AUTO farms the zone you are in, preferring monsters near your level. The World tab can send AUTO to another zone or to a boss.
 
 ## Characters and jobs

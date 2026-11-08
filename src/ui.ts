@@ -1,7 +1,7 @@
 import {
   BALANCE, COMPANION, COMPANIONS, GROWTH, GrowthKey, RARITIES, RARITY, SLOTS, SLOT_INFO, Slot,
   companionHitMult, companionOwnedAtk, enhanceCopies, expToNext, gearEffect, gearName, parseGear,
-  ZONES, expLevelMult, mobForZone, rarityIndex,
+  ZONES, bossName, expLevelMult, mobForZone, rarityIndex,
 } from './data';
 import { fmt, fmtPct, fmtTime } from './format';
 import { Game, OfflineRewards, SummonResult } from './game';
@@ -38,8 +38,10 @@ export class UI {
     $('bossbtn').addEventListener('click', () => {
       const g = this.game;
       if (g.travelGoal) g.cancelTravel();
+      else if (g.inLair >= 0) this.trySummon();
       else g.goToBoss(g.zone);
     });
+    $('leavebtn').addEventListener('click', () => this.game.exitLair());
 
     // Event delegation. pointerdown so panel re-renders never swallow a tap.
     const panel = $('panel');
@@ -70,6 +72,12 @@ export class UI {
     });
 
     this.renderPanel(true);
+  }
+
+  /** Summon the boss in the current lair, showing why not if it can't. */
+  trySummon() {
+    const why = this.game.summonBoss();
+    if (why) this.toast(why, '#ff8c3b');
   }
 
   private handle(action: string, arg: string) {
@@ -166,7 +174,10 @@ export class UI {
     $('gems').textContent = fmt(s.gems);
     $('power').textContent = fmt(g.stats.power);
     const zd = ZONES[g.zone];
-    $('stagename').textContent = `${zd.name}  (Lv ${zd.minLevel}-${zd.maxLevel})` + (g.travelGoal ? `  ·  walking to ${g.travelGoal.label}...` : '');
+    const inLair = g.inLair >= 0;
+    $('stagename').textContent = inLair
+      ? `${bossName(g.inLair)}'s Lair  (boss Lv ${zd.bossLevel})`
+      : `${zd.name}  (Lv ${zd.minLevel}-${zd.maxLevel})` + (g.travelGoal ? `  ·  walking to ${g.travelGoal.label}...` : '');
 
     const kf = $('killfill');
     const kt = $('killtext');
@@ -174,6 +185,12 @@ export class UI {
       kf.style.width = '100%';
       kf.style.background = '#a4161a';
       kt.textContent = 'BOSS FIGHT';
+    } else if (inLair) {
+      const st = g.bossStatus(g.inLair);
+      const offer = zd.offering.length ? zd.offering.map((o) => `${o.count}× ${o.item}`).join(', ') : 'nothing (for now)';
+      kf.style.width = st === 'cooldown' ? `${(1 - g.bossCooldownLeft(g.inLair) / BALANCE.bossRespawn) * 100}%` : '100%';
+      kf.style.background = st === 'ready' ? '#6b1a12' : '#5a4a2a';
+      kt.textContent = st === 'ready' ? `Summoning circle ready · offering: ${offer}` : `Boss returns in ${Math.ceil(g.bossCooldownLeft(g.inLair))}s`;
     } else {
       // EXP/hour compared to farming monsters at your own level
       const eph = g.expPerHour();
@@ -189,11 +206,23 @@ export class UI {
       }
     }
     const bb = $('bossbtn');
-    const showBoss = !g.inBossFight && (!!g.travelGoal || g.bossStatus(g.zone) === 'ready');
-    bb.classList.toggle('hidden', !showBoss);
-    bb.textContent = g.travelGoal ? 'Cancel travel' : `⚔ Fight boss (Lv ${zd.bossLevel})`;
+    let show = false;
+    if (!g.inBossFight) {
+      if (g.travelGoal) {
+        show = true;
+        bb.textContent = 'Cancel travel';
+      } else if (inLair) {
+        show = g.bossStatus(g.inLair) === 'ready';
+        bb.textContent = '🔥 Summon boss (E)';
+      } else if (g.bossStatus(g.zone) === 'ready') {
+        show = true;
+        bb.textContent = `⚔ Fight boss (Lv ${zd.bossLevel})`;
+      }
+    }
+    bb.classList.toggle('hidden', !show);
     bb.classList.toggle('boss', !g.travelGoal);
     bb.classList.toggle('alt', !!g.travelGoal);
+    $('leavebtn').classList.toggle('hidden', !inLair);
 
     // Battle HUD
     const ab = $('autobtn');
@@ -411,7 +440,7 @@ export class UI {
     const s = g.state;
     let h = `<h3>🗺️ World</h3>
       <p class="muted small">Zones get harder the further east you go, and monsters get stronger deeper into each zone.
-      Monsters above your level hit much harder; monsters far below it give almost no EXP. Bosses wait on altars and must be beaten in order.</p>`;
+      Monsters above your level hit much harder; monsters far below it give almost no EXP. Each boss sleeps in a lair near the east end of its zone: go in and summon it at the circle. Bosses must be beaten in order.</p>`;
     ZONES.forEach((z, i) => {
       const here = g.zone === i;
       const lvl = s.level;
@@ -427,12 +456,14 @@ export class UI {
         : st === 'fighting' ? '⚔ Fighting now'
         : '🔥 Ready';
       const kills = s.bossKills[i] ?? 0;
+      const offer = z.offering.length ? z.offering.map((o) => `${o.count}× ${o.item}`).join(', ') : 'none needed yet';
       h += `<div class="row" style="border-left:4px solid ${here ? '#c9a227' : '#3a3022'}">
         <div class="icon">${['🌱', '🌲', '🔥'][i] ?? '🗺️'}</div>
         <div class="info">
           <div class="name">${z.name} <span class="muted small">Lv ${z.minLevel}-${z.maxLevel}</span>${here ? '<span class="tag" style="background:#6b5a36">YOU ARE HERE</span>' : ''}</div>
           <div class="sub"><span style="color:${verdict[1]}">${verdict[0]}</span>${mult < 1 && verdict[0] !== 'Too dangerous' ? ` (×${mult.toFixed(2)} EXP)` : ''}</div>
-          <div class="sub">Boss Lv ${z.bossLevel}: ${bossText}${kills ? ` · beaten ${kills}×` : ''}</div>
+          <div class="sub">${bossName(i)} (Lv ${z.bossLevel}): ${bossText}${kills ? ` · beaten ${kills}×` : ''}</div>
+          <div class="sub">Summon offering: ${offer}</div>
         </div>
         <div class="btn-col">
           <button class="btn alt ${here ? 'disabled' : ''}" data-action="travel" data-arg="${i}">Travel</button>
@@ -440,7 +471,7 @@ export class UI {
         </div>
       </div>`;
     });
-    h += `<p class="muted small">Travel and Fight boss turn AUTO on and walk you there. You can also just walk: the purple barriers between zones only stop monsters.</p>`;
+    h += `<p class="muted small">Travel and Fight boss turn AUTO on and walk you there (Fight boss also summons, fights and walks you back out). You can also just walk: the purple barriers between zones only stop monsters.</p>`;
     return h;
   }
 
@@ -459,6 +490,7 @@ export class UI {
       </div>
       <h3>How to play</h3>
       <p class="muted small"><b>Controls:</b> your hero plays itself while AUTO is on. Take over any time: WASD or arrows to move, mouse to aim, hold left click (or Space) to attack, and 1/2/3 to cast skills where you aim. On a phone, drag on the battlefield to move and use the buttons. AUTO takes back over 2 seconds after you stop. Press Q or the AUTO button for full manual mode.</p>
+      <p class="muted small"><b>Boss lairs:</b> walk into a lair's archway, then press E or Summon boss at the circle. Leave through the blue Exit portal or the Leave lair button.</p>
       <p class="muted small"><b>Bosses</b> mark the ground in red before they strike. Step out of the marked area to avoid the hit. Monsters flash red and show an orange arc before they swing.</p>
       <p class="muted small">Your hero fights on its own. Spend 🪙 gold on Growth and summon gear and companions with 💎 gems. Explore east into harder zones when you are ready (the 🗺️ World tab shows where your level fits), and challenge each zone's boss at its altar. You keep earning for up to ${BALANCE.offlineCapHours} hours while away, farming wherever you left your hero.</p>
       <h3>Save</h3>
@@ -471,7 +503,7 @@ export class UI {
       </div>
       <button class="btn wide" style="background:#7f1d1d;margin-top:12px" data-action="reset">Reset this character to Lv 1</button>
       <p class="small" style="text-align:center;margin-top:16px"><a href="./side/">Play the classic side-scroller version</a></p>
-      <p class="muted small" style="text-align:center">v0.5.0</p>`;
+      <p class="muted small" style="text-align:center">v0.6.0</p>`;
   }
 
   // ---------------- Modals & toasts ----------------

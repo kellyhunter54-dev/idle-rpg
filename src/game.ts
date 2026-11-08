@@ -1,10 +1,10 @@
 import {
   BALANCE, COMPANION, COMPANIONS, GROWTH, GrowthKey, JobDef, MobStats, RARITIES, Rarity, SLOTS,
-  Slot, TIERS, TIER_WEIGHTS, ZONES, jobOf, companionHitMult, dealtLevelMult, enhanceCopies,
+  Slot, TIERS, TIER_WEIGHTS, ZONES, bossName, jobOf, companionHitMult, dealtLevelMult, enhanceCopies,
   expLevelMult, expToNext, gearId, gearScore, mobForZone, parseGear, takenLevelMult,
 } from './data';
 import {
-  GameMap, PHYS, TILE, depthInZone, findPath, fits, generateWorld, lineOfSight, moveCircle, walkablePoint,
+  GameMap, PHYS, TILE, depthInZone, findPath, fits, generateLair, generateWorld, lineOfSight, moveCircle, walkablePoint,
   zoneAtX,
 } from './map';
 import { GameState } from './state';
@@ -191,7 +191,15 @@ export class Game {
   time = 0;
 
   map!: GameMap;
-  /** Zone the hero is standing in. */
+  private worldMap!: GameMap;
+  private worldMobs: Mob[] = [];
+  private lairs = new Map<number, GameMap>();
+  /** Which boss lair the hero is inside (-1 = out in the world). */
+  inLair = -1;
+  /** Set when the lair visit came from "Fight boss": AUTO summons, fights and walks back out. */
+  private lairAuto = false;
+  private lairDoneAt = -1;
+  /** Zone the hero is standing in (inside a lair: that lair's zone). */
   zone = 0;
   player: Player;
   hp = 0;
@@ -272,7 +280,7 @@ export class Game {
   }
 
   private initWorld() {
-    this.map = generateWorld(ZONES.length);
+    this.map = this.worldMap = generateWorld(ZONES.length);
     const saved = this.state.pos;
     if (saved && fits(this.map, saved.x, saved.y, PHYS.playerRadius)) Object.assign(this.player, { x: saved.x, y: saved.y });
     else Object.assign(this.player, this.map.entrances[0]);
@@ -310,6 +318,7 @@ export class Game {
 
   /** AUTO walks to a zone's entrance. */
   travelToZone(z: number) {
+    if (this.inLair >= 0) this.exitLair();
     const e = this.map.entrances[z];
     if (!e) return;
     this.travelGoal = { x: e.x, y: e.y, boss: null, label: ZONES[z].name };
@@ -318,11 +327,17 @@ export class Game {
     if (!this.auto) this.setAuto(true);
   }
 
-  /** AUTO walks to a zone's boss altar and starts the fight. */
+  /** AUTO walks to a zone's boss lair, goes in, summons the boss and fights it. */
   goToBoss(z: number) {
+    if (this.inLair === z) {
+      this.lairAuto = true;
+      if (!this.auto) this.setAuto(true);
+      return;
+    }
+    if (this.inLair >= 0) this.exitLair();
     const a = this.map.altars[z];
     if (!a) return;
-    this.travelGoal = { x: a.x, y: a.y, boss: z, label: `${ZONES[z].name} boss` };
+    this.travelGoal = { x: a.x, y: a.y, boss: z, label: `${bossName(z)}'s lair` };
     this.target = null;
     this.path = null;
     if (!this.auto) this.setAuto(true);
@@ -331,6 +346,86 @@ export class Game {
   cancelTravel() {
     this.travelGoal = null;
     this.path = null;
+    this.lairAuto = false;
+  }
+
+  /** What the summoning circle needs. Empty offerings = free for now. */
+  summonCheck(z: number): { ok: boolean; missing: string[] } {
+    const missing = ZONES[z].offering
+      .filter((o) => (this.state.items[o.item] ?? 0) < o.count)
+      .map((o) => `${o.count}× ${o.item}`);
+    return { ok: missing.length === 0, missing };
+  }
+
+  /** Summon the lair's boss (you must be inside its lair). Returns a reason if it can't. */
+  summonBoss(): string | null {
+    const z = this.inLair;
+    if (z < 0) return 'You need to be inside a boss lair.';
+    const st = this.bossStatus(z);
+    if (st === 'fighting') return 'The boss is already here!';
+    if (st === 'locked') return `Sealed. Defeat ${bossName(z - 1)} first.`;
+    if (st === 'cooldown') return `The boss is gathering strength. Try again in ${Math.ceil(this.bossCooldown[z])}s.`;
+    const chk = this.summonCheck(z);
+    if (!chk.ok) return `You need to offer: ${chk.missing.join(', ')}.`;
+    for (const o of ZONES[z].offering) this.state.items[o.item] -= o.count;
+    this.startBoss(z);
+    return null;
+  }
+
+  private enterLair(z: number) {
+    if (!this.lairs.has(z)) this.lairs.set(z, generateLair(ZONES[z].chapter));
+    this.worldMobs = this.mobs;
+    this.mobs = [];
+    this.map = this.lairs.get(z)!;
+    this.inLair = z;
+    this.zone = z;
+    this.resetTransient();
+    Object.assign(this.player, { ...this.map.entrances[0], angle: -2.36 });
+    for (const c of this.party) Object.assign(c, { x: this.player.x, y: this.player.y });
+    this.lairDoneAt = -1;
+    this.onToast(`You enter ${bossName(z)}'s lair.`, '#c9a227');
+    this.dirty = true;
+  }
+
+  /** Back out to the world, standing just outside the lair door. */
+  exitLair() {
+    const z = this.inLair;
+    if (z < 0) return;
+    if (this.inBossFight) this.failBoss('You fled the lair.');
+    this.map = this.worldMap;
+    this.mobs = this.worldMobs;
+    this.worldMobs = [];
+    this.inLair = -1;
+    this.lairAuto = false;
+    this.resetTransient();
+    const door = this.map.altars[z];
+    const spot = this.outsideDoor(z);
+    Object.assign(this.player, spot);
+    for (const c of this.party) Object.assign(c, { x: spot.x, y: spot.y });
+    this.zone = zoneAtX(this.map, door.x);
+    this.dirty = true;
+  }
+
+  /** A walkable spot just west of a lair door (where you appear when leaving). */
+  private outsideDoor(z: number): Vec {
+    const door = this.worldMap.altars[z];
+    for (const d of [190, 230, 160, 270]) {
+      for (const a of [Math.PI, Math.PI * 0.75, Math.PI * 1.25, Math.PI / 2, -Math.PI / 2]) {
+        const p = { x: door.x + Math.cos(a) * d, y: door.y + Math.sin(a) * d };
+        if (fits(this.worldMap, p.x, p.y, PHYS.playerRadius)) return p;
+      }
+    }
+    return { ...this.worldMap.entrances[z] };
+  }
+
+  private resetTransient() {
+    this.telegraphs = [];
+    this.blasts = [];
+    this.projectiles = [];
+    this.target = null;
+    this.path = null;
+    this.travelGoal = null;
+    this.player.dash = null;
   }
 
   private syncParty() {
@@ -353,6 +448,7 @@ export class Game {
       this.deadTimer -= dt;
       if (this.deadTimer <= 0) {
         this.hp = this.stats.maxHp;
+        if (this.inLair >= 0) this.exitLair();
         Object.assign(this.player, { ...this.map.entrances[this.zone], dash: null });
       }
       inp.skills = inp.skills.map(() => false);
@@ -361,10 +457,12 @@ export class Game {
 
     this.aimHold -= dt;
     for (let z = 0; z < this.bossCooldown.length; z++) this.bossCooldown[z] -= dt;
-    this.updateSpawning(dt);
+    if (this.inLair < 0) this.updateSpawning(dt);
     this.movePlayer(dt);
-    this.trackZone();
-    this.checkAltars();
+    if (this.inLair < 0) {
+      this.trackZone();
+      this.checkLairDoors();
+    } else this.checkLairExit();
     this.updateMobs(dt);
     this.updateTelegraphs(dt);
     if (this.deadTimer > 0) {
@@ -380,14 +478,14 @@ export class Game {
     if (this.inBossFight) {
       this.bossTimer -= dt;
       if (this.bossTimer <= 0) this.failBoss('Time ran out!');
-      const a = this.map.altars[this.bossZone];
-      if (a && dist(a, this.player) > BALANCE.bossLeash) this.failBoss('You left the fight.');
     }
+    // Saved position is always a world spot (inside a lair we save the spot outside its door)
+    const spot = this.inLair >= 0 ? this.outsideDoorCached() : this.player;
     const pos = this.state.pos;
     if (pos) {
-      pos.x = this.player.x;
-      pos.y = this.player.y;
-    } else this.state.pos = { x: this.player.x, y: this.player.y };
+      pos.x = spot.x;
+      pos.y = spot.y;
+    } else this.state.pos = { x: spot.x, y: spot.y };
     inp.skills = inp.skills.map(() => false);
   }
 
@@ -404,43 +502,58 @@ export class Game {
     this.dirty = true;
   }
 
-  /** Stepping onto a boss altar starts the fight (if it's that boss's turn). */
-  private checkAltars() {
-    if (this.inBossFight) return;
+  private doorCache: { z: number; p: Vec } | null = null;
+  private outsideDoorCached(): Vec {
+    if (!this.doorCache || this.doorCache.z !== this.inLair) this.doorCache = { z: this.inLair, p: this.outsideDoor(this.inLair) };
+    return this.doorCache.p;
+  }
+
+  /** Walking into a lair door takes you inside (if that boss is unsealed). */
+  private checkLairDoors() {
     const p = this.player;
     this.map.altars.forEach((a, z) => {
       if (dist(a, p) > PHYS.altarRadius) return;
-      // AUTO never starts a boss by accident; you have to walk there yourself or use "Fight boss".
-      const intended = this.manualActive || this.travelGoal?.boss === z;
-      if (!intended) return;
-      const status = this.bossStatus(z);
-      if (status === 'ready') {
-        this.startBoss(z);
-        if (this.travelGoal?.boss === z) this.travelGoal = null;
-      } else if (this.time - this.lockedToastAt > 4) {
-        this.lockedToastAt = this.time;
-        if (status === 'locked') this.onToast(`Sealed. Defeat ${ZONES[z - 1].name}'s boss first.`, '#ff8c3b');
-        else this.onToast(`The boss returns in ${Math.ceil(this.bossCooldown[z])}s.`, '#c9a227');
-        if (this.travelGoal?.boss === z) this.travelGoal = null;
+      // AUTO never wanders in by accident; walk there yourself or use "Fight boss".
+      const viaButton = this.travelGoal?.boss === z;
+      if (!this.manualActive && !viaButton) return;
+      if (this.bossStatus(z) === 'locked') {
+        if (this.time - this.lockedToastAt > 4) {
+          this.lockedToastAt = this.time;
+          this.onToast(`Sealed. Defeat ${bossName(z - 1)} first.`, '#ff8c3b');
+        }
+        if (viaButton) this.travelGoal = null;
+        return;
       }
+      this.enterLair(z);
+      this.lairAuto = viaButton;
     });
   }
 
+  /** Inside a lair: the exit portal, and the AUTO summon/leave flow. */
+  private checkLairExit() {
+    const exit = this.map.exit;
+    if (exit && dist(exit, this.player) < 40 && this.manualActive && !this.inBossFight) {
+      this.exitLair();
+      return;
+    }
+    // after a boss dies on an AUTO run, walk back out a moment later
+    if (this.lairAuto && this.lairDoneAt >= 0 && this.time - this.lairDoneAt > 3 && !this.manualActive) {
+      this.exitLair();
+    }
+  }
+
   private startBoss(z: number) {
-    const a = this.map.altars[z];
-    // clear the arena
-    for (const m of this.mobs.filter((m) => m.zone === z && dist(m, a) < 700)) this.effect('poof', m.x, m.y, 30, '#ffffff', 0.4);
-    this.mobs = this.mobs.filter((m) => !(m.zone === z && dist(m, a) < 700));
+    const a = this.map.altars[0];
     const stats = mobForZone(z, ZONES[z].bossLevel, true, this.rand);
-    const ang = angleTo(this.player, a);
-    const boss = this.makeMob(stats, { x: a.x + Math.cos(ang) * 120, y: a.y + Math.sin(ang) * 120 }, PHYS.bossRadius, z);
-    if (!fits(this.map, boss.x, boss.y, boss.r * 0.6, true)) Object.assign(boss, { x: a.x, y: a.y });
-    boss.actionTimer = 2.5;
+    const boss = this.makeMob(stats, { x: a.x, y: a.y }, PHYS.bossRadius, z);
+    boss.actionTimer = 3;
     this.mobs.push(boss);
     this.bossZone = z;
     this.bossTimer = BALANCE.bossTimeLimit;
     this.target = boss;
-    this.onToast(`${stats.name} (Lv ${stats.level}) awakens!`, '#f72585');
+    this.lairDoneAt = -1;
+    for (let i = 0; i < 10; i++) this.effect('poof', a.x, a.y, 60 + i * 12, '#a4161a', 0.6);
+    this.onToast(`${stats.name} (Lv ${stats.level}) rises from the circle!`, '#f72585');
     this.dirty = true;
   }
 
@@ -557,7 +670,21 @@ export class Game {
       return this.escapeDir(t);
     }
 
-    // 2. Travel somewhere (zone or boss altar) if asked to
+    // 2. Inside a lair with no boss: AUTO runs summon (if it came for the boss) or waits
+    if (this.inLair >= 0 && !this.inBossFight) {
+      if (!this.lairAuto) return zero;
+      if (this.lairDoneAt >= 0) return this.walkTo(this.map.exit!, dt);
+      const circle = this.map.altars[0];
+      if (dist(p, circle) > 90) return this.walkTo(circle, dt);
+      const why = this.summonBoss();
+      if (why) {
+        this.onToast(why, '#ff8c3b');
+        this.lairAuto = false;
+      }
+      return zero;
+    }
+
+    // 3. Travel somewhere (zone or boss lair) if asked to
     if (this.travelGoal && !this.inBossFight) {
       const g = this.travelGoal;
       const gd = dist(p, g);
@@ -1273,6 +1400,7 @@ export class Game {
         this.onToast(`${m.name} defeated again!`, '#ffc23d');
       }
       this.bossCooldown[z] = BALANCE.bossRespawn;
+      this.lairDoneAt = this.time;
       this.bossZone = -1;
       this.hp = this.stats.maxHp;
       this.telegraphs = [];
@@ -1331,7 +1459,7 @@ export class Game {
 
   private failBoss(msg: string) {
     this.endBoss();
-    this.onToast(msg + ' The boss returns to its altar.', '#ff6b6b');
+    this.onToast(msg + ' The boss sinks back into its circle.', '#ff6b6b');
     this.dirty = true;
   }
 

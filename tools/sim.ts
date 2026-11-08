@@ -50,7 +50,7 @@ while (t < hours * 3600) {
   }
 
   // Decisions a player would make every 30s
-  if (t >= nextDecision && !game.inBossFight && !game.travelGoal && game.deadTimer <= 0) {
+  if (t >= nextDecision && !game.inBossFight && !game.travelGoal && game.inLair < 0 && game.deadTimer <= 0) {
     nextDecision = t + 30;
     const lvl = game.state.level;
     const cleared = game.state.bossesCleared;

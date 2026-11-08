@@ -30,6 +30,8 @@ export interface GameState {
   /** How many zone bosses have been beaten in order (0 = none yet). */
   bossesCleared: number;
   bossKills: number[];
+  /** Item bag (boss offerings etc.). Empty until the item system arrives. */
+  items: Record<string, number>;
 }
 
 export const SAVE_VERSION = 1;
@@ -58,6 +60,7 @@ export function newState(name = 'Hero', job: JobId = 'warrior'): GameState {
     pos: null,
     bossesCleared: 0,
     bossKills: [],
+    items: {},
   };
 }
 
@@ -74,6 +77,7 @@ export function migrate(raw: unknown): GameState {
     totals: { ...base.totals, ...(r.totals ?? {}) },
     settings: { ...base.settings, ...(r.settings ?? {}) },
     bossKills: Array.isArray(r.bossKills) ? r.bossKills : [],
+    items: r.items && typeof r.items === 'object' ? r.items : {},
     gear: r.gear ?? {},
     companions: r.companions ?? {},
     party: base.party.map((_, i) => r.party?.[i] ?? null),

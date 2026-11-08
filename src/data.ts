@@ -375,13 +375,19 @@ export interface ZoneDef {
   maxLevel: number; // monster level at the far end
   bossLevel: number;
   chapter: number; // index into CHAPTERS for colors, monsters and boss name
+  /** Items you must bring to summon the boss in its lair. Empty = free (for now). */
+  offering: { item: string; count: number }[];
 }
 
 export const ZONES: ZoneDef[] = [
-  { name: 'Sprout Meadow', minLevel: 1, maxLevel: 10, bossLevel: 12, chapter: 0 },
-  { name: 'Whisper Woods', minLevel: 10, maxLevel: 20, bossLevel: 22, chapter: 1 },
-  { name: 'Ember Canyon', minLevel: 20, maxLevel: 30, bossLevel: 32, chapter: 2 },
+  { name: 'Sprout Meadow', minLevel: 1, maxLevel: 10, bossLevel: 12, chapter: 0, offering: [] },
+  { name: 'Whisper Woods', minLevel: 10, maxLevel: 20, bossLevel: 22, chapter: 1, offering: [] },
+  { name: 'Ember Canyon', minLevel: 20, maxLevel: 30, bossLevel: 32, chapter: 2, offering: [] },
 ];
+
+export function bossName(z: number): string {
+  return CHAPTERS[(ZONES[z] ?? ZONES[0]).chapter].boss;
+}
 
 export function zoneLabel(z: number): string {
   const d = ZONES[z] ?? ZONES[0];
