@@ -8,6 +8,7 @@ export interface RunControls {
   onCard: (i: number) => void;
   onReroll: () => void;
   onAuto: () => void;
+  onCore: () => void;
 }
 
 export function setupRunInput(input: RunInput, area: HTMLElement, ctl: RunControls) {
@@ -31,6 +32,7 @@ export function setupRunInput(input: RunInput, area: HTMLElement, ctl: RunContro
     if (e.code === 'Escape' || e.code === 'KeyP') ctl.onPause();
     if (e.code === 'KeyR') ctl.onReroll();
     if (e.code === 'KeyQ') ctl.onAuto();
+    if (e.code === 'KeyF') ctl.onCore();
     const n = ['Digit1', 'Digit2', 'Digit3'].indexOf(e.code);
     if (n >= 0) ctl.onCard(n);
   });

@@ -165,7 +165,9 @@ export type PSpecial =
   | 'bloodlust' | 'berserk' | 'retaliate' | 'execute' | 'momentum'
   | 'mark' | 'kite' | 'sharpshot' | 'volley'
   | 'shield' | 'ignite' | 'frostbite' | 'echo' | 'chain'
-  | 'leech' | 'rampage' | 'block' | 'pack' | 'headshot' | 'steady' | 'combust' | 'static';
+  | 'leech' | 'rampage' | 'block' | 'pack' | 'headshot' | 'steady' | 'combust' | 'static'
+  // ultimate (core) modifiers
+  | 'coreGain' | 'coreDur' | 'corePower' | 'split' | 'secondNature' | 'trueshot';
 
 export interface PassiveDef {
   id: string;
@@ -239,22 +241,64 @@ export interface BranchDef {
   icon: string;
   color: string;
   desc: string;
+  /** the job's ultimate; replaces the class one at Lv 10 */
+  core: CoreDef;
   tiers: BranchTier[];
 }
+
+// ---------------------------------------------------------------- class resource + ultimate (F)
+export type CoreId = 'battlecry' | 'bloodrage' | 'divine' | 'deadeye' | 'packfrenzy' | 'arcanesurge' | 'firestorm' | 'stormavatar';
+/** Which hits build the resource. */
+export type CoreTag = 'melee' | 'shot' | 'nature' | 'fire' | 'shock' | 'any';
+export interface CoreDef {
+  id: CoreId;
+  name: string;
+  icon: string;
+  /** resource name shown on the bar */
+  resource: string;
+  color: string;
+  desc: string;
+  /** seconds the ultimate lasts */
+  dur: number;
+  gain: { tag: CoreTag; hit: number; crit?: number; kill?: number; hurt?: number; regen?: number };
+}
+/** The resource can't fill faster than this many points per second (from hits and kills). */
+export const CORE_RATE = 11;
+export const CORE_MAX = 100;
+export const CLASS_CORE: Record<JobId, CoreDef> = {
+  warrior: { id: 'battlecry', name: 'Battle Cry', icon: '📯', resource: 'Rage', color: '#e05a5a', dur: 6, desc: '+30% damage and +15% attack speed for 6s.', gain: { tag: 'melee', hit: 2, kill: 1, hurt: 3 } },
+  archer: { id: 'deadeye', name: 'Deadeye', icon: '🎯', resource: 'Focus', color: '#ffd166', dur: 6, desc: 'Your auto attack fires empowered arrows: +40% damage, faster, piercing everything. 6s.', gain: { tag: 'shot', hit: 3, crit: 2 } },
+  mage: { id: 'arcanesurge', name: 'Arcane Surge', icon: '🔮', resource: 'Mana', color: '#b388ff', dur: 6, desc: 'Every ability is ready at once, then +40% attack speed for 6s.', gain: { tag: 'any', hit: 0.5, regen: 6 } },
+};
+const CORES: Record<string, CoreDef> = {
+  berserker: { id: 'bloodrage', name: 'Bloodrage', icon: '🩸', resource: 'Rage', color: '#e05a5a', dur: 8, desc: '+40% damage, +40% attack speed, +20% size and heal 3% of all damage for 8s.', gain: { tag: 'melee', hit: 2, kill: 1, hurt: 3 } },
+  guardian: { id: 'divine', name: 'Divine Shield', icon: '🔆', resource: 'Resolve', color: '#fff1a8', dur: 5, desc: 'Immune to damage for 5s while holy light bursts around you.', gain: { tag: 'melee', hit: 1.5, hurt: 6 } },
+  ranger: { id: 'packfrenzy', name: 'Call of the Pack', icon: '🐺', resource: 'Bond', color: '#7bc96f', dur: 8, desc: '+2 wolves for 8s, and your wolves bite 60% faster.', gain: { tag: 'nature', hit: 2, kill: 1 } },
+  marksman: { id: 'deadeye', name: 'Deadeye', icon: '🎯', resource: 'Focus', color: '#ffd166', dur: 6, desc: 'Your auto attack fires empowered arrows: +40% damage, faster, piercing everything. 6s.', gain: { tag: 'shot', hit: 3, crit: 2 } },
+  pyro: { id: 'firestorm', name: 'Firestorm', icon: '☄️', resource: 'Heat', color: '#ff7b2e', dur: 8, desc: 'Meteors rain on your foes for 8s and everything burns twice as hard.', gain: { tag: 'fire', hit: 2, kill: 1 } },
+  storm: { id: 'stormavatar', name: 'Storm Avatar', icon: '🌩️', resource: 'Charge', color: '#8fd3ff', dur: 8, desc: 'Lightning strikes foes around you 5 times a second and +30% attack speed for 8s.', gain: { tag: 'shock', hit: 2, kill: 1 } },
+};
+const cGain = (id: string, name: string, icon: string, res: string): PassiveDef => ({ id, name, icon, special: 'coreGain', step: 0.2, text: (v) => `${res} builds ${pct(v)} faster`, max: 3 });
+const cDur = (id: string, name: string, icon: string, ult: string, step = 2): PassiveDef => ({ id, name, icon, special: 'coreDur', step, flat: true, text: (v) => `${ult} lasts ${v}s longer`, max: 2 });
+const cPow = (id: string, name: string, icon: string, ult: string): PassiveDef => ({ id, name, icon, special: 'corePower', step: 0.25, text: (v) => `${ult} is ${pct(v)} stronger`, max: 3 });
 export const BRANCHES: Record<JobId, BranchDef[]> = {
   warrior: [
     {
       id: 'berserker', name: 'Berserker', icon: '🩸', color: '#e05a5a', desc: 'All offence. Drinks blood to stay alive and snowballs off kills.',
+      core: CORES.berserker,
       tiers: [
         { title: 'Berserker', swaps: [['slash', 'fslash'], ['whirl', 'rend']], passives: [
+          cGain('fury', 'Fury', '😤', 'Rage'),
           { id: 'leech', name: 'Blood Drinker', icon: '🧛', special: 'leech', step: 0.01, text: (v) => `All damage heals ${pct(v)} of itself`, max: 5 },
           { id: 'savage', name: 'Savagery', icon: '🐗', stats: { dmg: 0.15, armor: -0.03 }, max: 5 },
         ] },
         { title: 'Bloodreaver', swaps: [['quake', 'bloodnova']], passives: [
+          cDur('unending', 'Unending Rage', '⏳', 'Bloodrage'),
           { id: 'rampage', name: 'Rampage', icon: '🔥', special: 'rampage', step: 0.01, text: (v) => `Each kill: +${pct(v)} damage for 3s (stacks to 30)`, max: 5 },
           { id: 'frenzied', name: 'Frenzied', icon: '🌪️', stats: { cd: 0.1, speed: 0.04 }, max: 5 },
         ] },
         { title: 'Warlord', swaps: [['cleave', 'warcleave'], ['hatchet', 'reaver']], passives: [
+          cPow('warcry', 'Warlord\'s Cry', '📯', 'Bloodrage'),
           { id: 'carnage', name: 'Carnage', icon: '💀', stats: { area: 0.12, critDmg: 0.25 }, max: 5 },
           { id: 'undying', name: 'Undying Rage', icon: '😡', stats: { maxHp: 30, regen: 0.6 }, max: 5 },
         ] },
@@ -262,16 +306,20 @@ export const BRANCHES: Record<JobId, BranchDef[]> = {
     },
     {
       id: 'guardian', name: 'Guardian', icon: '🛡️', color: '#9fb4d0', desc: 'A wall. Blocks hits, punishes anyone who touches you, holy light.',
+      core: CORES.guardian,
       tiers: [
         { title: 'Guardian', swaps: [['slash', 'bash'], ['hatchet', 'shieldtoss']], passives: [
+          cGain('zeal', 'Zeal', '🙏', 'Resolve'),
           { id: 'block', name: 'Shield Block', icon: '🛡️', special: 'block', step: 0.05, text: (v) => `${pct(v)} chance to block a hit completely`, max: 5 },
           { id: 'bastion', name: 'Bastion', icon: '🏰', stats: { armor: 0.05, maxHp: 20 }, max: 5 },
         ] },
         { title: 'Crusader', swaps: [['whirl', 'consecrate']], passives: [
+          cDur('devotion', 'Devotion', '⏳', 'Divine Shield', 1),
           { id: 'spikes', name: 'Spiked Plate', icon: '🌵', special: 'retaliate', step: 0.6, text: (v) => `Getting hit releases a shockwave (${pct(v * 2)} damage)`, max: 5 },
           { id: 'faith', name: 'Faith', icon: '🙏', stats: { regen: 0.8, duration: 0.1 }, max: 5 },
         ] },
         { title: 'Paragon', swaps: [['quake', 'judgment'], ['cleave', 'holycleave']], passives: [
+          cPow('retribution', 'Retribution', '⚜️', 'Divine Shield\'s holy light'),
           { id: 'radiance', name: 'Radiance', icon: '☀️', stats: { dmg: 0.12, area: 0.1 }, max: 5 },
           { id: 'aegis', name: 'Aegis', icon: '🔰', special: 'block', step: 0.04, text: (v) => `+${pct(v)} block chance`, max: 5 },
         ] },
@@ -281,16 +329,20 @@ export const BRANCHES: Record<JobId, BranchDef[]> = {
   archer: [
     {
       id: 'ranger', name: 'Ranger', icon: '🐺', color: '#7bc96f', desc: 'Nature and beasts. Wolves fight beside you, the ground turns against foes.',
+      core: CORES.ranger,
       tiers: [
         { title: 'Ranger', swaps: [['longbow', 'thornarrow'], ['disc', 'wolves']], passives: [
+          cGain('bond', 'Primal Bond', '🤝', 'Bond'),
           { id: 'packleader', name: 'Pack Leader', icon: '🐾', special: 'pack', step: 1, flat: true, text: (v) => `+${v} wolf`, max: 3 },
           { id: 'wild', name: 'Call of the Wild', icon: '🌲', stats: { dmg: 0.1, speed: 0.04 }, max: 5 },
         ] },
         { title: 'Beastwarden', swaps: [['traps', 'brambles']], passives: [
+          cDur('longhowl', 'Long Howl', '⏳', 'Call of the Pack'),
           { id: 'thornskin', name: 'Thornskin', icon: '🌵', stats: { armor: 0.04, regen: 0.4 }, max: 5 },
           { id: 'harmony', name: 'Harmony', icon: '🍃', stats: { duration: 0.12, area: 0.08 }, max: 5 },
         ] },
         { title: 'Wildheart', swaps: [['fan', 'stampede'], ['rain', 'thornrain']], passives: [
+          cPow('alphahowl', 'Alpha Howl', '🐺', 'Call of the Pack'),
           { id: 'alpha', name: 'Alpha', icon: '👑', stats: { dmg: 0.15, cd: 0.06 }, max: 5 },
           { id: 'verdant', name: 'Verdant', icon: '💚', stats: { maxHp: 25, pickup: 0.2 }, max: 5 },
         ] },
@@ -298,16 +350,22 @@ export const BRANCHES: Record<JobId, BranchDef[]> = {
     },
     {
       id: 'marksman', name: 'Marksman', icon: '🎯', color: '#ffd166', desc: 'Precision. Huge single shots, crits and headshots from far away.',
+      core: CORES.marksman,
       tiers: [
         { title: 'Marksman', swaps: [['longbow', 'aimed'], ['fan', 'pierce']], passives: [
+          { id: 'trained', name: 'Trained Eye', icon: '👁️', special: 'coreGain', step: 0.2, text: (v) => `Focus builds ${pct(v)} faster`, max: 3 },
           { id: 'headshot', name: 'Headshot', icon: '🎯', special: 'headshot', step: 0.04, text: (v) => `Shots have ${pct(v)} chance to deal triple damage`, max: 5 },
           { id: 'steady', name: 'Steady Hands', icon: '🧘', special: 'steady', step: 0.12, text: (v) => `+${pct(v)} damage while standing still`, max: 5 },
         ] },
         { title: 'Sniper', swaps: [['disc', 'snipe']], passives: [
+          { id: 'splitshot', name: 'Split Shot', icon: '🔱', special: 'split', step: 1, flat: true, text: (v) => `Each empowered shot also fires ${v} arrow${v > 1 ? 's' : ''} at other foes`, max: 2 },
+          { id: 'prolong', name: 'Prolonged Focus', icon: '⏳', special: 'coreDur', step: 2, flat: true, text: (v) => `Deadeye lasts ${v}s longer`, max: 2 },
           { id: 'scope', name: 'Long Scope', icon: '🔭', stats: { critDmg: 0.35, crit: 0.03 }, max: 5 },
           { id: 'hollow', name: 'Hollow Points', icon: '🔩', stats: { pierce: 1, dmg: 0.06 }, flat: true, max: 3 },
         ] },
         { title: 'Deadeye', swaps: [['rain', 'barrage']], passives: [
+          { id: 'secondnature', name: 'Second Nature', icon: '🌀', special: 'secondNature', step: 0.25, flat: true, text: (v) => `During Deadeye, each crit adds ${v.toFixed(2)}s to it`, max: 2 },
+          { id: 'trueshot', name: 'Trueshot', icon: '☀️', special: 'trueshot', step: 1, flat: true, text: () => 'KEYSTONE. Deadeye has no timer: each empowered arrow drains 7 Focus, every crit refunds 10. Empowered arrows +30% damage', max: 1 },
           { id: 'executioner', name: 'Kill Shot', icon: '🪦', special: 'execute', step: 0.05, text: (v) => `Hits kill foes under ${pct(v)} HP (not bosses)`, max: 4 },
           { id: 'trueaim', name: 'True Aim', icon: '✴️', stats: { crit: 0.06, cd: 0.05 }, max: 5 },
         ] },
@@ -317,16 +375,20 @@ export const BRANCHES: Record<JobId, BranchDef[]> = {
   mage: [
     {
       id: 'pyro', name: 'Pyromancer', icon: '🔥', color: '#ff7b2e', desc: 'Fire everywhere. Everything burns, and burning foes explode.',
+      core: CORES.pyro,
       tiers: [
         { title: 'Pyromancer', swaps: [['missile', 'firemissile'], ['ember', 'meteor']], passives: [
+          cGain('heatwave', 'Heat Wave', '🌡️', 'Heat'),
           { id: 'kindling', name: 'Kindling', icon: '🪵', special: 'ignite', step: 0.3, text: (v) => `Fire abilities burn for +${pct(v)} of the hit`, max: 5 },
           { id: 'heat', name: 'Searing Heat', icon: '🌡️', stats: { dmg: 0.12 }, max: 5 },
         ] },
         { title: 'Flamecaller', swaps: [['orbs', 'wreath']], passives: [
+          cDur('kindled', 'Undying Flame', '⏳', 'Firestorm'),
           { id: 'combust', name: 'Combustion', icon: '💥', special: 'combust', step: 0.15, text: (v) => `Burning foes explode on death (${pct(v)} of their max HP)`, max: 5 },
           { id: 'blaze', name: 'Blaze', icon: '🔆', stats: { area: 0.1, cd: 0.05 }, max: 5 },
         ] },
         { title: 'Phoenix Sage', swaps: [['spark', 'inferno'], ['frost', 'flamenova']], passives: [
+          cPow('rainfire', 'Rain of Fire', '☄️', 'Firestorm'),
           { id: 'rebirth', name: 'Ashen Rebirth', icon: '🐦', stats: { regen: 1, maxHp: 15 }, max: 5 },
           { id: 'sun', name: 'Heart of the Sun', icon: '🌞', stats: { dmg: 0.18, duration: 0.1 }, max: 5 },
         ] },
@@ -334,16 +396,20 @@ export const BRANCHES: Record<JobId, BranchDef[]> = {
     },
     {
       id: 'storm', name: 'Stormcaller', icon: '⚡', color: '#8fd3ff', desc: 'Lightning. Fast casts, strikes that jump from foe to foe.',
+      core: CORES.storm,
       tiers: [
         { title: 'Stormcaller', swaps: [['missile', 'shockmissile'], ['ember', 'lance']], passives: [
+          cGain('livewire', 'Live Wire', '🔌', 'Charge'),
           { id: 'static', name: 'Static', icon: '🔌', special: 'static', step: 0.08, text: (v) => `Hits have ${pct(v)} chance to zap a nearby foe`, max: 5 },
           { id: 'charged', name: 'Charged', icon: '🔋', stats: { cd: 0.1 }, max: 5 },
         ] },
         { title: 'Tempest', swaps: [['orbs', 'balllight']], passives: [
+          cDur('eyestorm', 'Eye of the Storm', '⏳', 'Storm Avatar'),
           { id: 'conduct', name: 'Conductor', icon: '🌩️', special: 'chain', step: 1, flat: true, text: (v) => `Lightning strikes jump to ${v} more foe${v > 1 ? 's' : ''}`, max: 3 },
           { id: 'galeforce', name: 'Gale Force', icon: '💨', stats: { speed: 0.08, area: 0.06 }, max: 5 },
         ] },
         { title: 'Thunderlord', swaps: [['spark', 'thunder'], ['frost', 'thunderclap']], passives: [
+          cPow('supercell', 'Supercell', '⛈️', 'Storm Avatar'),
           { id: 'overcharge', name: 'Overcharge', icon: '⚡', stats: { dmg: 0.15, crit: 0.04 }, max: 5 },
           { id: 'eye', name: 'Eye of the Storm', icon: '🌀', special: 'shield', step: 25, text: (v) => `A shield soaks ${Math.round(v)} damage, refills when you avoid hits`, max: 5 },
         ] },

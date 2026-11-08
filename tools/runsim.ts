@@ -16,11 +16,15 @@ for (let r = 0; r < runs; r++) {
   const dt = 1 / 30;
   let lastLog = 0;
   let lastDmg = 0;
+  let uses = 0;
+  let wasActive = false;
   let bossT = 0;
   const t0 = Date.now();
   while (!run.ended && run.t < 780) {
     run.update(dt);
     while (run.choices) run.autoPick();
+    if (run.coreActive && !wasActive) uses++;
+    wasActive = run.coreActive;
     if (run.boss && !run.boss.dead) bossT += dt;
     if (run.t - lastLog >= 60) {
       lastLog = run.t;
@@ -31,5 +35,5 @@ for (let r = 0; r < runs; r++) {
     }
   }
   const dmg = run.weapons.map((w) => `${w.def.id} ${Math.round(w.total / 1000)}k`).join(', ');
-  console.log(`run ${r} [${run.title}]: ${run.ended || 'timeout'} at ${Math.floor(run.t / 60)}:${String(Math.floor(run.t % 60)).padStart(2, '0')} lv${run.level} kills ${run.kills} bossTime ${Math.round(bossT)}s boss ${run.boss ? Math.round((run.boss.hp / run.boss.maxHp) * 100) + '%' : '-'} | taken c${Math.round(run.taken.contact)} s${Math.round(run.taken.shot)} b${Math.round(run.taken.slam)} | ${dmg} | ${(Date.now() - t0) / 1000}s`);
+  console.log(`run ${r} [${run.title}] ult ${uses}x: ${run.ended || 'timeout'} at ${Math.floor(run.t / 60)}:${String(Math.floor(run.t % 60)).padStart(2, '0')} lv${run.level} kills ${run.kills} bossTime ${Math.round(bossT)}s boss ${run.boss ? Math.round((run.boss.hp / run.boss.maxHp) * 100) + '%' : '-'} | taken c${Math.round(run.taken.contact)} s${Math.round(run.taken.shot)} b${Math.round(run.taken.slam)} | ${dmg} | ${(Date.now() - t0) / 1000}s`);
 }

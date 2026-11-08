@@ -259,6 +259,21 @@ export class RunRenderer {
         f.fill();
       }
     }
+    // ultimate active: a pulsing ring under the hero
+    if (run.coreActive) {
+      const c = run.core.color;
+      f.globalAlpha = 0.18;
+      f.fillStyle = c;
+      f.beginPath();
+      f.arc(run.x, run.y, 70, 0, Math.PI * 2);
+      f.fill();
+      f.globalAlpha = 0.85;
+      f.strokeStyle = c;
+      f.lineWidth = 6;
+      f.beginPath();
+      f.arc(run.x, run.y, 60 + Math.sin(time * 8) * 8, 0, Math.PI * 2);
+      f.stroke();
+    }
     // aura weapon
     for (const wpn of run.weapons) {
       if (wpn.def.kind !== 'aura') continue;

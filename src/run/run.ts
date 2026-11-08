@@ -4,7 +4,7 @@ import { JobId } from '../data';
 import { GameMap, TILE, Tile, fits, moveCircle } from '../map';
 import {
   BossDef, ELITE, ENEMIES, EnemyDef, FINAL_BOSS, HEROES, HeroDef, ITEM, ITEMS, ItemDef, MINI_BOSS, PStat, RUN, RUN_RARITIES,
-  ABILITY_LEVELS, ADVANCE_LEVELS, BRANCHES, BranchDef, PASSIVE, PASSIVES, PSpecial, PassiveDef, RunRarity, SHRINE_BOONS, SHRINE_RADIUS, SHRINE_TIME, STAT_LABEL, WEAPON, WSTAT_NAME, WSTAT_STEP, WStat,
+  ABILITY_LEVELS, ADVANCE_LEVELS, BRANCHES, BranchDef, CLASS_CORE, CORE_MAX, CORE_RATE, CoreDef, PASSIVE, PASSIVES, PSpecial, PassiveDef, RunRarity, SHRINE_BOONS, SHRINE_RADIUS, SHRINE_TIME, STAT_LABEL, WEAPON, WSTAT_NAME, WSTAT_STEP, WStat,
   WeaponDef, enemyHpScale, fmtStat, rollRarity, spawnRate, xpToNext,
 } from './data';
 
@@ -50,6 +50,8 @@ export interface Enemy {
 
 export interface Shot {
   kind: 'arrow' | 'bolt' | 'axe' | 'orb';
+  /** a Deadeye empowered arrow */
+  emp?: boolean;
   x: number;
   y: number;
   vx: number;
@@ -328,6 +330,18 @@ export class Run {
   private leechLeft = 0;
   private leechT = 0;
   rampage = 0;
+  /** class resource (Rage / Focus / Mana ...) and the ultimate it powers (F) */
+  coreMeter = 0;
+  coreActive = false;
+  coreUntil = 0;
+  /** use the ultimate as soon as it's ready */
+  autoCore = false;
+  private coreBudget = 0;
+  private coreBudgetT = 0;
+  private coreTick = 0;
+  /** extra wolves from Call of the Pack */
+  private coreWolves = 0;
+  private lastCrit = false;
   private rampageUntil = 0;
   private combustDepth = 0;
   /** special passive amounts, rebuilt in recalc() */
@@ -539,7 +553,7 @@ export class Run {
       this.choiceTitle = 'Job advancement';
       this.choices = BRANCHES[this.job].map((b) => ({
         kind: 'advance', id: b.id, name: b.name, icon: b.icon, rarity: { ...RUN_RARITIES[3], color: b.color, name: 'Job' }, level: 0,
-        lines: [b.desc, ...b.tiers.map((t, i) => `Lv ${ADVANCE_LEVELS[i]} ${t.title}: ${t.swaps.map(([, to]) => `${WEAPON[to].icon} ${WEAPON[to].name}`).join(', ')}`)],
+        lines: [b.desc, `Ultimate: ${b.core.icon} ${b.core.name} (${b.core.resource})`, ...b.tiers.map((t, i) => `Lv ${ADVANCE_LEVELS[i]} ${t.title}: ${t.swaps.map(([, to]) => `${WEAPON[to].icon} ${WEAPON[to].name}`).join(', ')}`)],
         apply: () => {
           this.branch = b;
           this.advance();
@@ -681,6 +695,7 @@ export class Run {
     this.updateWeapons(dt);
     this.updateShots(dt);
     this.updatePools(dt);
+    this.updateCore(dt);
     this.updateFalling(dt);
     this.updateAllies(dt);
     this.updateTelegraphs(dt);
@@ -766,6 +781,12 @@ export class Run {
   taken = { contact: 0, shot: 0, slam: 0 };
   hurt(dmg: number, from?: Enemy, src: 'contact' | 'shot' | 'slam' = 'contact') {
     if (this.iframes > 0 || this.ended) return;
+    if (this.coreActive && this.core.id === 'divine') {
+      this.iframes = RUN.contactIframes;
+      return;
+    }
+    const cg = this.core.gain;
+    if (cg.hurt) this.addCore(cg.hurt * Math.max(1, (dmg / this.stats.maxHp) * 20), true);
     const block = this.sp('block');
     if (block && this.rand() < Math.min(0.6, block)) {
       this.iframes = RUN.contactIframes;
@@ -1148,6 +1169,12 @@ export class Run {
       crit = true;
       dmg *= 1.2 + this.stats.critDmg;
     }
+    this.lastCrit = crit;
+    // the class resource builds from the right kind of hits
+    if (w >= 0 && def && !this.coreActive) {
+      const g = this.core.gain;
+      if (this.coreTagMatch(def)) this.addCore(g.hit + (crit ? g.crit ?? 0 : 0));
+    }
     e.hp -= dmg;
     // short flash, and not every hit, so a big crowd doesn't strobe white
     if (e.hitFlash < -0.25) e.hitFlash = 0.07;
@@ -1163,13 +1190,13 @@ export class Run {
     if (this.fx.length < 220 && (crit || this.rand() < 0.6))
       this.fx.push({ kind: 'text', x: e.x + (this.rand() - 0.5) * 20, y: e.y, t: 0, dur: 0.6, r: 0, color: crit ? '#ffd166' : '#ffffff', text: String(Math.round(dmg)), crit });
     // burning: fire abilities with Ignite / Kindling, or a built-in burn
-    const burn = def?.fire ? (def.burn ?? 0) + this.sp('ignite') : 0;
+    const burn = (def?.fire ? (def.burn ?? 0) + this.sp('ignite') : 0) * (this.coreActive && this.core.id === 'firestorm' ? 2 : 1);
     if (burn > 0) {
       e.burnDps = Math.max(e.burnUntil > this.t ? e.burnDps : 0, (dmg * burn) / 3);
       e.burnUntil = this.t + 3;
     }
     // life drain (capped so it can't make you unkillable)
-    const leech = (def?.leech ?? 0) + this.sp('leech');
+    const leech = (def?.leech ?? 0) + this.sp('leech') + (this.coreActive && this.core.id === 'bloodrage' ? 0.03 : 0);
     if (leech > 0 && w >= 0) {
       if (this.t > this.leechT) {
         this.leechT = this.t + 1;
@@ -1204,6 +1231,7 @@ export class Run {
   private kill(e: Enemy) {
     e.dead = true;
     this.kills++;
+    if (this.core.gain.kill && !this.coreActive) this.addCore(this.core.gain.kill);
     const bl = this.sp('bloodlust');
     if (bl) this.heal(bl);
     if (this.sp('rampage')) {
@@ -1266,10 +1294,10 @@ export class Run {
     const steady = this.moving ? 0 : this.sp('steady');
     const ramp = this.t < this.rampageUntil ? this.rampage * this.sp('rampage') : 0;
     return {
-      dmg: w.dmg * Math.max(0.1, 1 + s.dmg + momentum + steady + ramp) * (1 + (this.level - 1) * 0.015),
-      cd: w.cd / (1 + w.haste + s.cd + frenzy + berserk + kite),
-      count: w.count + s.count + (w.def.kind === 'summon' ? this.sp('pack') : 0),
-      area: w.area * (1 + s.area),
+      dmg: w.dmg * Math.max(0.1, 1 + s.dmg + momentum + steady + ramp + this.coreDmg()) * (1 + (this.level - 1) * 0.015),
+      cd: w.cd / (1 + w.haste + s.cd + frenzy + berserk + kite + this.coreHaste(w)),
+      count: w.count + s.count + (w.def.kind === 'summon' ? this.sp('pack') + this.coreWolves : 0),
+      area: w.area * (1 + s.area + (this.coreActive && this.core.id === 'bloodrage' ? 0.2 : 0)),
       duration: w.duration * (1 + s.duration),
     };
   }
@@ -1370,11 +1398,27 @@ export class Run {
       const tgt = w.def.id === 'snipe' ? this.toughest(900) : this.nearest(this.x, this.y, 900);
       let a = tgt ? Math.atan2(tgt.y - this.y, tgt.x - this.x) : this.angle;
       a += (n % 2 ? 1 : -1) * Math.ceil(n / 2) * 0.12;
-      const arrow = (ang: number) =>
+      // Deadeye: the auto attack fires empowered arrows
+      const emp = i === 0 && this.coreActive && this.core.id === 'deadeye';
+      const ts = this.sp('trueshot') > 0;
+      const power = emp ? 1 + 0.4 + (ts ? 0.3 : 0) + this.sp('corePower') : 1;
+      const spd = w.speed * (emp ? 1.15 : 1);
+      const arrow = (ang: number, mult = 1) =>
         this.shots.push({
-          kind: 'arrow', x: this.x, y: this.y, vx: Math.cos(ang) * w.speed, vy: Math.sin(ang) * w.speed, dmg: st.dmg, pierce: w.pierce + this.stats.pierce, r: 10 * Math.sqrt(st.area),
-          life: 1.1, hit: new Set(), w: i, enemy: false, target: 0, area: st.area, dist: 0, back: false, range: 0, color: w.def.color,
+          kind: 'arrow', x: this.x, y: this.y, vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd, dmg: st.dmg * power * mult, pierce: emp ? 999 : w.pierce + this.stats.pierce, r: 10 * Math.sqrt(st.area) * (emp ? 1.3 : 1),
+          life: emp ? 1.3 : 1.1, hit: new Set(), w: i, enemy: false, target: 0, area: st.area, dist: 0, back: false, range: 0, color: emp ? '#ffd166' : w.def.color, emp,
         });
+      if (emp) {
+        // Split Shot: extra empowered arrows at other foes
+        const split = this.sp('split');
+        const skip = new Set<number>(tgt ? [tgt.id] : []);
+        for (let k = 0; k < split; k++) {
+          const o = this.nearest(this.x, this.y, 900, skip);
+          if (o) skip.add(o.id);
+          arrow(o ? Math.atan2(o.y - this.y, o.x - this.x) : a + (k % 2 ? -1 : 1) * 0.22 * Math.ceil((k + 1) / 2), 0.6);
+        }
+        if (ts) this.coreMeter = Math.max(0, this.coreMeter - 7);
+      }
       if (w.def.spread) {
         // a fan: every arrow leaves at once
         for (let k = 0; k < st.count; k++) arrow(a + (k - (st.count - 1) / 2) * w.def.spread);
@@ -1586,6 +1630,11 @@ export class Run {
         if (s.life <= 0 || s.hit.has(e.id)) return;
         s.hit.add(e.id);
         this.hitEnemy(e, s.dmg, s.w, true, s.kind === 'arrow' ? 140 : 220, s.x - s.vx, s.y - s.vy);
+        if (s.emp && this.lastCrit && this.coreActive) {
+          // Trueshot refunds Focus on crits; Second Nature stretches Deadeye
+          if (this.sp('trueshot')) this.coreMeter = Math.min(CORE_MAX, this.coreMeter + 10);
+          else this.coreUntil += this.sp('secondNature');
+        }
         if (s.pierce-- <= 0) s.life = 0;
       });
     }
@@ -1726,6 +1775,121 @@ export class Run {
   }
 
   // ---------------------------------------------------------------- AUTO (sim bot)
+  // ---------------------------------------------------------------- class resource + ultimate
+  get core(): CoreDef {
+    return this.branch?.core ?? CLASS_CORE[this.job];
+  }
+  get coreReady(): boolean {
+    return !this.coreActive && this.coreMeter >= CORE_MAX;
+  }
+  /** Seconds left on the ultimate (Trueshot Deadeye: shown as the Focus it has left). */
+  get coreLeft(): number {
+    return this.coreActive ? Math.max(0, this.coreUntil - this.t) : 0;
+  }
+  private coreTagMatch(d: WeaponDef): boolean {
+    switch (this.core.gain.tag) {
+      case 'melee': return ['arc', 'orbit', 'nova', 'axe', 'aura'].includes(d.kind);
+      case 'shot': return !!d.shot;
+      case 'nature': return d.kind === 'summon' || !!d.slow;
+      case 'fire': return !!d.fire;
+      case 'shock': return !!d.shock;
+      default: return true;
+    }
+  }
+  /** Adds resource; hits and kills are capped to CORE_RATE per second so it never fills instantly. */
+  private addCore(n: number, uncapped = false) {
+    if (this.coreActive) return;
+    n *= 1 + this.sp('coreGain');
+    if (!uncapped) {
+      if (this.t > this.coreBudgetT) {
+        this.coreBudgetT = this.t + 1;
+        this.coreBudget = CORE_RATE * (1 + this.sp('coreGain'));
+      }
+      n = Math.min(n, this.coreBudget);
+      this.coreBudget -= n;
+    }
+    this.coreMeter = Math.min(CORE_MAX, this.coreMeter + n);
+  }
+  /** Fire the ultimate (F). Returns false if it isn't ready. */
+  activateCore(): boolean {
+    if (!this.coreReady || this.ended) return false;
+    const c = this.core;
+    this.coreActive = true;
+    this.coreUntil = this.t + c.dur + this.sp('coreDur');
+    this.coreTick = 0;
+    this.fx.push({ kind: 'nova', x: this.x, y: this.y, t: 0, dur: 0.5, r: 160, color: c.color });
+    this.fx.push({ kind: 'text', x: this.x, y: this.y, t: 0, dur: 1, r: 0, color: c.color, text: c.name.toUpperCase(), crit: true });
+    if (c.id === 'arcanesurge') for (const w of this.weapons) w.timer = 0;
+    if (c.id === 'packfrenzy') this.coreWolves = 2 + Math.round(this.sp('corePower') * 4);
+    return true;
+  }
+  private endCore() {
+    this.coreActive = false;
+    this.coreMeter = 0;
+    this.coreWolves = 0;
+    const extra = new Map<number, number>();
+    // send the borrowed wolves home
+    this.allies = this.allies.filter((a) => {
+      const w = this.weapons[a.w];
+      if (!w) return false;
+      const want = Math.round(this.weaponStats(w).count);
+      const n = (extra.get(a.w) ?? 0) + 1;
+      extra.set(a.w, n);
+      return n <= want;
+    });
+  }
+  private coreDmg(): number {
+    if (!this.coreActive) return 0;
+    const p = this.sp('corePower');
+    return this.core.id === 'battlecry' ? 0.3 + p : this.core.id === 'bloodrage' ? 0.4 + p : 0;
+  }
+  private coreHaste(w: OwnedWeapon): number {
+    if (!this.coreActive) return 0;
+    const id = this.core.id;
+    if (id === 'battlecry') return 0.15;
+    if (id === 'bloodrage') return 0.4;
+    if (id === 'arcanesurge') return 0.4 + this.sp('corePower');
+    if (id === 'stormavatar') return 0.3;
+    if (id === 'packfrenzy' && w.def.kind === 'summon') return 0.6;
+    return 0;
+  }
+  private updateCore(dt: number) {
+    const c = this.core;
+    if (!this.coreActive) {
+      if (c.gain.regen) this.coreMeter = Math.min(CORE_MAX, this.coreMeter + c.gain.regen * (1 + this.sp('coreGain')) * dt);
+      if ((this.auto || this.autoCore) && this.coreReady && this.nearest(this.x, this.y, 500)) this.activateCore();
+      return;
+    }
+    const trueshot = c.id === 'deadeye' && this.sp('trueshot') > 0;
+    if (trueshot ? this.coreMeter <= 0 : this.t >= this.coreUntil) {
+      this.endCore();
+      return;
+    }
+    // ultimates that do something on a beat
+    this.coreTick -= dt;
+    if (this.coreTick > 0) return;
+    const base = this.weapons[0] ? this.weaponStats(this.weapons[0]).dmg : 10;
+    const pow = 1 + this.sp('corePower');
+    if (c.id === 'divine') {
+      this.coreTick = 0.5;
+      const R = 230 * (1 + this.stats.area);
+      this.fx.push({ kind: 'nova', x: this.x, y: this.y, t: 0, dur: 0.4, r: R, color: '#fff1a8' });
+      this.forEnemiesIn(this.x, this.y, R, (e) => this.hitEnemy(e, base * 1.5 * pow, 0, true, 320));
+    } else if (c.id === 'firestorm') {
+      this.coreTick = 0.4 / pow;
+      const e = this.randomNear(this.x, this.y, 600);
+      if (e) this.falling.push({ x: e.x, y: e.y, t: 0, dur: 0.6, r: 110 * (1 + this.stats.area), dmg: base * 2.2, w: 0 });
+    } else if (c.id === 'stormavatar') {
+      this.coreTick = 0.2 / pow;
+      const e = this.randomNear(this.x, this.y, 550);
+      if (e) {
+        const R = 70 * (1 + this.stats.area);
+        this.fx.push({ kind: 'zap', x: e.x, y: e.y, t: 0, dur: 0.3, r: R, color: '#8fd3ff', text: 'bolt' });
+        this.forEnemiesIn(e.x, e.y, R, (o) => this.hitEnemy(o, base * 1.6, 0, true, 120, e.x, e.y));
+      }
+    } else this.coreTick = 1;
+  }
+
   private autoDir = { x: 1, y: 0 };
   private autoSteer() {
     const near: Enemy[] = [];

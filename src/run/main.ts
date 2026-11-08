@@ -2,7 +2,7 @@ import '@fontsource/pixelify-sans/400.css';
 import '@fontsource/pixelify-sans/600.css';
 import { JobId } from '../data';
 import * as PX from '../pixel';
-import { ABILITY_LEVELS, ADVANCE_LEVELS, BRANCHES, HEROES, ITEM, PASSIVE, PASSIVES, RUN, RUN_RARITIES, WEAPON } from './data';
+import { ABILITY_LEVELS, ADVANCE_LEVELS, CLASS_CORE, CORE_MAX, BRANCHES, HEROES, ITEM, PASSIVE, PASSIVES, RUN, RUN_RARITIES, WEAPON } from './data';
 import { setupRunInput } from './input';
 import { RunRenderer } from './render';
 import { Run } from './run';
@@ -69,6 +69,7 @@ function showTitle() {
       <div class="hc-line">Auto attack: ${WEAPON[h.basic].name}</div>
       <div class="hc-abs">${abil}</div>
       <div class="hc-pass">${h.passive}</div>
+      <div class="hc-core" style="color:${CLASS_CORE[job].color}">${CLASS_CORE[job].icon} ${CLASS_CORE[job].resource} → ${CLASS_CORE[job].name} (F)</div>
       <div class="hc-more">${PASSIVES[job].length} class passives</div>
       <div class="hc-branch">Lv ${ADVANCE_LEVELS[0]}: ${BRANCHES[job].map((br) => `<span style="color:${br.color}">${br.icon} ${br.name}</span>`).join(' or ')}</div>
       <div class="hc-best">${b ? (b.win ? `Won in ${fmtTime(b.time)}` : `Best: ${fmtTime(b.time)}, Lv ${b.level}`) : 'No runs yet'}</div>`;
@@ -122,6 +123,7 @@ function startRun(job: JobId) {
       onPause: () => togglePause(),
       onCard: (i) => run?.choices && pickCard(i),
       onReroll: () => run?.reroll(),
+      onCore: () => run?.activateCore(),
       onAuto: () => {
         if (!run) return;
         run.auto = !run.auto;
@@ -129,6 +131,8 @@ function startRun(job: JobId) {
       },
     });
   $('autotag').classList.add('hidden');
+  run.autoCore = localStorage.getItem('gloomtide-autocore') === '1';
+  ($('autocore') as HTMLInputElement).checked = run.autoCore;
 }
 
 function togglePause() {
@@ -193,6 +197,29 @@ function updateHud(r: Run) {
   const s = r.stats;
   setText('rlvl', `Lv ${r.level} ${r.title}`);
   const next = r.branch ? ADVANCE_LEVELS[r.tier] : ADVANCE_LEVELS[0];
+  // class resource + ultimate
+  const c = r.core;
+  const rf = $('resfill');
+  if (rf.style.background !== c.color) rf.style.background = c.color;
+  if (r.coreActive) {
+    const ts = c.id === 'deadeye' && r.sp('trueshot') > 0;
+    setWidth('resfill', ts ? r.coreMeter / CORE_MAX : r.coreLeft / (c.dur + r.sp('coreDur')));
+    setText('restext', ts ? `${c.name.toUpperCase()} ${Math.ceil(r.coreMeter)}` : `${c.name.toUpperCase()} ${r.coreLeft.toFixed(1)}s`);
+  } else {
+    setWidth('resfill', r.coreMeter / CORE_MAX);
+    setText('restext', `${c.resource} ${Math.floor(r.coreMeter)} / ${CORE_MAX}`);
+  }
+  setText('coreicon', c.icon);
+  setText('corename', r.coreReady ? `${c.name}!` : r.coreActive ? `${r.coreLeft.toFixed(1)}s` : `${Math.floor(r.coreMeter)}%`);
+  const cb = $('corebtn');
+  cb.classList.toggle('ready', r.coreReady);
+  cb.classList.toggle('active', r.coreActive);
+  if (cb.dataset.c !== c.color) {
+    cb.dataset.c = c.color;
+    cb.style.setProperty('--cc', c.color);
+    cb.title = `${c.name} (F): ${c.desc} Builds ${c.resource}.`;
+  }
+  $('rres').classList.toggle('full', r.coreReady);
   setText('advnext', next && r.level < next ? `Job advancement at Lv ${next}` : '');
   setText('rgold', String(Math.floor(r.gold)));
   setText('rkills', String(r.kills));
@@ -301,6 +328,12 @@ function fmtBig(n: number) {
   return String(Math.round(n));
 }
 
+$('corebtn').addEventListener('click', () => run?.activateCore());
+$('autocore').addEventListener('change', (e) => {
+  const on = (e.target as HTMLInputElement).checked;
+  localStorage.setItem('gloomtide-autocore', on ? '1' : '0');
+  if (run) run.autoCore = on;
+});
 $('rerollbtn').addEventListener('click', () => run?.reroll());
 $('skipbtn').addEventListener('click', () => run?.skip());
 $('pausebtn').addEventListener('click', () => togglePause());

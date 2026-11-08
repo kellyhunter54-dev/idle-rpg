@@ -17,7 +17,7 @@
         <div class="tagline">Survive the tide for 10 minutes, then beat what comes out of it.</div>
         <div id="heroes"></div>
         <div class="howto">
-          <b>WASD</b> move · <b>Space</b> jump over foes · <b>E</b> open chests · <b>1-3</b> pick cards · <b>R</b> reroll · <b>Esc</b> pause<br />
+          <b>WASD</b> move · <b>Space</b> jump over foes · <b>F</b> ultimate · <b>E</b> open chests · <b>1-3</b> pick cards · <b>R</b> reroll · <b>Esc</b> pause<br />
           Your attacks fire on their own. New abilities unlock at Lv 2, 4, 6 and 10; job advancements at 10, 15 and 25 evolve them.
         </div>
         <a class="mmo-link" href="../">Back to the MMO version</a>
@@ -35,6 +35,7 @@
           <div class="rh-main">
             <div class="rh-top"><span id="rlvl">Lv 1</span><span class="chip">🪙 <b id="rgold">0</b></span><span class="chip">💀 <b id="rkills">0</b></span></div>
             <div class="rh-hp"><div id="rhpfill"></div><span id="rhptext">100 / 100</span></div>
+            <div class="rh-res" id="rres"><div id="resfill"></div><span id="restext"></span></div>
             <div id="advnext"></div>
           </div>
         </header>
@@ -47,6 +48,7 @@
         <div id="bossbar" class="hidden"><div class="bb-name" id="bossname"></div><div class="bb-bar"><div id="bossfill"></div></div></div>
         <div id="notices"></div>
         <div id="hint" class="hidden"></div>
+        <button id="corebtn" title="Ultimate (F)"><span id="coreicon"></span><b id="corename"></b><i>F</i></button>
         <div id="itemrow"></div>
         <div id="autotag" class="hidden">AUTO</div>
 
@@ -73,6 +75,7 @@
           <div class="choice-box small">
             <div class="choice-title">Paused</div>
             <div id="pausestats"></div>
+            <label class="pause-opt"><input type="checkbox" id="autocore" /> Use my ultimate automatically</label>
             <div class="choice-btns">
               <button id="resumebtn" class="btn boss">Resume</button>
               <button id="quitbtn" class="btn alt">Give up</button>

@@ -45,7 +45,7 @@ body.runmode { overflow: hidden; }
 #rhptext { position: absolute; inset: 0; font-size: 11px; line-height: 10px; text-align: center; text-shadow: 1px 1px 0 #000; }
 #rhud.low .rh-hp { animation: pxpulse 0.6s steps(2) infinite; }
 
-#loadout { position: absolute; left: 10px; top: 86px; display: flex; flex-direction: column; gap: 4px; z-index: 5; }
+#loadout { position: absolute; left: 10px; top: 112px; display: flex; flex-direction: column; gap: 4px; z-index: 5; }
 .slots { display: flex; gap: 4px; }
 .rslot { position: relative; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; font-size: 18px;
   border-image: var(--f-slot) 3 fill / 9px / 0 stretch; box-shadow: inset 0 0 0 2px var(--rc, transparent); }
@@ -124,7 +124,7 @@ body.runmode { overflow: hidden; }
   #rportrait { width: 32px; height: 32px; }
   #clock { top: 18px; left: auto; right: 8px; transform: none; padding: 2px 10px; min-width: 92px; }
   #timer { font-size: 20px; }
-  #loadout { top: 72px; left: 6px; }
+  #loadout { top: 100px; left: 6px; }
   .rslot { width: 28px; height: 28px; font-size: 15px; }
   #bossbar { top: 176px; }
   #notices, #bossbar:not(.hidden) ~ #notices { top: 214px; }
@@ -146,3 +146,23 @@ body.runmode { overflow: hidden; }
 .card.adv .card-lines div:first-child { color: #fff; margin-bottom: 4px; }
 .card.adv .card-icon { font-size: 52px; }
 .card.adv .card-name { font-size: 22px; }
+
+/* class resource + ultimate */
+.rh-res { position: relative; height: 10px; background: #1a1410; border: 2px solid #0b0806; }
+#resfill { height: 100%; width: 0; box-shadow: inset 0 -2px 0 #0004; }
+#restext { position: absolute; inset: 0; font-size: 10px; line-height: 6px; text-align: center; text-shadow: 1px 1px 0 #000; }
+.rh-res.full { animation: pxpulse 0.6s steps(2) infinite; }
+.hc-core { font-size: 12px; }
+#corebtn { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 6; display: flex; align-items: center; gap: 6px;
+  padding: 6px 12px 6px 8px; color: var(--text); font-family: var(--px); font-size: 14px; cursor: pointer; background: none; border: 0;
+  border-image: var(--f-slot) 3 fill / 9px / 0 stretch; opacity: 0.75; text-shadow: 2px 2px 0 #0b0806; }
+#corebtn span { font-size: 22px; }
+#corebtn i { font-style: normal; font-size: 11px; color: var(--muted); }
+#corebtn.ready { opacity: 1; box-shadow: 0 0 0 3px var(--cc), 0 0 16px var(--cc); animation: pxpulse 0.8s steps(2) infinite; }
+#corebtn.ready b { color: var(--cc); }
+#corebtn.active { opacity: 1; box-shadow: 0 0 0 3px var(--cc); }
+#hint { bottom: 70px; }
+.pause-opt { display: block; margin-top: 12px; font-size: 14px; cursor: pointer; }
+@media (pointer: coarse) {
+  #corebtn { left: auto; right: 16px; bottom: 100px; transform: none; }
+}
