@@ -1,4 +1,6 @@
+import { SKILLS } from './data';
 import { Game } from './game';
+import { setupInput } from './input';
 import { Renderer } from './render';
 import { importSave, loadGame, saveGame } from './save';
 import { newState } from './state';
@@ -8,8 +10,22 @@ const state = loadGame();
 const awaySeconds = (Date.now() - state.lastSaved) / 1000;
 
 const game = new Game(state);
+
+// Skill buttons (built before input setup so they get listeners)
+document.getElementById('skillbar')!.innerHTML = SKILLS.map(
+  (sk, i) => `<button class="skillbtn" data-skill="${i}" title="${sk.name} (${i + 1})">
+    ${sk.icon}<div class="cd"></div><span class="key">${i + 1}</span><div class="lock hidden">Lv${sk.unlock}</div>
+  </button>`,
+).join('');
+
 const renderer = new Renderer(document.getElementById('canvas') as HTMLCanvasElement);
 const ui = new UI(game);
+const toggleAuto = () => {
+  game.setAuto(!game.auto);
+  ui.toast(game.auto ? 'AUTO on: your hero plays itself.' : 'AUTO off: full manual control.', '#3a86ff');
+};
+document.getElementById('autobtn')!.addEventListener('click', toggleAuto);
+const pollInput = setupInput(game.input, toggleAuto);
 
 ui.onReplaceState = (code) => {
   const next = code ? importSave(code) : newState();
@@ -26,8 +42,9 @@ if (offline) ui.showOffline(offline);
 let last = performance.now();
 let hiddenAt = 0;
 function frame(now: number) {
-  const dt = Math.min(0.1, (now - last) / 1000);
+  const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
+  pollInput();
   game.update(dt);
   ui.update(dt);
   renderer.draw(game, now / 1000);

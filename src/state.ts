@@ -22,6 +22,7 @@ export interface GameState {
   companions: Record<string, Owned>;
   party: (string | null)[];
   totals: { kills: number; bosses: number; summons: number; deaths: number };
+  settings: { auto: boolean };
 }
 
 export const SAVE_VERSION = 1;
@@ -44,6 +45,7 @@ export function newState(): GameState {
     companions: {},
     party: Array(BALANCE.partySize).fill(null),
     totals: { kills: 0, bosses: 0, summons: 0, deaths: 0 },
+    settings: { auto: true },
   };
 }
 
@@ -58,6 +60,7 @@ export function migrate(raw: unknown): GameState {
     growth: { ...base.growth, ...(r.growth ?? {}) },
     equipped: { ...base.equipped, ...(r.equipped ?? {}) },
     totals: { ...base.totals, ...(r.totals ?? {}) },
+    settings: { ...base.settings, ...(r.settings ?? {}) },
     gear: r.gear ?? {},
     companions: r.companions ?? {},
     party: base.party.map((_, i) => r.party?.[i] ?? null),

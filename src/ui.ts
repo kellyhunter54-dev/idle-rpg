@@ -1,5 +1,5 @@
 import {
-  BALANCE, COMPANION, COMPANIONS, GROWTH, GrowthKey, RARITIES, RARITY, SLOTS, SLOT_INFO, Slot,
+  BALANCE, COMPANION, COMPANIONS, GROWTH, GrowthKey, RARITIES, RARITY, SKILLS, SLOTS, SLOT_INFO, Slot,
   companionHitMult, companionOwnedAtk, enhanceCopies, expToNext, gearEffect, gearName, parseGear,
   rarityIndex, stageLabel,
 } from './data';
@@ -168,6 +168,20 @@ export class UI {
       kt.textContent = `${s.kills} / ${BALANCE.killsPerStage}`;
     }
     $('bossbtn').classList.toggle('hidden', !s.bossFailed || g.inBossFight);
+
+    // Battle HUD
+    const ab = $('autobtn');
+    ab.classList.toggle('on', g.auto);
+    ab.textContent = g.auto ? 'AUTO ✓' : 'AUTO ✗';
+    $('modebadge').classList.toggle('hidden', !g.auto || !g.manualActive);
+    document.querySelectorAll<HTMLElement>('.skillbtn').forEach((el, i) => {
+      const sk = SKILLS[i];
+      const locked = s.level < sk.unlock;
+      el.classList.toggle('locked', locked);
+      el.querySelector('.lock')!.classList.toggle('hidden', !locked);
+      const frac = locked ? 0 : Math.max(0, Math.min(1, g.skillCd[sk.id] / sk.cd));
+      (el.querySelector('.cd') as HTMLElement).style.height = `${frac * 100}%`;
+    });
 
     this.panelTimer -= dt;
     if (g.dirty || this.panelTimer <= 0) {
@@ -375,6 +389,7 @@ export class UI {
         <div class="stat">Summons<b>${fmt(s.totals.summons)}</b></div>
       </div>
       <h3>How to play</h3>
+      <p class="muted small"><b>Controls:</b> your hero plays itself while AUTO is on. Take over any time with A/D or arrows to move, W/Up/Space to jump, S+jump to drop through a platform, J or Z to attack, and 1/2/3 for skills. On a phone, use the on-screen buttons. AUTO takes back over ${2} seconds after you stop. Press Q or the AUTO button for full manual mode.</p>
       <p class="muted small">Your hero fights on its own. Spend 🪙 gold on Growth, summon gear and companions with 💎 gems, and beat the boss every ${BALANCE.killsPerStage} kills to advance. If you lose to a boss you will farm the stage until you tap Challenge Boss. You keep earning for up to ${BALANCE.offlineCapHours} hours while away.</p>
       <h3>Save</h3>
       <p class="muted small">The game saves automatically. Use export to back up your save or move it to another device.</p>
@@ -385,7 +400,7 @@ export class UI {
         <button class="btn alt" data-action="import">Import</button>
       </div>
       <button class="btn wide" style="background:#7f1d1d;margin-top:12px" data-action="reset">Reset progress</button>
-      <p class="muted small" style="text-align:center;margin-top:16px">v0.1.0</p>`;
+      <p class="muted small" style="text-align:center;margin-top:16px">v0.2.0</p>`;
   }
 
   // ---------------- Modals & toasts ----------------

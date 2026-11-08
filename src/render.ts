@@ -1,11 +1,16 @@
-import { BALANCE, COMPANION, SKILLS, chapterOf } from './data';
-import { Game } from './game';
+import { BALANCE, COMPANION, chapterOf } from './data';
+import { Game, Mob } from './game';
+import { PHYS } from './world';
 
-/** Draws the battle scene with simple shapes. Swap this file out when real art arrives. */
+/** Draws the battle scene with simple shapes and a camera that follows the hero. */
 export class Renderer {
   private ctx: CanvasRenderingContext2D;
   private w = 0;
   private h = 0;
+  private camX = 0;
+  private camY = 0;
+  private scale = 1;
+  private groundPx = 0;
 
   constructor(private canvas: HTMLCanvasElement) {
     this.ctx = canvas.getContext('2d')!;
@@ -23,184 +28,179 @@ export class Renderer {
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
+  // world -> screen
+  private sx(x: number) {
+    return (x - this.camX) * this.scale;
+  }
+  private sy(y: number) {
+    return this.groundPx - (y - this.camY) * this.scale;
+  }
+
   draw(g: Game, time: number) {
     const { ctx, w, h } = this;
     if (w === 0 || h === 0) return;
     const s = g.state;
     const ch = chapterOf(s.stage).def;
-    const groundY = h * 0.72;
+    const p = g.player;
+
+    // On touch screens the controls sit at the bottom, so lift the ground above them
+    // and zoom out a bit on narrow screens so you can see more of the map.
+    const touch = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches;
+    const bottom = touch ? 132 : 46;
+    this.scale = Math.min((h - bottom + 46) / PHYS.viewHeight, w / 560);
+    this.groundPx = h - bottom;
+    const viewW = w / this.scale;
+    const targetX = Math.max(0, Math.min(g.layout.width - viewW, p.x - viewW / 2));
+    this.camX += (targetX - this.camX) * 0.15;
+    if (g.layout.width <= viewW) this.camX = (g.layout.width - viewW) / 2;
+    // follow the hero up onto high platforms a little
+    const targetY = Math.max(0, p.y - 160);
+    this.camY += (targetY - this.camY) * 0.1;
 
     // Sky
-    const sky = ctx.createLinearGradient(0, 0, 0, groundY);
+    const sky = ctx.createLinearGradient(0, 0, 0, h);
     sky.addColorStop(0, ch.sky[0]);
     sky.addColorStop(1, ch.sky[1]);
     ctx.fillStyle = sky;
     ctx.fillRect(0, 0, w, h);
 
-    // Parallax hills
-    ctx.fillStyle = 'rgba(0,0,0,0.08)';
-    const off = (time * 12) % 240;
-    for (let x = -240; x < w + 240; x += 240) {
-      ctx.beginPath();
-      ctx.ellipse(x - off + 120, groundY, 160, 70, 0, Math.PI, 0);
-      ctx.fill();
-    }
+    // Parallax hills (far, then near)
+    this.hills(0.2, 260, 110, 'rgba(0,0,0,0.07)');
+    this.hills(0.45, 180, 70, 'rgba(0,0,0,0.09)');
 
     // Ground
+    const gy = this.sy(0);
     ctx.fillStyle = ch.ground;
-    ctx.fillRect(0, groundY, w, h - groundY);
-    ctx.fillStyle = 'rgba(0,0,0,0.12)';
-    ctx.fillRect(0, groundY, w, 4);
+    ctx.fillRect(0, gy, w, h - gy);
+    ctx.fillStyle = 'rgba(0,0,0,0.15)';
+    ctx.fillRect(0, gy, w, 5);
+    // map edges
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    if (this.sx(0) > 0) ctx.fillRect(0, 0, this.sx(0), h);
+    const right = this.sx(g.layout.width);
+    if (right < w) ctx.fillRect(right, 0, w - right, h);
+
+    // Platforms
+    for (const pl of g.layout.platforms) {
+      const x1 = this.sx(pl.x1);
+      const x2 = this.sx(pl.x2);
+      const y = this.sy(pl.y);
+      if (x2 < 0 || x1 > w) continue;
+      const th = 16 * this.scale;
+      ctx.fillStyle = ch.ground;
+      roundRect(ctx, x1, y, x2 - x1, th, 6);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.18)';
+      ctx.fillRect(x1 + 4, y, x2 - x1 - 8, 3);
+      ctx.fillStyle = 'rgba(0,0,0,0.18)';
+      ctx.fillRect(x1 + 4, y + th - 4, x2 - x1 - 8, 4);
+    }
 
     // Skill flash
     if (g.anim.flash > 0) {
-      ctx.fillStyle = hexA(g.anim.flashColor, g.anim.flash * 0.25);
+      ctx.fillStyle = hexA(g.anim.flashColor, g.anim.flash * 0.18);
       ctx.fillRect(0, 0, w, h);
     }
 
-    const unit = Math.min(w, h * 1.4) / 10;
+    // Mobs
+    for (const m of g.mobs) this.drawMob(m, time);
 
-    // Companions (behind player)
-    s.party.forEach((id, i) => {
-      if (!id) return;
-      const c = COMPANION[id];
-      const bob = Math.sin(time * 3 + i) * 4;
-      const hitOff = (g.anim.compHit[i] ?? 0) * unit * 0.4;
-      const cx = w * 0.2 - i * unit * 0.55 + hitOff;
-      const cy = groundY - unit * (0.9 + (i % 2) * 0.5) + bob;
-      ctx.fillStyle = c.color;
-      circle(ctx, cx, cy, unit * 0.32);
-      ctx.strokeStyle = 'rgba(0,0,0,0.25)';
-      ctx.lineWidth = 2;
-      ctx.stroke();
-      ctx.font = `${unit * 0.36}px sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(c.icon, cx, cy + 1);
-    });
-
-    // Player
-    const dead = g.deadTimer > 0;
-    const px = w * 0.3 + g.anim.lunge * unit * 0.6;
-    const pSize = unit * 1.1;
-    const py = groundY - pSize - Math.abs(Math.sin(time * 4)) * 3;
-    ctx.save();
-    ctx.globalAlpha = dead ? 0.35 : 1;
-    shadow(ctx, px, groundY, pSize * 0.5);
-    ctx.fillStyle = g.anim.playerHit > 0.5 ? '#ff8f8f' : '#3a86ff';
-    roundRect(ctx, px - pSize / 2, py, pSize, pSize, pSize * 0.25);
-    ctx.fill();
-    // face
-    ctx.fillStyle = '#fff';
-    circle(ctx, px + pSize * 0.12, py + pSize * 0.38, pSize * 0.1);
-    circle(ctx, px + pSize * 0.34, py + pSize * 0.38, pSize * 0.1);
-    ctx.fillStyle = '#111';
-    circle(ctx, px + pSize * 0.15, py + pSize * 0.39, pSize * 0.05);
-    circle(ctx, px + pSize * 0.37, py + pSize * 0.39, pSize * 0.05);
-    // sword
-    ctx.save();
-    ctx.translate(px + pSize * 0.5, py + pSize * 0.65);
-    ctx.rotate(-0.9 + g.anim.lunge * 1.6);
-    ctx.fillStyle = '#e0e0e0';
-    ctx.fillRect(0, -3, pSize * 0.75, 6);
-    ctx.fillStyle = '#8d6e63';
-    ctx.fillRect(-6, -6, 8, 12);
-    ctx.restore();
-    ctx.restore();
-    bar(ctx, px - pSize / 2, py - 14, pSize, 7, g.hp / g.stats.maxHp, '#4ade80');
-
-    // Mob
-    if (g.mob) {
-      const m = g.mob;
-      const mSize = unit * (m.boss ? 1.9 : 1.1);
-      const mx = w * 0.68 + g.anim.mobHit * 6;
-      const my = groundY - mSize * 0.55 - Math.abs(Math.sin(time * 3)) * 4;
-      shadow(ctx, mx, groundY, mSize * 0.5);
-      ctx.fillStyle = g.anim.mobHit > 0.6 ? '#ffffff' : m.color;
-      ctx.beginPath();
-      ctx.ellipse(mx, my, mSize * 0.55, mSize * 0.5, 0, 0, Math.PI * 2);
-      ctx.fill();
+    // Companions
+    for (const c of g.party) {
+      const def = COMPANION[c.id];
+      if (!def) continue;
+      const cx = this.sx(c.x);
+      const cy = this.sy(c.y);
+      const r = 15 * this.scale * (1 + c.hit * 0.15);
+      ctx.fillStyle = def.color;
+      circle(ctx, cx, cy, r);
       ctx.strokeStyle = 'rgba(0,0,0,0.3)';
       ctx.lineWidth = 2;
       ctx.stroke();
-      // eyes (looking left at the player)
-      ctx.fillStyle = '#111';
-      circle(ctx, mx - mSize * 0.22, my - mSize * 0.08, mSize * 0.06);
-      circle(ctx, mx - mSize * 0.02, my - mSize * 0.08, mSize * 0.06);
-      if (m.boss) {
-        // crown
-        ctx.fillStyle = '#ffc23d';
-        const cy = my - mSize * 0.5;
-        ctx.beginPath();
-        ctx.moveTo(mx - mSize * 0.25, cy);
-        ctx.lineTo(mx - mSize * 0.25, cy - mSize * 0.2);
-        ctx.lineTo(mx - mSize * 0.12, cy - mSize * 0.08);
-        ctx.lineTo(mx, cy - mSize * 0.25);
-        ctx.lineTo(mx + mSize * 0.12, cy - mSize * 0.08);
-        ctx.lineTo(mx + mSize * 0.25, cy - mSize * 0.2);
-        ctx.lineTo(mx + mSize * 0.25, cy);
-        ctx.closePath();
-        ctx.fill();
-      }
-      const barY = my - mSize * (m.boss ? 0.95 : 0.7);
-      bar(ctx, mx - mSize * 0.5, barY, mSize, 8, m.hp / m.maxHp, m.boss ? '#f72585' : '#ef4444');
-      ctx.fillStyle = '#fff';
-      ctx.font = `bold ${m.boss ? 15 : 12}px sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'bottom';
-      outlineText(ctx, m.name, mx, barY - 3);
-    }
-
-    // Boss timer
-    if (g.mob?.boss) {
-      const t = g.bossTimer / BALANCE.bossTimeLimit;
-      bar(ctx, w * 0.25, 12, w * 0.5, 10, t, t < 0.3 ? '#ef4444' : '#ffc23d');
-      ctx.fillStyle = '#fff';
-      ctx.font = 'bold 12px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'top';
-      outlineText(ctx, `BOSS  ${Math.ceil(g.bossTimer)}s`, w / 2, 26);
-    }
-
-    // Skill cooldown icons
-    let sx = 10;
-    for (const sk of SKILLS) {
-      const locked = s.level < sk.unlock;
-      const size = 34;
-      const sy = h - size - 10;
-      ctx.fillStyle = 'rgba(0,0,0,0.45)';
-      roundRect(ctx, sx, sy, size, size, 8);
-      ctx.fill();
-      ctx.font = '18px sans-serif';
+      ctx.font = `${r * 1.1}px sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.globalAlpha = locked ? 0.3 : 1;
-      ctx.fillText(sk.icon, sx + size / 2, sy + size / 2 + 1);
-      ctx.globalAlpha = 1;
-      if (!locked) {
-        const frac = Math.max(0, g.skillCd[sk.id] / sk.cd);
-        ctx.fillStyle = 'rgba(0,0,0,0.55)';
-        ctx.fillRect(sx, sy, size, size * frac);
-      } else {
-        ctx.fillStyle = '#fff';
-        ctx.font = 'bold 10px sans-serif';
-        ctx.fillText(`Lv${sk.unlock}`, sx + size / 2, sy + size - 7);
-      }
-      sx += size + 6;
+      ctx.fillText(def.icon, cx, cy + 1);
     }
 
+    // Player
+    this.drawPlayer(g, time);
+
+    // Effects
+    for (const e of g.effects) {
+      const t = 1 - e.life / e.maxLife;
+      ctx.globalAlpha = Math.max(0, e.life / e.maxLife);
+      const ex = this.sx(e.x);
+      const ey = this.sy(e.y);
+      if (e.kind === 'ring') {
+        ctx.strokeStyle = e.color;
+        ctx.lineWidth = 6 * (1 - t) + 2;
+        ctx.beginPath();
+        ctx.ellipse(ex, ey, e.r * this.scale * (0.3 + 0.7 * t), e.r * this.scale * 0.5 * (0.3 + 0.7 * t), 0, 0, Math.PI * 2);
+        ctx.stroke();
+      } else if (e.kind === 'slash') {
+        ctx.strokeStyle = e.color;
+        ctx.lineWidth = 5;
+        ctx.beginPath();
+        ctx.arc(ex, ey, e.r * this.scale * 0.6, -1.2 + t, 1.2 + t);
+        ctx.stroke();
+      } else if (e.kind === 'star') {
+        // a falling star landing on the target
+        const fy = ey - (1 - Math.min(1, t * 2.5)) * 220 * this.scale;
+        ctx.fillStyle = e.color;
+        star(ctx, ex, fy, e.r * this.scale * 0.5, 5);
+        if (t > 0.4) {
+          ctx.strokeStyle = e.color;
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(ex, ey, e.r * this.scale * t, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+      } else if (e.kind === 'bolt' && e.x2 !== undefined && e.y2 !== undefined) {
+        const tx = this.sx(e.x2);
+        const ty = this.sy(e.y2);
+        const k = Math.min(1, t * 1.6);
+        ctx.fillStyle = e.color;
+        circle(ctx, ex + (tx - ex) * k, ey + (ty - ey) * k, 6);
+      } else if (e.kind === 'poof') {
+        ctx.fillStyle = e.color;
+        for (let i = 0; i < 6; i++) {
+          const a = (i / 6) * Math.PI * 2;
+          const d = e.r * this.scale * t;
+          circle(ctx, ex + Math.cos(a) * d, ey + Math.sin(a) * d, 6 * (1 - t) + 1);
+        }
+      }
+    }
+    ctx.globalAlpha = 1;
+
     // Floating text
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
     for (const f of g.floats) {
       ctx.globalAlpha = Math.min(1, f.life * 2);
       ctx.fillStyle = f.color;
       ctx.font = `bold ${f.size}px sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      outlineText(ctx, f.text, f.x * w, f.y * h);
+      outlineText(ctx, f.text, this.sx(f.x), this.sy(f.y));
     }
     ctx.globalAlpha = 1;
 
-    if (dead) {
+    // Minimap
+    this.minimap(g);
+
+    // Boss timer
+    const boss = g.mobs.find((m) => m.boss);
+    if (boss) {
+      const t = g.bossTimer / BALANCE.bossTimeLimit;
+      bar(ctx, w * 0.25, 44, w * 0.5, 12, boss.hp / boss.maxHp, '#f72585');
+      bar(ctx, w * 0.25, 60, w * 0.5, 6, t, t < 0.3 ? '#ef4444' : '#ffc23d');
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 13px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      outlineText(ctx, `${boss.name}  ·  ${Math.ceil(g.bossTimer)}s`, w / 2, 41);
+    }
+
+    if (g.deadTimer > 0) {
       ctx.fillStyle = 'rgba(0,0,0,0.35)';
       ctx.fillRect(0, 0, w, h);
       ctx.fillStyle = '#fff';
@@ -209,22 +209,157 @@ export class Renderer {
       outlineText(ctx, 'Recovering...', w / 2, h / 2);
     }
   }
+
+  private hills(parallax: number, spacing: number, height: number, color: string) {
+    const { ctx, w } = this;
+    const gy = this.sy(0);
+    ctx.fillStyle = color;
+    const off = (this.camX * this.scale * parallax) % spacing;
+    for (let x = -spacing; x < w + spacing * 2; x += spacing) {
+      ctx.beginPath();
+      ctx.ellipse(x - off, gy, spacing * 0.7, height * this.scale, 0, Math.PI, 0);
+      ctx.fill();
+    }
+  }
+
+  private drawPlayer(g: Game, time: number) {
+    const { ctx } = this;
+    const p = g.player;
+    const sc = this.scale;
+    const pw = p.w * sc;
+    const ph = p.h * sc;
+    const x = this.sx(p.x);
+    const feet = this.sy(p.y);
+    const walking = Math.abs(p.vx) > 1 && p.onGround;
+    const bob = walking ? Math.abs(Math.sin(time * 12)) * 4 : Math.sin(time * 3) * 1.5;
+    const top = feet - ph - bob;
+
+    ctx.save();
+    ctx.globalAlpha = g.deadTimer > 0 ? 0.35 : 1;
+    shadow(ctx, x, this.sy(this.groundUnder(g)), pw * 0.5);
+    ctx.fillStyle = g.anim.playerHit > 0.5 ? '#ff8f8f' : '#3a86ff';
+    roundRect(ctx, x - pw / 2, top, pw, ph, pw * 0.25);
+    ctx.fill();
+    // eyes face the movement direction
+    const f = p.facing;
+    ctx.fillStyle = '#fff';
+    circle(ctx, x + f * pw * 0.05, top + ph * 0.36, pw * 0.11);
+    circle(ctx, x + f * pw * 0.3, top + ph * 0.36, pw * 0.11);
+    ctx.fillStyle = '#111';
+    circle(ctx, x + f * pw * 0.09, top + ph * 0.37, pw * 0.055);
+    circle(ctx, x + f * pw * 0.34, top + ph * 0.37, pw * 0.055);
+    // sword
+    ctx.save();
+    ctx.translate(x + f * pw * 0.45, top + ph * 0.62);
+    ctx.scale(f, 1);
+    ctx.rotate(-1.0 + g.anim.swing * 2.2);
+    ctx.fillStyle = '#e0e0e0';
+    ctx.fillRect(0, -3, pw * 0.85, 6);
+    ctx.fillStyle = '#8d6e63';
+    ctx.fillRect(-6, -6, 8, 12);
+    ctx.restore();
+    ctx.restore();
+    bar(ctx, x - pw / 2, top - 12, pw, 6, g.hp / g.stats.maxHp, '#4ade80');
+  }
+
+  private groundUnder(g: Game): number {
+    const p = g.player;
+    let y = 0;
+    for (const pl of g.layout.platforms) if (p.x >= pl.x1 && p.x <= pl.x2 && pl.y <= p.y + 1 && pl.y > y) y = pl.y;
+    return y;
+  }
+
+  private drawMob(m: Mob, time: number) {
+    const { ctx } = this;
+    const sc = this.scale;
+    const grow = 1 - m.spawnAnim;
+    const mw = m.w * sc * grow;
+    const mh = m.h * sc * grow;
+    const x = this.sx(m.x) + m.lunge * m.facing * 10;
+    const feet = this.sy(m.y);
+    if (x < -mw || x > this.w + mw) return;
+    const squish = m.dir ? Math.sin(time * 8 + m.id) * 0.06 : Math.sin(time * 2 + m.id) * 0.03;
+    const cy = feet - mh * 0.5;
+    shadow(ctx, x, feet, mw * 0.5);
+    ctx.fillStyle = m.hitFlash > 0.6 ? '#ffffff' : m.color;
+    ctx.beginPath();
+    ctx.ellipse(x, cy + mh * squish * 0.5, mw * 0.5 * (1 + squish), mh * 0.5 * (1 - squish), 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    // eyes look where it's facing
+    ctx.fillStyle = '#111';
+    circle(ctx, x + m.facing * mw * 0.08, cy - mh * 0.08, Math.max(2, mw * 0.06));
+    circle(ctx, x + m.facing * mw * 0.28, cy - mh * 0.08, Math.max(2, mw * 0.06));
+    if (m.boss) {
+      ctx.fillStyle = '#ffc23d';
+      const ty = cy - mh * 0.48;
+      ctx.beginPath();
+      ctx.moveTo(x - mw * 0.22, ty);
+      ctx.lineTo(x - mw * 0.22, ty - mh * 0.2);
+      ctx.lineTo(x - mw * 0.11, ty - mh * 0.08);
+      ctx.lineTo(x, ty - mh * 0.25);
+      ctx.lineTo(x + mw * 0.11, ty - mh * 0.08);
+      ctx.lineTo(x + mw * 0.22, ty - mh * 0.2);
+      ctx.lineTo(x + mw * 0.22, ty);
+      ctx.closePath();
+      ctx.fill();
+    } else if (m.hp < m.maxHp) {
+      bar(ctx, x - mw * 0.45, feet - mh - 10, mw * 0.9, 5, m.hp / m.maxHp, '#ef4444');
+    }
+  }
+
+  private minimap(g: Game) {
+    const { ctx, w } = this;
+    const mw = Math.min(180, w * 0.32);
+    const mh = 40;
+    const x0 = w - mw - 8;
+    const y0 = 34;
+    const k = mw / g.layout.width;
+    const ky = (mh - 8) / 300;
+    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    roundRect(ctx, x0, y0, mw, mh, 6);
+    ctx.fill();
+    const base = y0 + mh - 4;
+    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    ctx.fillRect(x0 + 2, base, mw - 4, 2);
+    for (const pl of g.layout.platforms) ctx.fillRect(x0 + pl.x1 * k, base - pl.y * ky, (pl.x2 - pl.x1) * k, 2);
+    for (const m of g.mobs) {
+      ctx.fillStyle = m.boss ? '#f72585' : '#ef4444';
+      circle(ctx, x0 + m.x * k, base - m.y * ky - 2, m.boss ? 4 : 2);
+    }
+    ctx.fillStyle = '#ffd60a';
+    circle(ctx, x0 + g.player.x * k, base - g.player.y * ky - 3, 3.5);
+  }
 }
 
 function circle(ctx: CanvasRenderingContext2D, x: number, y: number, r: number) {
   ctx.beginPath();
-  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.arc(x, y, Math.max(0.1, r), 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function star(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, points: number) {
+  ctx.beginPath();
+  for (let i = 0; i < points * 2; i++) {
+    const a = (i / (points * 2)) * Math.PI * 2 - Math.PI / 2;
+    const rr = i % 2 === 0 ? r : r * 0.45;
+    ctx.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr);
+  }
+  ctx.closePath();
   ctx.fill();
 }
 
 function shadow(ctx: CanvasRenderingContext2D, x: number, y: number, r: number) {
   ctx.fillStyle = 'rgba(0,0,0,0.18)';
   ctx.beginPath();
-  ctx.ellipse(x, y + 2, r, r * 0.22, 0, 0, Math.PI * 2);
+  ctx.ellipse(x, y + 2, Math.max(0.1, r), Math.max(0.1, r * 0.22), 0, 0, Math.PI * 2);
   ctx.fill();
 }
 
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  r = Math.min(r, w / 2, h / 2);
   ctx.beginPath();
   ctx.moveTo(x + r, y);
   ctx.arcTo(x + w, y, x + w, y + h, r);

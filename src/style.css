@@ -24,7 +24,7 @@ html, body {
 }
 
 #app {
-  max-width: 560px;
+  max-width: 960px;
   height: 100%;
   margin: 0 auto;
   display: flex;
@@ -47,7 +47,7 @@ html, body {
 .cur { background: var(--card); padding: 4px 10px; border-radius: 999px; font-size: 14px; display: flex; gap: 6px; }
 
 /* Battle */
-#battle { position: relative; height: 34vh; min-height: 200px; max-height: 320px; }
+#battle { position: relative; height: 50vh; min-height: 280px; max-height: 520px; overflow: hidden; touch-action: none; }
 #canvas { width: 100%; height: 100%; display: block; }
 
 /* Stage bar */
@@ -235,3 +235,59 @@ textarea {
 .reward-list div { background: var(--card); padding: 10px; border-radius: 10px; display: flex; justify-content: space-between; }
 
 .hidden { display: none !important; }
+
+/* Battle HUD */
+#hud-top { position: absolute; top: 8px; left: 8px; display: flex; gap: 6px; align-items: center; }
+.hudbtn {
+  border: 2px solid #ffffff55;
+  background: #000a;
+  color: #fff;
+  font-weight: 800;
+  font-size: 12px;
+  border-radius: 8px;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+.hudbtn.on { background: #2b9348; border-color: #80ed99; }
+.badge { background: #f77f00; color: #fff; font-size: 10px; font-weight: 800; padding: 3px 7px; border-radius: 6px; }
+#keyhint { position: absolute; top: 10px; right: 10px; font-size: 11px; color: #fff; background: #0007; padding: 4px 8px; border-radius: 6px; }
+
+#skillbar { position: absolute; bottom: 10px; left: 10px; display: flex; gap: 6px; }
+.skillbtn {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  border: 2px solid #ffffff44;
+  background: #000a;
+  font-size: 20px;
+  overflow: hidden;
+  cursor: pointer;
+  padding: 0;
+}
+.skillbtn .cd { position: absolute; left: 0; right: 0; top: 0; background: #000b; pointer-events: none; }
+.skillbtn .key { position: absolute; right: 3px; bottom: 1px; font-size: 9px; color: #fff; font-weight: 700; }
+.skillbtn.locked { opacity: 0.45; }
+.skillbtn .lock { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 10px; color: #fff; font-weight: 800; }
+
+.pad { position: absolute; bottom: 10px; display: none; gap: 8px; }
+#pad-left { left: 10px; }
+#pad-right { right: 10px; }
+.pad button {
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  border: 2px solid #ffffff55;
+  background: #0008;
+  color: #fff;
+  font-size: 20px;
+  touch-action: none;
+}
+.pad button.pressed { background: #3a86ffcc; }
+
+@media (pointer: coarse) {
+  .pad { display: flex; }
+  #keyhint { display: none; }
+  #skillbar { left: auto; right: 10px; bottom: 76px; }
+  #battle { height: 56vh; }
+}

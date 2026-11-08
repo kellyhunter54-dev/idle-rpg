@@ -29,11 +29,26 @@ One-time setup: repo **Settings → Pages → Source: GitHub Actions**.
 | `src/state.ts` | Save data shape, new game defaults, migration for old saves. |
 | `src/save.ts` | Saving/loading. Swap the storage implementation here for the desktop build. |
 | `src/stats.ts` | Turns save data into combat stats (ATK, HP, crit). |
-| `src/game.ts` | Game logic: combat loop, bosses, summoning, enhancing, offline rewards. No browser code, so it can be simulated. |
+| `src/world.ts` | Map layouts (platforms, widths) and physics constants. |
+| `src/game.ts` | Game logic: physics, mob AI, auto-pilot, combat, bosses, summoning, enhancing, offline rewards. No browser code, so it can be simulated. |
+| `src/input.ts` | Keyboard and touch controls. |
 | `src/render.ts` | Canvas battle scene (placeholder shapes; replace when real art arrives). |
 | `src/ui.ts` | Tabs, panels, modals, toasts. |
 | `src/main.ts` | Wires everything together, game loop, autosave. |
 | `tools/sim.ts` | Balance simulator. |
+
+## Controls
+
+The hero plays itself while AUTO is on. Any input takes over, and AUTO resumes 2 seconds after you stop.
+
+- A/D or arrows: move
+- W, Up or Space: jump
+- S + jump: drop through a platform
+- J or Z: attack
+- 1, 2, 3: skills
+- Q: toggle AUTO
+
+Phones get on-screen buttons.
 
 ## Desktop client later
 
