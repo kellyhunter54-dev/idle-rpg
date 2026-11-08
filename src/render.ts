@@ -1,6 +1,7 @@
 import { BALANCE, CHAPTERS, SPLIT, phaseAt, COMPANION, JOBS, JobDef, JobId, ZONES, levelColor } from './data';
 import { Game, Mob, Telegraph, Vec } from './game';
 import { TILE, Tile } from './map';
+import * as PX from './pixel';
 
 /**
  * Isometric renderer. Ground-level things (tiles, telegraphs, spell circles) are drawn in world
@@ -19,6 +20,12 @@ export class Renderer {
   private camY = 0;
   private camInit = false;
   private touch = false;
+  /** Crisp layer on top of the (possibly low-res) world: text, bars, boss bar, minimap. */
+  private overlay: HTMLCanvasElement;
+  private octx: CanvasRenderingContext2D;
+  private odpr = 1;
+  /** Pixel art: CSS px per game pixel (1 in classic mode). */
+  private block = 1;
   private vignette: HTMLCanvasElement | null = null;
   private vignetteKey = '';
   private lastTime = 0;
@@ -29,22 +36,29 @@ export class Renderer {
 
   constructor(private canvas: HTMLCanvasElement) {
     this.ctx = canvas.getContext('2d')!;
+    this.overlay = document.createElement('canvas');
+    this.overlay.id = 'overlay';
+    this.overlay.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;';
+    canvas.insertAdjacentElement('afterend', this.overlay);
+    this.octx = this.overlay.getContext('2d')!;
     // Shrinking effects can produce tiny negative radii; canvas throws on those, so clamp.
     const arc = this.ctx.arc.bind(this.ctx);
     this.ctx.arc = (x, y, r, a0, a1, ccw) => arc(x, y, Math.max(0, r), a0, a1, ccw);
     const ellipse = this.ctx.ellipse.bind(this.ctx);
     this.ctx.ellipse = (x, y, rx, ry, rot, a0, a1, ccw) => ellipse(x, y, Math.max(0, rx), Math.max(0, ry), rot, a0, a1, ccw);
+    const oarc = this.octx.arc.bind(this.octx);
+    this.octx.arc = (x, y, r, a0, a1, ccw) => oarc(x, y, Math.max(0, r), a0, a1, ccw);
     this.resize();
     new ResizeObserver(() => this.resize()).observe(canvas);
     window.addEventListener('pixelmode', () => this.resize());
   }
 
-  /** Pixel filter (Info > Testing tools): draw at a low resolution and scale up with hard edges. */
+  /** Pixel art (default; Info > Testing tools switches to the classic art): the world is drawn at a low resolution and scaled up with hard edges. */
   private get pixel(): boolean {
     try {
-      return localStorage.getItem('idle-rpg-pixel') === '1';
+      return localStorage.getItem('idle-rpg-pixel') !== '0';
     } catch {
-      return false;
+      return true;
     }
   }
 
@@ -53,14 +67,19 @@ export class Renderer {
     this.w = r.width;
     this.h = r.height;
     if (this.pixel) {
-      // about 640 game pixels across, each drawn as a crisp block
-      const block = Math.max(2, Math.round(r.width / 640));
+      // about 380 game pixels across, each drawn as a crisp block
+      const block = Math.max(2, Math.round(r.width / 380));
+      this.block = block;
       this.dpr = 1 / block;
       this.canvas.style.imageRendering = 'pixelated';
     } else {
+      this.block = 1;
       this.dpr = window.devicePixelRatio || 1;
       this.canvas.style.imageRendering = '';
     }
+    this.odpr = window.devicePixelRatio || 1;
+    this.overlay.width = Math.round(r.width * this.odpr);
+    this.overlay.height = Math.round(r.height * this.odpr);
     this.canvas.width = Math.max(1, Math.round(r.width * this.dpr));
     this.canvas.height = Math.max(1, Math.round(r.height * this.dpr));
     this.ctx.imageSmoothingEnabled = !this.pixel;
@@ -117,7 +136,32 @@ export class Renderer {
     this.ctx.setTransform(k * this.dpr, (k / 2) * this.dpr, -k * this.dpr, (k / 2) * this.dpr, this.ox * this.dpr, this.oy * this.dpr);
   }
   private screenTransform() {
-    this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    const d = this.ctx === this.octx ? this.odpr : this.dpr;
+    this.ctx.setTransform(d, 0, 0, d, 0, 0);
+  }
+  /** Run drawing code on the crisp overlay layer. */
+  private onOverlay(fn: () => void) {
+    const saved = this.ctx;
+    this.ctx = this.octx;
+    this.screenTransform();
+    fn();
+    this.ctx = saved;
+  }
+  /** Draw a pixel sprite with its anchor (ax, ay in sprite pixels) at screen point (sx, sy), snapped to the pixel grid. */
+  private blit(img: HTMLCanvasElement, sx: number, sy: number, ax: number, ay: number, flip = false, alpha = 1) {
+    const B = this.block;
+    const gx = Math.round(sx / B) - (flip ? img.width - ax : ax);
+    const gy = Math.round(sy / B) - ay;
+    const ctx = this.ctx;
+    if (alpha !== 1) ctx.globalAlpha = alpha;
+    if (flip) {
+      ctx.save();
+      ctx.translate((gx + img.width) * B, gy * B);
+      ctx.scale(-1, 1);
+      ctx.drawImage(img, 0, 0, img.width * B, img.height * B);
+      ctx.restore();
+    } else ctx.drawImage(img, gx * B, gy * B, img.width * B, img.height * B);
+    if (alpha !== 1) ctx.globalAlpha = 1;
   }
 
   draw(g: Game, time: number) {
@@ -129,7 +173,8 @@ export class Renderer {
     const p = g.player;
 
     // zoom: scales with the screen but stays close, about 8-10 tiles across
-    this.k = Math.max(0.55, Math.min(1.05, Math.min(w / 1050, h / 640)));
+    // pixel art: a fixed 0.25 game px per world unit (a tile is a 32x16 diamond)
+    this.k = this.pixel ? 0.25 * this.block : Math.max(0.55, Math.min(1.05, Math.min(w / 1050, h / 640)));
     if (!this.camInit || Math.hypot(p.x - this.camX, p.y - this.camY) > 900) {
       this.camX = p.x;
       this.camY = p.y;
@@ -144,6 +189,15 @@ export class Renderer {
     const centerY = this.touch ? h * 0.42 : h * 0.52;
     this.ox = w / 2 - (this.camX - this.camY) * this.k;
     this.oy = centerY - (this.camX + this.camY) * this.k * 0.5;
+    if (this.pixel) {
+      // snap the camera to whole game pixels so sprites never shimmer
+      this.ox = Math.round(this.ox / this.block) * this.block;
+      this.oy = Math.round(this.oy / this.block) * this.block;
+    }
+    this.octx.setTransform(1, 0, 0, 1, 0, 0);
+    this.octx.clearRect(0, 0, this.overlay.width, this.overlay.height);
+    const pixel = this.pixel;
+    const chIdx = (tx: number) => g.map.palette ?? ZONES[Math.min(ZONES.length - 1, Math.floor(tx / g.map.zoneW))].chapter;
 
     this.screenTransform();
     ctx.fillStyle = '#0b0a08';
@@ -161,6 +215,20 @@ export class Renderer {
     const maxTy = Math.min(g.map.h - 1, Math.ceil(bl.y / TILE) + 1);
 
     // ---- floor ----
+    if (pixel) {
+      this.screenTransform();
+      for (let ty = minTy; ty <= maxTy; ty++)
+        for (let tx = minTx; tx <= maxTx; tx++) {
+          const i = ty * g.map.w + tx;
+          if (lair && g.map.tiles[i] === Tile.Rock) continue;
+          const cx = (tx + 0.5) * TILE;
+          const cy = (ty + 0.5) * TILE;
+          const v = (g.map.variant[i] * 3 + tx * 7 + ty * 13) & 15;
+          const img = lair ? PX.stoneTile(chOf(tx).rock, v & 3) : PX.groundTile(chIdx(tx), v, tx, ty);
+          this.blit(img, this.px(cx, cy), this.py(cx, cy), PX.TILE_W / 2, PX.TILE_H / 2);
+        }
+      this.groundTransform();
+    } else {
     this.groundTransform();
     for (let ty = minTy; ty <= maxTy; ty++) {
       for (let tx = minTx; tx <= maxTx; tx++) {
@@ -196,6 +264,7 @@ export class Renderer {
       ctx.lineTo((maxTx + 1) * TILE, ty * TILE);
     }
     ctx.stroke();
+    }
 
     // ---- ground layer: telegraphs, spell circles, shadows ----
     this.drawAltars(g, time);
@@ -246,13 +315,14 @@ export class Renderer {
         // fade obstacles that stand in front of the hero
         const sxp = this.px(cx, cy);
         const syp = this.py(cx, cy);
-        const front = cx + cy > p.x + p.y && Math.abs(sxp - this.px(p.x, p.y)) < 90 * this.k && syp - this.py(p.x, p.y) < 180 * this.k;
+        const front = cx + cy > p.x + p.y && Math.abs(sxp - this.px(p.x, p.y)) < (this.pixel ? 130 : 90) * this.k && syp - this.py(p.x, p.y) < (this.pixel ? 200 : 180) * this.k;
         list.push({
           depth: cx + cy,
           draw: () => {
             const tc = chOf(tx);
             if (tile === Tile.Gate) this.drawGate(cx, cy, time);
             else if (tile === Tile.Pillar) this.drawBrazier(cx, cy, tc.rock, time);
+            else if (pixel) this.drawPixelObstacle(tile, cx, cy, chIdx(tx), tc.rock, front, lair, g.map.variant[ty * g.map.w + tx] + tx * 3 + ty * 5);
             else if (tile === Tile.Tree) this.drawTree(cx, cy, tc.tree, front, g.map.variant[ty * g.map.w + tx]);
             else this.drawRock(cx, cy, tc.rock, front);
           },
@@ -281,7 +351,20 @@ export class Renderer {
     this.drawAirEffects(g);
     this.drawFallingGlobes(g);
 
-    // ---- floating text ----
+    // ---- floating text (crisp overlay) ----
+    this.onOverlay(() => this.drawFloats(g));
+    // ---- mood: vignette + skill flash ----
+    this.screenTransform();
+    ctx.drawImage(this.getVignette(lair), 0, 0, w, h);
+    if (g.anim.flash > 0) {
+      ctx.fillStyle = hexA(g.anim.flashColor, g.anim.flash * 0.12);
+      ctx.fillRect(0, 0, w, h);
+    }
+    this.onOverlay(() => this.drawHud(g));
+  }
+
+  private drawFloats(g: Game) {
+    const ctx = this.ctx;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     for (const f of g.floats) {
@@ -291,13 +374,11 @@ export class Renderer {
       outlineText(ctx, f.text, this.px(f.x, f.y), this.py(f.x, f.y, f.z));
     }
     ctx.globalAlpha = 1;
+  }
 
-    // ---- mood: vignette + skill flash ----
-    ctx.drawImage(this.getVignette(lair), 0, 0, w, h);
-    if (g.anim.flash > 0) {
-      ctx.fillStyle = hexA(g.anim.flashColor, g.anim.flash * 0.12);
-      ctx.fillRect(0, 0, w, h);
-    }
+  private drawHud(g: Game) {
+    const ctx = this.ctx;
+    const { w, h } = this;
     if (g.anim.playerHit > 0.3) {
       ctx.strokeStyle = `rgba(200,30,30,${g.anim.playerHit * 0.5})`;
       ctx.lineWidth = 10;
@@ -623,6 +704,26 @@ export class Renderer {
   }
 
   // ---------------- Standing layer ----------------
+  /** Pixel-art trees, boulders and lair walls. */
+  private drawPixelObstacle(tile: number, x: number, y: number, chapter: number, rock: string, faded: boolean, lair: boolean, v: number) {
+    const sx = this.px(x, y);
+    const sy = this.py(x, y);
+    const alpha = faded ? 0.45 : 1;
+    if (tile === Tile.Tree) {
+      const pine = chapter === 1 || chapter === 3 || chapter === 4 ? v % 4 !== 0 : v % 4 === 3;
+      const img = pine ? PX.pineTree(chapter, v % 4, chapter === 3) : PX.leafyTree(chapter, v % 4);
+      this.blit(PX.shadowSprite(22), sx, sy, 11, 4, false, alpha);
+      this.blit(img, sx, sy + 4 * this.block, img.width >> 1, img.height - 1, (v & 4) !== 0, alpha);
+    } else if (lair) {
+      const img = PX.wallBlock(rock, v & 3);
+      this.blit(img, sx, sy, img.width >> 1, PX.TILE_H / 2, false, alpha);
+    } else {
+      const img = PX.boulder(rock, v & 3, chapter <= 1);
+      this.blit(PX.shadowSprite(24), sx, sy + 2 * this.block, 12, 4, false, alpha);
+      this.blit(img, sx, sy + 3 * this.block, img.width >> 1, img.height - 1, (v & 8) !== 0, alpha);
+    }
+  }
+
   private drawTree(x: number, y: number, color: string, faded: boolean, v: number) {
     const ctx = this.ctx;
     const sx = this.px(x, y);
@@ -684,11 +785,59 @@ export class Renderer {
       ctx.fillStyle = glow;
       ctx.fillRect(sx - 60 * k, sy - 90 * k, 120 * k, 120 * k);
     }
-    ctx.save();
-    ctx.globalAlpha = g.deadTimer > 0 ? 0.3 : 1;
-    drawHeroFigure(ctx, sx, sy, k, g.job, this.screenDir(p.angle), g.anim.swing, p.moving, time, g.anim.playerHit > 0.5);
-    ctx.restore();
-    const by = sy - 46 * k - 34 * k;
+    let by = sy - 46 * k - 34 * k;
+    if (this.pixel) by = this.drawPixelHero(g, sx, sy, time);
+    else {
+      ctx.save();
+      ctx.globalAlpha = g.deadTimer > 0 ? 0.3 : 1;
+      drawHeroFigure(ctx, sx, sy, k, g.job, this.screenDir(p.angle), g.anim.swing, p.moving, time, g.anim.playerHit > 0.5);
+      ctx.restore();
+    }
+    this.onOverlay(() => this.heroBars(g, sx, by));
+  }
+
+  /** Pixel hero with its weapon; returns the screen y just above the head (for the bars). */
+  private drawPixelHero(g: Game, sx: number, sy: number, time: number): number {
+    const ctx = this.ctx;
+    const B = this.block;
+    const p = g.player;
+    const dir = this.screenDir(p.angle);
+    const back = dir.dy < -0.15;
+    const flip = dir.dx < 0;
+    const frame = p.moving ? [0, 1, 0, 2][Math.floor(time * 8) % 4] : 0;
+    const img = PX.hero(g.job.id, back, frame, g.anim.playerHit > 0.5);
+    const alpha = g.deadTimer > 0 ? 0.3 : 1;
+    const wp = PX.weapon(g.job.id);
+    const handY = sy - 9 * B;
+    const drawWeapon = () => {
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      const a = Math.atan2(dir.dy, dir.dx);
+      if (g.job.id === 'warrior') {
+        const sw = (g.anim.swing - 0.5) * 2.2;
+        ctx.translate(Math.round(sx / B + dir.dx * 4) * B, Math.round(handY / B) * B);
+        ctx.rotate(a - sw * (flip ? -1 : 1));
+        ctx.drawImage(wp, -2 * B, -(wp.height >> 1) * B, wp.width * B, wp.height * B);
+      } else if (g.job.id === 'archer') {
+        ctx.translate(Math.round(sx / B + dir.dx * 6) * B, Math.round(handY / B) * B);
+        ctx.rotate(a);
+        ctx.drawImage(wp, -2 * B, -(wp.height >> 1) * B, wp.width * B, wp.height * B);
+      } else {
+        const lift = Math.round(g.anim.swing * 2);
+        const x = Math.round(sx / B) + (flip ? -7 : 5);
+        ctx.drawImage(wp, x * B, (Math.round(sy / B) - wp.height - 4 - lift) * B, wp.width * B, wp.height * B);
+      }
+      ctx.restore();
+    };
+    if (back) drawWeapon();
+    this.blit(img, sx, sy, img.width >> 1, img.height - 1, flip, alpha);
+    if (!back) drawWeapon();
+    return sy - img.height * B - 10;
+  }
+
+  private heroBars(g: Game, sx: number, by: number) {
+    const ctx = this.ctx;
+    const k = this.k;
     bar(ctx, sx - 22 * k, by, 44 * k, 5, g.hp / g.stats.maxHp, '#4caf50');
     if (g.stats.maxMana > 0) bar(ctx, sx - 22 * k, by + 6, 44 * k, 4, g.mana / g.stats.maxMana, '#4ea1ff');
     if (g.usesFocus) bar(ctx, sx - 22 * k, by + 6, 44 * k, 4, g.focus / 100, g.deadeye ? '#fff3c4' : '#ffd166');
@@ -764,6 +913,10 @@ export class Renderer {
   }
 
   private drawMob(m: Mob, time: number, playerLevel: number, mainSlime = false) {
+    if (this.pixel) {
+      this.drawPixelMob(m, time, playerLevel, mainSlime);
+      return;
+    }
     const ctx = this.ctx;
     const k = this.k;
     const grow = 1 - m.spawnAnim;
@@ -840,6 +993,59 @@ export class Renderer {
       ctx.textBaseline = 'bottom';
       ctx.fillStyle = levelColor(m.level, playerLevel);
       outlineText(ctx, `Lv ${m.level}`, sx, cy - rh - (m.hp < m.maxHp ? 14 : 4));
+    }
+  }
+
+  private drawPixelMob(m: Mob, time: number, playerLevel: number, mainSlime: boolean) {
+    const grow = 1 - m.spawnAnim;
+    if (grow <= 0) return;
+    const B = this.block;
+    const sx = this.px(m.x, m.y);
+    const lift = m.hop ? Math.sin(Math.PI * Math.min(1, m.hop.t / m.hop.dur)) * 110 * this.k : 0;
+    const sy = this.py(m.x, m.y) - lift;
+    if (sx < -120 || sx > this.w + 120 || sy < -150 || sy > this.h + 150) return;
+    const r = Math.max(3, Math.round(m.r * 0.36 * grow));
+    const frame = m.moving ? Math.round(Math.sin(time * 9 + m.id)) : Math.sin(time * 2 + m.id) > 0.7 ? 1 : 0;
+    const variant = m.hitFlash > 0.6 ? 'hit' : m.state === 'windup' ? 'wind' : '';
+    const img = PX.slime(m.color, r, frame, variant);
+    this.blit(img, sx, sy + B, img.width >> 1, img.height - 1);
+    // eyes look where it's going
+    const d = this.screenDir(m.angle);
+    const top = sy - (img.height - 2) * B;
+    if (d.dy > -0.5) {
+      const ctx = this.ctx;
+      ctx.fillStyle = m.state === 'windup' ? '#ffdd00' : '#1b1410';
+      const ex = Math.round(sx / B + d.dx * r * 0.35);
+      const ey = Math.round(top / B + img.height * 0.45 + d.dy);
+      const gap = Math.max(1, Math.round(r * 0.35));
+      const eh = r > 8 ? 2 : 1;
+      ctx.fillRect((ex - gap) * B, ey * B, B, eh * B);
+      ctx.fillRect((ex + gap) * B, ey * B, B, eh * B);
+    }
+    if (m.boss) {
+      const hl = PX.horn(false);
+      const hr = PX.horn(true);
+      this.blit(hl, sx - r * 0.55 * B, top + 2 * B, hl.width, hl.height);
+      this.blit(hr, sx + r * 0.55 * B, top + 2 * B, 0, hr.height);
+      if (mainSlime) {
+        const c = PX.crown();
+        this.blit(c, sx, top - B, c.width >> 1, c.height);
+      }
+    } else {
+      this.onOverlay(() => {
+        const ctx = this.ctx;
+        const rw = (img.width / 2) * B;
+        if (m.hp < m.maxHp) bar(ctx, sx - rw, top - 12, rw * 2, 5, m.hp / m.maxHp, '#b91c1c');
+        if (m.bleeds.length) {
+          ctx.fillStyle = '#e5383b';
+          for (let i = 0; i < m.bleeds.length; i++) circle(ctx, sx - rw + 3 + i * 6, top - 19, 2.2);
+        }
+        ctx.font = 'bold 11px Georgia, serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'bottom';
+        ctx.fillStyle = levelColor(m.level, playerLevel);
+        outlineText(ctx, `Lv ${m.level}`, sx, top - (m.hp < m.maxHp ? 14 : 4));
+      });
     }
   }
 

@@ -14,9 +14,9 @@ const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getEleme
 
 const pixelOn = () => {
   try {
-    return localStorage.getItem('idle-rpg-pixel') === '1';
+    return localStorage.getItem('idle-rpg-pixel') !== '0';
   } catch {
-    return false;
+    return true;
   }
 };
 
@@ -729,8 +729,8 @@ export class UI {
       </div>
       <div class="row">
         <div class="info">
-          <div class="name">Pixel art filter ${pixelOn() ? '<span class="tag" style="background:#2d6a4f">ON</span>' : ''}</div>
-          <div class="sub">Preview: draws the game at a low resolution with crisp pixels. Real pixel art sprites come later.</div>
+          <div class="name">Pixel art ${pixelOn() ? '<span class="tag" style="background:#2d6a4f">ON</span>' : ''}</div>
+          <div class="sub">The new pixel-art look (work in progress). Turn off to see the old classic art.</div>
         </div>
         <button class="btn ${pixelOn() ? '' : 'alt'}" data-action="pixel">${pixelOn() ? 'Turn off' : 'Turn on'}</button>
       </div>
@@ -744,7 +744,7 @@ export class UI {
       </div>
       <button class="btn wide" style="background:#7f1d1d;margin-top:12px" data-action="reset">Reset this character to Lv 1</button>
       <p class="small" style="text-align:center;margin-top:16px"><a href="./side/">Play the classic side-scroller version</a></p>
-      <p class="muted small" style="text-align:center">v0.24.0</p>`;
+      <p class="muted small" style="text-align:center">v0.25.0</p>`;
   }
 
   // ---------------- Modals & toasts ----------------
