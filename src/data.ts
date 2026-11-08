@@ -466,7 +466,7 @@ export const SPLIT = {
   mainHopEvery: [1.1, 1.7] as [number, number],
   mainHopTime: 0.9,
   mainSlamRadius: 125,
-  waveSpeed: 190,
+  waveSpeed: 171,
   waveWidth: 34,
   waveMaxR: 950,
   waveCount: [2, 3, 4] as number[], // rings per pulse in phase 1 / 2 / 3 (phase 3: from the middle, nonstop)
