@@ -1470,7 +1470,7 @@ export class Game {
         if (m.actionTimer <= 0 && m.invuln <= 0 && !m.hop && !(m.group && this.isMainSlime(m) && m.phase === 2) && !this.telegraphs.some((t) => t.ownerId === m.id && t.boss)) {
           const slimes = m.group ? this.splitGroup(m).length : 1;
           m.actionTimer =
-            (this.isMainSlime(m) ? 1 : 0.75 + this.rand() * 0.6) *
+            (this.isMainSlime(m) ? 1 : (0.75 + this.rand() * 0.6) * (m.phase === 2 ? SPLIT.wild.actionMult : 1)) *
             ((this.enraged ? BALANCE.bossEnragedEvery : BALANCE.bossActionEvery[m.phase]) + this.rand() * 0.6) *
             (1 + SPLIT.actionSlowPerExtra * (slimes - 1));
           this.bossSpecial(m);
@@ -1795,7 +1795,7 @@ export class Game {
     }
     // bounce in place
     m.hop = { fx: m.x, fy: m.y, tx: m.x, ty: m.y, t: 0, dur: 0.55 };
-    if (m.actionTimer <= 0 && m.invuln <= 0 && !this.telegraphs.some((t) => t.ownerId === m.id)) {
+    if (SPLIT.wild.globes && m.actionTimer <= 0 && m.invuln <= 0 && !this.telegraphs.some((t) => t.ownerId === m.id)) {
       m.actionTimer = (SPLIT.globeEvery[0] + this.rand() * (SPLIT.globeEvery[1] - SPLIT.globeEvery[0])) * (this.enraged ? 0.75 : 1);
       this.globeRain(m);
     }
@@ -1855,8 +1855,10 @@ export class Game {
       m.moving = true;
       if (f >= 1) {
         m.hop = null;
-        m.hopTimer = SPLIT.hopEvery[0] + this.rand() * (SPLIT.hopEvery[1] - SPLIT.hopEvery[0]);
-        this.addGoo(m.x, m.y, SPLIT.gooPuddle * SPLIT.attackSize[m.gen]);
+        const wild = m.phase === 2;
+        const every = wild ? SPLIT.wild.hopEvery : SPLIT.hopEvery;
+        m.hopTimer = every[0] + this.rand() * (every[1] - every[0]);
+        this.addGoo(m.x, m.y, SPLIT.gooPuddle * SPLIT.attackSize[m.gen] * (wild ? SPLIT.wild.puddleMult : 1));
         this.effect('ring', m.x, m.y, SPLIT.hopRadius * SPLIT.attackSize[m.gen], '#7bc950', 0.35);
       }
       return;
@@ -1880,7 +1882,7 @@ export class Game {
   /** Drops goo drops behind a moving split slime (every ~50 units). */
   private trailGoo(m: Mob, moved: number, airborne = false) {
     m.gooDist += moved;
-    if (m.gooDist < (airborne ? 70 : 45)) return;
+    if (m.gooDist < (airborne ? 70 : m.phase === 2 ? SPLIT.wild.trailEvery : 45)) return;
     m.gooDist = 0;
     // no unmarked goo on top of you: mid-air drops skip the spot you're standing on
     if (airborne && dist(m, this.player) < 70) return;
@@ -1888,7 +1890,7 @@ export class Game {
   }
 
   private addGoo(x: number, y: number, r: number) {
-    if (this.goo.length > 160) this.goo.shift();
+    if (this.goo.length > SPLIT.gooMax) this.goo.shift();
     this.goo.push({ x, y, r, life: SPLIT.gooLife });
   }
 
@@ -1924,7 +1926,7 @@ export class Game {
     const main = this.isMainSlime(m);
     const p: Vec = main ? this.player : this.chaosPoint(1.1);
     this.telegraphs = this.telegraphs.filter((t) => t.ownerId !== m.id);
-    const kit = main ? ZONES[m.zone].bossKit[m.phase] ?? ZONES[m.zone].bossKit[0] : SPLIT.kit;
+    const kit = main ? ZONES[m.zone].bossKit[m.phase] ?? ZONES[m.zone].bossKit[0] : m.phase === 2 ? SPLIT.wild.kit : SPLIT.kit;
     const move = kit[Math.floor(this.rand() * kit.length)];
     const dmg = m.atk * COMBAT.telegraphDamageMult * (this.enraged ? BALANCE.bossEnrageDamage : 1);
     const speed = this.enraged ? 0.8 : m.phase === 2 ? 0.88 : 1; // later phases telegraph a bit faster

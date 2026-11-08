@@ -445,6 +445,16 @@ export const SPLIT = {
   hopTime: 1.0, // seconds in the air (the landing circle shows for this long)
   hopRadius: 80, // landing splash radius (scaled by attackSize)
   hopPct: 0.05, // landing hit, % of max HP (bosses' scaling applies)
+  /** Phase 3 is the wild phase: the crowned slime sits in the middle, the minis go wild. */
+  wild: {
+    hopEvery: [0.3, 0.8] as [number, number],
+    actionMult: 0.5, // specials twice as often
+    kit: ['charge', 'charge', 'charge', 'rain'] as BossMove[],
+    puddleMult: 1.35,
+    trailEvery: 28, // goo drop spacing while charging (normally 45)
+    globes: false, // the checkerboard globes (off: phase 3 is all about the minis)
+  },
+  gooMax: 280,
   /** Phases 1-2: the main slime hops after you; each landing slams and sends out slime waves with gaps. */
   mainHopEvery: [1.1, 1.7] as [number, number],
   mainHopTime: 0.9,
