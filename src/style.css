@@ -547,3 +547,5 @@ a { color: var(--trim-hi); }
 @media (max-width: 520px) { .tal-row { grid-template-columns: 1fr; } }
 
 .hidden { display: none !important; }
+
+.skillbtn.evade.active { box-shadow: 0 0 14px #ffd166; border-color: #ffd166; }

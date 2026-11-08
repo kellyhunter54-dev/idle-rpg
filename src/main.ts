@@ -25,7 +25,9 @@ function startGame(slot: number) {
   const game = new Game(state);
 
   // Skill buttons for this job (built before input setup so they get listeners)
+  const ev = game.job.evade;
   document.getElementById('skillbar')!.innerHTML =
+    `<button class="skillbtn evade" id="evadebtn" title="${ev.name} (Space): ${ev.desc} 10s cooldown.">${ev.icon}<div class="cd" id="evadecd"></div><span class="key">␣</span></button>` +
     `<button class="skillbtn flask" id="flaskbtn" title="Healing flask (R): heals ${Math.round(BALANCE.flaskHeal * 100)}%">🧪<span class="key">R</span><div class="count" id="flaskcount"></div></button>` +
     (game.usesFocus
       ? `<button class="skillbtn deadeye" id="deadeyebtn" title="Deadeye (F): at full Focus, your arrows are empowered">🎯<div class="fill" id="focusfill"></div><span class="key">F</span></button>`
@@ -50,6 +52,10 @@ function startGame(slot: number) {
     e.preventDefault();
     const why = game.activateDeadeye();
     if (why) ui.toast(why, '#ffd166');
+  });
+  document.getElementById('evadebtn')!.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    game.input.evade = true;
   });
   document.getElementById('flaskbtn')!.addEventListener('pointerdown', (e) => {
     e.preventDefault();

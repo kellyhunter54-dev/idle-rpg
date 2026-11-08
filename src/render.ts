@@ -423,6 +423,14 @@ export class Renderer {
       ctx.arc(o.x - o.r * 0.3, o.y - o.r * 0.25, o.r * 0.3, 0, Math.PI * 2);
       ctx.fill();
     }
+    if (g.parrying || g.sprinting) {
+      const p = g.player;
+      ctx.strokeStyle = g.parrying ? 'rgba(255,209,102,0.95)' : 'rgba(144,224,239,0.8)';
+      ctx.lineWidth = g.parrying ? 7 : 4;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r * (g.parrying ? 1.9 : 1.5) + Math.sin(time * 14) * 2, 0, Math.PI * 2);
+      ctx.stroke();
+    }
     if (g.rooted) {
       const p = g.player;
       ctx.strokeStyle = 'rgba(123,201,80,0.9)';

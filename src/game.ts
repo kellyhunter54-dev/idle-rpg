@@ -1,6 +1,6 @@
 import {
   BALANCE, COMPANION, COMPANIONS, GROWTH, GrowthKey, JobDef, MobStats, RARITIES, Rarity, SLOTS,
-  Slot, TALENT_TREES, TIERS, TIER_WEIGHTS, ZONES, CAVE, FOCUS, MANA, BOSS_MOVE_PCT, SPLIT, phaseAt, SkillDef, BossMove, bossName, bossPctScale, jobOf, companionHitMult, dealtLevelMult, enhanceCopies,
+  Slot, TALENT_TREES, TIERS, TIER_WEIGHTS, ZONES, CAVE, FOCUS, MANA, BOSS_MOVE_PCT, SPLIT, EVADE, phaseAt, SkillDef, BossMove, bossName, bossPctScale, jobOf, companionHitMult, dealtLevelMult, enhanceCopies,
   expLevelMult, expToNext, gearId, gearScore, mobForZone, parseGear, takenLevelMult,
 } from './data';
 import {
@@ -24,10 +24,11 @@ export interface Input {
   attack: boolean;
   aim: Vec | null; // world point under the mouse (null on touch / keyboard only)
   skills: boolean[]; // one-shot presses, cleared by the game after reading
+  evade: boolean; // Space: one-shot press
 }
 
 export function emptyInput(): Input {
-  return { moveX: 0, moveY: 0, attack: false, aim: null, skills: [false, false, false] };
+  return { moveX: 0, moveY: 0, attack: false, aim: null, skills: [false, false, false], evade: false };
 }
 
 export interface Player {
@@ -287,6 +288,10 @@ export class Game {
   enraged = false;
   /** Slime goo on the ground, and when the hero is rooted / immune to roots. */
   goo: Goo[] = [];
+  /** Space ability: cooldown left, and when parry / sprint end. */
+  evadeCd = 0;
+  parryUntil = 0;
+  sprintUntil = 0;
   /** Last phase globes: the clear spots and when they expire (AUTO heads for one). */
   safeSpots: Vec[] = [];
   safeUntil = 0;
@@ -623,6 +628,82 @@ export class Game {
     this.dirty = true;
   }
 
+  get parrying(): boolean {
+    return this.time < this.parryUntil;
+  }
+  get sprinting(): boolean {
+    return this.time < this.sprintUntil;
+  }
+
+  /**
+   * The Space ability. `dir` is used by AUTO; players blink toward where they're moving (or aiming).
+   * Returns a reason if it can't be used.
+   */
+  useEvade(dir?: Vec): string | null {
+    if (this.evadeCd > 0) return `${this.job.evade.name} is ready in ${Math.ceil(this.evadeCd)}s.`;
+    const p = this.player;
+    const ev = this.job.evade;
+    if (ev.kind === 'parry') {
+      this.parryUntil = this.time + EVADE.parryWindow;
+      this.effect('ring', p.x, p.y, 70, ev.color, EVADE.parryWindow);
+    } else if (ev.kind === 'sprint') {
+      if (this.rooted) return 'You are stuck!';
+      this.sprintUntil = this.time + EVADE.sprintTime;
+      this.effect('ring', p.x, p.y, 60, ev.color, 0.4);
+    } else {
+      let a = p.angle;
+      if (dir && (dir.x || dir.y)) a = Math.atan2(dir.y, dir.x);
+      else if (this.input.moveX || this.input.moveY) a = Math.atan2(this.input.moveY, this.input.moveX);
+      // as far as possible up to blinkDist, on open floor with a clear line (no blinking through walls)
+      let to: Vec | null = null;
+      for (let d = EVADE.blinkDist; d >= 30; d -= 15) {
+        const x = p.x + Math.cos(a) * d;
+        const y = p.y + Math.sin(a) * d;
+        if (fits(this.map, x, y, p.r) && lineOfSight(this.map, p.x, p.y, x, y)) {
+          to = { x, y };
+          break;
+        }
+      }
+      if (!to) return 'No room to blink there.';
+      this.effect('poof', p.x, p.y, 40, ev.color, 0.4);
+      p.x = to.x;
+      p.y = to.y;
+      p.dash = null;
+      this.rootedUntil = 0;
+      this.effect('poof', p.x, p.y, 40, ev.color, 0.4);
+    }
+    this.evadeCd = EVADE.cd;
+    return null;
+  }
+
+  /** Warrior parry: the blocked hit turns into a counterattack around you. */
+  private counter() {
+    const p = this.player;
+    this.parryUntil = 0;
+    this.float(p.x, p.y, 70, 'Parried!', '#ffd166', 20);
+    this.effect('ring', p.x, p.y, EVADE.counterRange, '#ffd166', 0.45);
+    for (const m of [...this.mobs]) {
+      if (dist(m, p) <= EVADE.counterRange + m.r) this.damage(m, this.stats.atk * EVADE.counterMult, 'Counter', '#ffd166');
+    }
+  }
+
+  /** AUTO's use of the Space ability while dodging a boss attack it can see coming. */
+  private autoEvade(dodgeDir: Vec, threats: Telegraph[]) {
+    if (this.evadeCd > 0) return;
+    const p = this.player;
+    const kind = this.job.evade.kind;
+    const hitting = threats.filter((t) => this.inTelegraph(t, p, p.r));
+    if (!hitting.length) return;
+    const soonest = Math.min(...hitting.map((t) => t.time));
+    if (kind === 'parry') {
+      if (soonest < 0.3) this.useEvade();
+    } else if (kind === 'sprint') {
+      if (!this.rooted) this.useEvade();
+    } else if (soonest < 0.6 || this.rooted) {
+      if (dodgeDir.x || dodgeDir.y) this.useEvade(dodgeDir);
+    }
+  }
+
   /** Drink a healing flask. Returns false if none are left (or you just drank). */
   drinkFlask(): boolean {
     if (this.flasks <= 0 || this.flaskCd > 0 || this.deadTimer > 0 || this.hp >= this.stats.maxHp) return false;
@@ -710,7 +791,15 @@ export class Game {
     this.decayVisuals(dt);
 
     const inp = this.input;
-    if (inp.moveX || inp.moveY || inp.attack || inp.skills.some(Boolean)) this.lastInputTime = this.time;
+    if (inp.moveX || inp.moveY || inp.attack || inp.evade || inp.skills.some(Boolean)) this.lastInputTime = this.time;
+    this.evadeCd -= dt;
+    if (inp.evade) {
+      inp.evade = false;
+      if (this.deadTimer <= 0) {
+        const why = this.useEvade();
+        if (why) this.onToast(why, '#9a9a9a');
+      }
+    }
 
     if (this.deadTimer > 0) {
       this.deadTimer -= dt;
@@ -984,7 +1073,8 @@ export class Game {
     }
     // Facing follows movement unless the mouse is aiming
     if (!(this.manualActive && this.input.aim) && this.aimHold <= 0) p.angle = Math.atan2(my, mx);
-    const np = moveCircle(this.map, p.x, p.y, mx * PHYS.playerSpeed * dt, my * PHYS.playerSpeed * dt, p.r);
+    const spd = PHYS.playerSpeed * (this.time < this.sprintUntil ? EVADE.sprintSpeed : 1);
+    const np = moveCircle(this.map, p.x, p.y, mx * spd * dt, my * spd * dt, p.r);
     p.x = np.x;
     p.y = np.y;
   }
@@ -1008,7 +1098,11 @@ export class Game {
       const spot = this.safeSpots.reduce((a, b) => (dist(a, p) < dist(b, p) ? a : b));
       if (dist(spot, p) > 25) return this.avoidGoo(this.walkTo(spot, dt));
     }
-    if (threats.some((t) => this.inTelegraph(t, p, p.r + 8))) return this.dodge(threats);
+    if (threats.some((t) => this.inTelegraph(t, p, p.r + 8))) {
+      const dir = this.dodge(threats);
+      this.autoEvade(dir, threats);
+      return dir;
+    }
 
     // 2. Inside a lair with no boss: AUTO runs summon (if it came for the boss) or waits
     if (this.inLair >= 0 && !this.inBossFight) {
@@ -1607,6 +1701,10 @@ export class Game {
   /** Stuck to the ground: no walking or dashing for a moment. */
   rootPlayer(dur: number) {
     if (this.time < this.rootImmuneUntil || this.rooted) return;
+    if (this.time < this.parryUntil) {
+      this.counter();
+      return;
+    }
     this.rootedUntil = this.time + dur;
     this.rootImmuneUntil = this.rootedUntil + SPLIT.rootImmune;
     this.player.dash = null;
@@ -1804,6 +1902,10 @@ export class Game {
    */
   private hurtPlayer(amount: number, fromLevel: number, pct = 0) {
     const p = this.player;
+    if (this.time < this.parryUntil) {
+      this.counter();
+      return;
+    }
     const flat = amount * takenLevelMult(fromLevel, this.state.level);
     const share = pct > 0 ? this.stats.maxHp * pct * bossPctScale(fromLevel, this.state.level) : 0;
     amount = Math.max(flat, share) * this.job.damageTaken;

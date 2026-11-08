@@ -3,8 +3,8 @@ import { Input, Vec } from './game';
 /**
  * Keyboard, mouse and touch controls.
  *
- * Desktop: WASD / arrows move (screen directions), mouse aims, hold left click (or J / Space)
- * to attack, 1/2/3 cast skills toward the mouse, Q toggles AUTO.
+ * Desktop: WASD / arrows move (screen directions), mouse aims, hold left click (or J) to attack,
+ * Space uses the class ability (parry / sprint / blink), 1/2/3 cast skills toward the mouse, Q toggles AUTO.
  * Touch: drag anywhere on the left side of the battle area for a joystick, buttons on the right.
  */
 export function setupInput(
@@ -28,7 +28,7 @@ export function setupInput(
     KeyS: 'down', ArrowDown: 'down',
     KeyA: 'left', ArrowLeft: 'left',
     KeyD: 'right', ArrowRight: 'right',
-    KeyJ: 'attack', Space: 'attack',
+    KeyJ: 'attack',
   };
 
   window.addEventListener('keydown', (e) => {
@@ -41,6 +41,10 @@ export function setupInput(
     const skill = ['Digit1', 'Digit2', 'Digit3'].indexOf(e.code);
     if (skill >= 0 && !e.repeat) input.skills[skill] = true;
     if (e.code === 'KeyQ' && !e.repeat) onToggleAuto();
+    if (e.code === 'Space') {
+      e.preventDefault();
+      if (!e.repeat) input.evade = true;
+    }
   });
   window.addEventListener('keyup', (e) => {
     const k = KEYS[e.code];

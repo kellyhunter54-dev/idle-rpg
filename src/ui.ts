@@ -329,6 +329,11 @@ export class UI {
       de.classList.toggle('ready', !g.deadeye && g.focus >= 100);
       de.classList.toggle('active', g.deadeye);
     }
+    const ec = document.getElementById('evadecd');
+    if (ec) {
+      setStyle(ec, 'height', `${Math.round(Math.max(0, Math.min(1, g.evadeCd / 10)) * 100)}%`);
+      el('evadebtn').classList.toggle('active', g.parrying || g.sprinting);
+    }
     const fc = document.getElementById('flaskcount');
     if (fc) {
       setText(fc, String(g.flasks));
@@ -666,7 +671,7 @@ export class UI {
         <div class="stat">Summons<b>${fmt(s.totals.summons)}</b></div>
       </div>
       <h3>How to play</h3>
-      <p class="muted small"><b>Controls:</b> your hero plays itself while AUTO is on. Take over any time: WASD or arrows to move, mouse to aim, hold left click (or Space) to attack, and 1/2/3 to cast skills where you aim. On a phone, drag on the battlefield to move and use the buttons. AUTO takes back over 2 seconds after you stop. Press Q or the AUTO button for full manual mode.</p>
+      <p class="muted small"><b>Controls:</b> your hero plays itself while AUTO is on. Take over any time: WASD or arrows to move, mouse to aim, hold left click (or J) to attack, 1/2/3 to cast skills where you aim, and Space for your class ability (Warrior parry, Archer sprint, Mage blink; 10s cooldown). On a phone, drag on the battlefield to move and use the buttons. AUTO takes back over 2 seconds after you stop. Press Q or the AUTO button for full manual mode.</p>
       <p class="muted small"><b>${CAVE.name}:</b> a cave in ${ZONES[0].name} where AUTO is switched off. Monsters there match your level and give ${BALANCE.caveExpMult}x EXP, so it's the fastest way to level if you play yourself.</p>
       <p class="muted small"><b>Boss lairs:</b> walk into a lair's archway, then press E or Summon boss at the circle. Leave through the blue Exit portal or the Leave lair button.</p>
       <p class="muted small"><b>Bosses</b> are meant to be hard. Every attack is marked on the ground in red first, and a big hit takes a large share of your max HP no matter how much HP you have. Only out-levelling a boss makes its hits smaller. Bosses speed up and learn new attacks at two HP thresholds (marked on the boss bar), and enrage after ${Math.round(BALANCE.bossTimeLimit / 60)} minutes. AUTO dodges like an average player; beating a boss at its own level takes your own hands.</p>
@@ -707,7 +712,7 @@ export class UI {
       </div>
       <button class="btn wide" style="background:#7f1d1d;margin-top:12px" data-action="reset">Reset this character to Lv 1</button>
       <p class="small" style="text-align:center;margin-top:16px"><a href="./side/">Play the classic side-scroller version</a></p>
-      <p class="muted small" style="text-align:center">v0.16.1</p>`;
+      <p class="muted small" style="text-align:center">v0.17.0</p>`;
   }
 
   // ---------------- Modals & toasts ----------------

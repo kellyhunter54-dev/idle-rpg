@@ -256,7 +256,28 @@ export interface JobDef {
   critBonus: number;
   damageTaken: number; // 1 = normal, 0.65 = takes 35% less
   skills: SkillDef[];
+  /** The Space ability (10 s cooldown). */
+  evade: EvadeDef;
 }
+
+export interface EvadeDef {
+  kind: 'parry' | 'sprint' | 'blink';
+  name: string;
+  icon: string;
+  color: string;
+  desc: string;
+}
+
+/** Space abilities: Warrior parry, Archer sprint, Mage blink. */
+export const EVADE = {
+  cd: 10,
+  parryWindow: 0.8, // seconds: any hit (or root) in this window is ignored and countered
+  counterMult: 3, // counter hits nearby monsters for this x your ATK
+  counterRange: 220,
+  sprintTime: 3,
+  sprintSpeed: 1.6, // move speed multiplier
+  blinkDist: 240,
+};
 
 export const JOBS: Record<JobId, JobDef> = {
   warrior: {
@@ -264,6 +285,7 @@ export const JOBS: Record<JobId, JobDef> = {
     desc: 'Up close and sturdy. Cleaves groups with every swing, has the most HP and takes 35% less damage.',
     basic: { kind: 'melee', range: 80, interval: 1.0, mult: 1 },
     atkMult: 1.3, hpMult: 1.5, critBonus: 0, damageTaken: 0.65,
+    evade: { kind: 'parry', name: 'Parry', icon: '🛡️', color: '#ffd166', desc: 'Raise your guard for a moment: the next hit (or root) is ignored and you counter, hitting everything nearby for 3x ATK.' },
     skills: [
       { id: 'dash', name: 'Dash Strike', type: 'dash', unlock: 1, cd: 4, mult: 3, color: '#ffd166', icon: '⚡', range: 190 },
       { id: 'whirl', name: 'Whirlwind', type: 'spin', unlock: 8, cd: 10, mult: 8, color: '#4ecdc4', icon: '🌀', radius: 160 },
@@ -275,6 +297,7 @@ export const JOBS: Record<JobId, JobDef> = {
     desc: 'Fast arrows from a distance. Keeps away from enemies and crits more often.',
     basic: { kind: 'arrow', range: 390, interval: 0.75, mult: 0.7, speed: 950 },
     atkMult: 0.85, hpMult: 0.85, critBonus: 0.05, damageTaken: 1,
+    evade: { kind: 'sprint', name: 'Sprint', icon: '💨', color: '#90e0ef', desc: 'Move 60% faster for 3 seconds.' },
     skills: [
       { id: 'pierce', name: 'Piercing Arrow', type: 'pierce', unlock: 1, cd: 4, mult: 3, color: '#e9c46a', icon: '➶', range: 620 },
       { id: 'rain', name: 'Arrow Rain', type: 'groundAoe', unlock: 8, cd: 10, mult: 8, color: '#90be6d', icon: '🌧️', radius: 150, range: 460, delay: 0.6 },
@@ -286,6 +309,7 @@ export const JOBS: Record<JobId, JobDef> = {
     desc: 'Exploding spells that hit groups. Hardest hitter, but fragile.',
     basic: { kind: 'bolt', range: 390, interval: 1.1, mult: 1.2, speed: 650, splash: 55 },
     atkMult: 0.9, hpMult: 0.8, critBonus: 0, damageTaken: 1,
+    evade: { kind: 'blink', name: 'Blink', icon: '✨', color: '#c77dff', desc: 'Teleport a short distance where you are moving (or aiming). Breaks roots.' },
     skills: [
       { id: 'fireball', name: 'Fireball', type: 'fireball', unlock: 1, cd: 4, mana: 15, mult: 3.5, color: '#f3722c', icon: '🔥', radius: 110, range: 460 },
       { id: 'nova', name: 'Frost Nova', type: 'spin', unlock: 8, cd: 10, mana: 30, mult: 8, color: '#90e0ef', icon: '❄️', radius: 185 },

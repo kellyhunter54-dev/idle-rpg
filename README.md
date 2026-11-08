@@ -91,7 +91,8 @@ The hero plays itself while AUTO is on. Any input takes over, and AUTO resumes 2
 
 - WASD or arrows: move
 - Mouse: aim
-- Left click (hold), Space or J: attack
+- Left click (hold) or J: attack
+- Space: class ability, 10 s cooldown (Warrior Parry: ignore the next hit and counter; Archer Sprint: +60% speed for 3 s; Mage Blink: short teleport, breaks roots)
 - 1, 2, 3: job skills, aimed at the mouse
 - Q: toggle AUTO
 
