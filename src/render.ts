@@ -325,7 +325,10 @@ export class Renderer {
       outlineText(ctx, g.enraged ? 'ENRAGED' : `Enrage in ${Math.ceil(g.bossTimer)}s${phaseTxt ? '  ·  ' + phaseTxt : ''}`, w / 2, 85 + o);
     }
 
-    if (g.deadTimer > 0) {
+    if (g.awaitingChoice) {
+      ctx.fillStyle = 'rgba(0,0,0,0.5)';
+      ctx.fillRect(0, 0, w, h);
+    } else if (g.deadTimer > 0) {
       ctx.fillStyle = 'rgba(0,0,0,0.5)';
       ctx.fillRect(0, 0, w, h);
       ctx.fillStyle = '#c9a227';

@@ -23,6 +23,7 @@ function startGame(slot: number) {
   const awaySeconds = (Date.now() - state.lastSaved) / 1000;
 
   const game = new Game(state);
+  game.offerRetry = true; // after a boss kills you, choose Fight again / Respawn
 
   // Skill buttons for this job (built before input setup so they get listeners)
   const ev = game.job.evade;
@@ -53,6 +54,8 @@ function startGame(slot: number) {
     const why = game.activateDeadeye();
     if (why) ui.toast(why, '#ffd166');
   });
+  document.getElementById('retrybtn')!.addEventListener('click', () => game.retryBoss());
+  document.getElementById('respawnbtn')!.addEventListener('click', () => game.respawnNow());
   document.getElementById('evadebtn')!.addEventListener('pointerdown', (e) => {
     e.preventDefault();
     game.input.evade = true;

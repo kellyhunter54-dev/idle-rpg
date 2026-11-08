@@ -310,6 +310,13 @@ export class Game {
   slowUntil = 0;
   /** Ring hits taken this fight; SPLIT.waveLethal of them kills you. */
   slimeStacks = 0;
+  /** Set by the UI (not the sim): after dying to a boss, wait for Respawn / Fight again instead of auto-respawning. */
+  offerRetry = false;
+  /** The lair whose boss killed you, while the choice is on screen (-1 = none). */
+  retryZone = -1;
+  get awaitingChoice(): boolean {
+    return this.retryZone >= 0 && this.deadTimer <= 0 && this.hp <= 0;
+  }
   get slowed(): boolean {
     return this.time < this.slowUntil;
   }
@@ -727,6 +734,35 @@ export class Game {
     }
   }
 
+  /** After dying to a boss: go back to the zone like normal. */
+  respawnNow() {
+    if (this.retryZone < 0) return;
+    this.retryZone = -1;
+    this.hp = this.stats.maxHp;
+    if (this.inLair >= 0) this.exitLair();
+    Object.assign(this.player, { ...this.map.entrances[this.zone], dash: null });
+    this.dirty = true;
+  }
+
+  /** After dying to a boss (testing): full HP and flasks, a fresh boss at once. */
+  retryBoss() {
+    const z = this.retryZone;
+    if (z < 0) return;
+    this.retryZone = -1;
+    this.deadTimer = 0;
+    this.hp = this.stats.maxHp;
+    if (this.inLair !== z) {
+      if (this.inLair >= 0) this.exitLair();
+      this.enterLair(z);
+    } else {
+      this.resetTransient();
+      Object.assign(this.player, { ...this.map.entrances[0], angle: -2.36, dash: null });
+      this.flasks = BALANCE.flaskCharges;
+    }
+    this.bossCooldown[z] = 0;
+    this.startBoss(z);
+  }
+
   /** Drink a healing flask. Returns false if none are left (or you just drank). */
   drinkFlask(): boolean {
     if (this.flasks <= 0 || this.flaskCd > 0 || this.deadTimer > 0 || this.hp >= this.stats.maxHp) return false;
@@ -827,8 +863,17 @@ export class Game {
       }
     }
 
+    if (this.awaitingChoice) {
+      inp.skills = inp.skills.map(() => false);
+      return;
+    }
     if (this.deadTimer > 0) {
       this.deadTimer -= dt;
+      if (this.deadTimer <= 0 && this.retryZone >= 0) {
+        this.hp = 0; // wait for the player's choice
+        inp.skills = inp.skills.map(() => false);
+        return;
+      }
       if (this.deadTimer <= 0) {
         this.hp = this.stats.maxHp;
         if (this.inCave) this.exitCave(); // you wake up outside the cave
@@ -2795,6 +2840,7 @@ export class Game {
     this.deadTimer = BALANCE.playerDeathDelay;
     this.hp = 0;
     if (this.inBossFight) {
+      if (this.offerRetry && this.inLair >= 0) this.retryZone = this.inLair;
       this.endBoss();
       this.onToast('Defeated by the boss. Get stronger and try again.', '#ff6b6b');
     } else {

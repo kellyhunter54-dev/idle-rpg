@@ -329,6 +329,7 @@ export class UI {
       de.classList.toggle('ready', !g.deadeye && g.focus >= 100);
       de.classList.toggle('active', g.deadeye);
     }
+    el('deathbox').classList.toggle('hidden', !g.awaitingChoice);
     const ec = document.getElementById('evadecd');
     if (ec) {
       setStyle(ec, 'height', `${Math.round(Math.max(0, Math.min(1, g.evadeCd / 10)) * 100)}%`);
@@ -712,7 +713,7 @@ export class UI {
       </div>
       <button class="btn wide" style="background:#7f1d1d;margin-top:12px" data-action="reset">Reset this character to Lv 1</button>
       <p class="small" style="text-align:center;margin-top:16px"><a href="./side/">Play the classic side-scroller version</a></p>
-      <p class="muted small" style="text-align:center">v0.19.0</p>`;
+      <p class="muted small" style="text-align:center">v0.19.1</p>`;
   }
 
   // ---------------- Modals & toasts ----------------
