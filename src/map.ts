@@ -37,11 +37,13 @@ export interface GameMap {
   entrances: Vec2[]; // per zone, world units (where you arrive / respawn)
   altars: Vec2[]; // per zone boss altar centre, world units
   zoneFloor: number[][]; // per zone: indexes of floor tiles where mobs may spawn
-  kind: 'world' | 'lair';
+  kind: 'world' | 'lair' | 'cave';
   /** Lairs: which CHAPTERS palette to use. */
   palette?: number;
-  /** Lairs: the exit portal back to the world. */
+  /** Lairs and caves: the exit portal back to the world. */
   exit?: Vec2;
+  /** World: entrance of the manual-only cave. */
+  cave?: Vec2;
 }
 
 function mulberry32(seed: number) {
@@ -109,6 +111,9 @@ export function generateWorld(zones: number): GameMap {
       }
     }
   }
+  // the Echoing Hollow cave mouth, in the middle of zone 1
+  const caveTile = { x: Math.floor(zoneW * 0.5), y: 6 };
+  keepClear.push({ x: caveTile.x, y: caveTile.y + 1, r: 3 });
   // clear around entrances, corridors and altars
   for (const k of keepClear)
     for (let y = k.y - k.r; y <= k.y + k.r; y++)
@@ -159,7 +164,8 @@ export function generateWorld(zones: number): GameMap {
     }
   }
 
-  return { w, h, tiles, variant, zoneW, zones, entrances, altars, zoneFloor, kind: 'world' };
+  const cave = { x: (caveTile.x + 0.5) * TILE, y: (caveTile.y + 0.5) * TILE };
+  return { w, h, tiles, variant, zoneW, zones, entrances, altars, zoneFloor, kind: 'world', cave };
 }
 
 /**
@@ -344,4 +350,70 @@ export function findPath(m: GameMap, sx: number, sy: number, gx: number, gy: num
     k = far + 1;
   }
   return out;
+}
+
+/**
+ * The Echoing Hollow: a winding cave made with a cellular automaton. Entrance on the west,
+ * monsters spread through the tunnels (zoneFloor[0]).
+ */
+export function generateCave(): GameMap {
+  const w = 56;
+  const h = 40;
+  const rand = mulberry32(31337);
+  let tiles = new Uint8Array(w * h);
+  const variant = new Uint8Array(w * h);
+  for (let i = 0; i < variant.length; i++) variant[i] = Math.floor(rand() * 4);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const edge = x < 2 || y < 2 || x >= w - 2 || y >= h - 2;
+      tiles[y * w + x] = edge || rand() < 0.44 ? Tile.Rock : Tile.Floor;
+    }
+  const cy = Math.floor(h / 2);
+  for (let it = 0; it < 5; it++) {
+    const next = new Uint8Array(tiles);
+    for (let y = 1; y < h - 1; y++)
+      for (let x = 1; x < w - 1; x++) {
+        let rocks = 0;
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if ((dx || dy) && tiles[(y + dy) * w + x + dx] === Tile.Rock) rocks++;
+        next[y * w + x] = rocks >= 5 ? Tile.Rock : rocks <= 2 ? Tile.Floor : tiles[y * w + x];
+      }
+    tiles = next;
+  }
+  // a guaranteed tunnel from the entrance eastward so the cave always opens up
+  for (let x = 2; x < w - 6; x++) {
+    const yy = cy + Math.round(Math.sin(x / 5) * 5);
+    for (let dy = -1; dy <= 1; dy++) tiles[(yy + dy) * w + x] = Tile.Floor;
+  }
+  for (let y = cy - 2; y <= cy + 2; y++) for (let x = 2; x <= 6; x++) tiles[y * w + x] = Tile.Floor;
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) if (x < 1 || y < 1 || x >= w - 1 || y >= h - 1) tiles[y * w + x] = Tile.Rock;
+
+  // keep only what's reachable from the entrance
+  const seen = new Uint8Array(w * h);
+  const start = cy * w + 3;
+  const queue = [start];
+  seen[start] = 1;
+  while (queue.length) {
+    const i = queue.pop()!;
+    const x = i % w;
+    const y = (i - x) / w;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const n = (y + dy) * w + (x + dx);
+      if (!seen[n] && tiles[n] === Tile.Floor) {
+        seen[n] = 1;
+        queue.push(n);
+      }
+    }
+  }
+  const floor: number[] = [];
+  for (let i = 0; i < tiles.length; i++) {
+    if (tiles[i] === Tile.Floor && !seen[i]) tiles[i] = Tile.Rock;
+    if (tiles[i] === Tile.Floor && i % w > 9) floor.push(i);
+  }
+  const entrance = { x: 5.5 * TILE, y: (cy + 0.5) * TILE };
+  const exit = { x: 2.6 * TILE, y: (cy + 0.5) * TILE };
+  return {
+    w, h, tiles, variant, zoneW: w, zones: 1, entrances: [entrance], altars: [], zoneFloor: [floor],
+    kind: 'cave', palette: 4, exit,
+  };
 }

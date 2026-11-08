@@ -41,8 +41,9 @@ export function computeStats(state: GameState): Stats {
   const atkPct = bonus.weapon + compAtk;
   const hpPct = bonus.armor;
   const job = jobOf(state);
-  const atk = (levelBaseAtk(state.level) + growthValue(state, 'atk')) * (1 + atkPct) * job.atkMult;
-  const maxHp = (levelBaseHp(state.level) + growthValue(state, 'hp')) * (1 + hpPct) * job.hpMult;
+  // level sets the base; Growth upgrades and gear multiply it
+  const atk = levelBaseAtk(state.level) * (1 + growthValue(state, 'atk')) * (1 + atkPct) * job.atkMult;
+  const maxHp = levelBaseHp(state.level) * (1 + growthValue(state, 'hp')) * (1 + hpPct) * job.hpMult;
   const critRate = Math.min(1, growthValue(state, 'critRate') + job.critBonus);
   const critDmg = BALANCE.baseCritDmg + growthValue(state, 'critDmg') + bonus.accessory;
   const power = atk * (1 + critRate * (critDmg - 1)) * 10 + maxHp;

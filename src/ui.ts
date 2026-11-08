@@ -1,7 +1,7 @@
 import {
   BALANCE, COMPANION, COMPANIONS, GROWTH, GrowthKey, RARITIES, RARITY, SLOTS, SLOT_INFO, Slot,
   companionHitMult, companionOwnedAtk, enhanceCopies, expToNext, gearEffect, gearName, parseGear,
-  ZONES, bossName, expLevelMult, mobForZone, rarityIndex,
+  ZONES, CAVE, bossName, expLevelMult, mobForZone, rarityIndex,
 } from './data';
 import { fmt, fmtPct, fmtTime } from './format';
 import { Game, OfflineRewards, SummonResult } from './game';
@@ -41,7 +41,7 @@ export class UI {
       else if (g.inLair >= 0) this.trySummon();
       else g.goToBoss(g.zone);
     });
-    $('leavebtn').addEventListener('click', () => this.game.exitLair());
+    $('leavebtn').addEventListener('click', () => (this.game.inCave ? this.game.exitCave() : this.game.exitLair()));
 
     // Event delegation. pointerdown so panel re-renders never swallow a tap.
     const panel = $('panel');
@@ -173,6 +173,10 @@ export class UI {
         this.toast(g.state.settings.testMode ? 'Test mode ON: invincible, 10x damage.' : 'Test mode off.', '#c9a227');
         this.renderPanel(true);
         return;
+      case 'goCave':
+        g.goToCave();
+        this.toast(`Walking to the ${CAVE.name}...`, '#c9a227');
+        break;
       case 'switch':
         this.onSwitchCharacter();
         return;
@@ -194,9 +198,11 @@ export class UI {
     $('gold').textContent = fmt(s.gold);
     $('gems').textContent = fmt(s.gems);
     $('power').textContent = fmt(g.stats.power);
-    const zd = ZONES[g.zone];
+    const zd = ZONES[g.zone] ?? ZONES[0];
     const inLair = g.inLair >= 0;
-    $('stagename').textContent = inLair
+    $('stagename').textContent = g.inCave
+      ? `${CAVE.name}  ·  manual only  ·  ${BALANCE.caveExpMult}x EXP`
+      : inLair
       ? `${bossName(g.inLair)}'s Lair  (boss Lv ${zd.bossLevel})`
       : `${zd.name}  (Lv ${zd.minLevel}-${zd.maxLevel})` + (g.travelGoal ? `  ·  walking to ${g.travelGoal.label}...` : '');
 
@@ -206,6 +212,11 @@ export class UI {
       kf.style.width = '100%';
       kf.style.background = '#a4161a';
       kt.textContent = 'BOSS FIGHT';
+    } else if (g.inCave) {
+      const eph = g.expPerHour();
+      kf.style.width = '100%';
+      kf.style.background = '#4a2d73';
+      kt.textContent = eph > 0 ? `EXP/hr ${fmt(eph)} (${BALANCE.caveExpMult}x bonus)  ·  exit portal is at the west end` : 'Monsters match your level. Exit portal at the west end.';
     } else if (inLair) {
       const st = g.bossStatus(g.inLair);
       const offer = zd.offering.length ? zd.offering.map((o) => `${o.count}× ${o.item}`).join(', ') : 'nothing (for now)';
@@ -232,6 +243,8 @@ export class UI {
       if (g.travelGoal) {
         show = true;
         bb.textContent = 'Cancel travel';
+      } else if (g.inCave) {
+        show = false;
       } else if (inLair) {
         show = g.bossStatus(g.inLair) === 'ready';
         bb.textContent = '🔥 Summon boss (E)';
@@ -243,13 +256,14 @@ export class UI {
     bb.classList.toggle('hidden', !show);
     bb.classList.toggle('boss', !g.travelGoal);
     bb.classList.toggle('alt', !!g.travelGoal);
-    $('leavebtn').classList.toggle('hidden', !inLair);
+    $('leavebtn').classList.toggle('hidden', !inLair && !g.inCave);
+    $('leavebtn').textContent = g.inCave ? 'Leave cave' : 'Leave lair';
 
     // Battle HUD
     const ab = $('autobtn');
     ab.classList.toggle('on', g.auto);
-    ab.textContent = g.auto ? 'AUTO ✓' : 'AUTO ✗';
-    $('modebadge').classList.toggle('hidden', !g.auto || !g.manualActive);
+    ab.textContent = g.inCave ? 'AUTO 🔒' : g.auto ? 'AUTO ✓' : 'AUTO ✗';
+    $('modebadge').classList.toggle('hidden', g.inCave ? false : !g.auto || !g.manualActive);
     const fc = document.getElementById('flaskcount');
     if (fc) {
       fc.textContent = String(g.flasks);
@@ -497,6 +511,17 @@ export class UI {
         </div>
       </div>`;
     });
+    h += `<div class="row" style="border-left:4px solid ${g.inCave ? '#c9a227' : '#4a2d73'}">
+        <div class="icon">🕳️</div>
+        <div class="info">
+          <div class="name">${CAVE.name} <span class="muted small">in ${ZONES[0].name}</span>${g.inCave ? '<span class="tag" style="background:#6b5a36">YOU ARE HERE</span>' : ''}</div>
+          <div class="sub" style="color:#ffb38a">Manual only: AUTO is switched off inside.</div>
+          <div class="sub">Monsters match your level (up to +${BALANCE.caveLevelBonus} deeper in) and give ${BALANCE.caveExpMult}x EXP and ${BALANCE.caveGoldMult}x gold. Die and you wake up outside.</div>
+        </div>
+        <div class="btn-col">
+          <button class="btn ${g.inCave ? 'disabled' : ''}" data-action="goCave">Go to cave</button>
+        </div>
+      </div>`;
     h += `<p class="muted small">Travel and Fight boss turn AUTO on and walk you there (Fight boss also summons, fights and walks you back out). You can also just walk: the purple barriers between zones only stop monsters.</p>`;
     return h;
   }
@@ -516,6 +541,7 @@ export class UI {
       </div>
       <h3>How to play</h3>
       <p class="muted small"><b>Controls:</b> your hero plays itself while AUTO is on. Take over any time: WASD or arrows to move, mouse to aim, hold left click (or Space) to attack, and 1/2/3 to cast skills where you aim. On a phone, drag on the battlefield to move and use the buttons. AUTO takes back over 2 seconds after you stop. Press Q or the AUTO button for full manual mode.</p>
+      <p class="muted small"><b>${CAVE.name}:</b> a cave in ${ZONES[0].name} where AUTO is switched off. Monsters there match your level and give ${BALANCE.caveExpMult}x EXP, so it's the fastest way to level if you play yourself.</p>
       <p class="muted small"><b>Boss lairs:</b> walk into a lair's archway, then press E or Summon boss at the circle. Leave through the blue Exit portal or the Leave lair button.</p>
       <p class="muted small"><b>Bosses</b> are meant to be hard. Every attack is marked on the ground in red first, and a big hit takes a large share of your max HP no matter how much HP you have. Only out-levelling a boss makes its hits smaller. Bosses speed up and learn new attacks at 60% and 25% HP, and enrage after ${Math.round(BALANCE.bossTimeLimit / 60)} minutes. AUTO dodges like an average player; beating a boss at its own level takes your own hands.</p>
       <p class="muted small"><b>🧪 Flasks (R)</b> heal ${Math.round(BALANCE.flaskHeal * 100)}% of your HP. You carry ${BALANCE.flaskCharges}; they refill when you enter a lair and slowly out in the world. AUTO drinks when low.</p>
@@ -554,7 +580,7 @@ export class UI {
       </div>
       <button class="btn wide" style="background:#7f1d1d;margin-top:12px" data-action="reset">Reset this character to Lv 1</button>
       <p class="small" style="text-align:center;margin-top:16px"><a href="./side/">Play the classic side-scroller version</a></p>
-      <p class="muted small" style="text-align:center">v0.7.1</p>`;
+      <p class="muted small" style="text-align:center">v0.8.0</p>`;
   }
 
   // ---------------- Modals & toasts ----------------

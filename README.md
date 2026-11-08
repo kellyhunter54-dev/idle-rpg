@@ -49,6 +49,14 @@ One connected world split into zones (`ZONES` in `src/data.ts`): Sprout Meadow (
 - Summoning offerings: `ZONES[z].offering` lists the items needed to summon each boss. They are empty for now; the check (`Game.summonCheck`) and the item bag (`state.items`) are already wired up.
 - AUTO farms the zone you are in, preferring monsters near your level. The World tab can send AUTO to another zone or to a boss.
 
+## Level power
+
+Level is the main source of power (`LEVEL_POWER` in `src/data.ts`): base ATK and HP grow about as fast as monsters do (25% / 22% per level). Growth upgrades are +3% ATK / HP multipliers on top, and gear multiplies again.
+
+## Echoing Hollow (manual-only cave)
+
+A cave mouth in Sprout Meadow leads to a separate cave map (`generateCave`). AUTO is forced off inside. Monsters match your level (up to +2 deeper in) and give 2.5x EXP and 1.5x gold (`caveExpMult`, `caveGoldMult`, `caveLevelBonus` in `BALANCE`).
+
 ## Bosses (hard by design)
 
 - Boss attacks take a share of your **max HP** (`BOSS_MOVE_PCT`), so HP stacking can't trivialize them; only out-levelling the boss shrinks it (`bossPctScale`).

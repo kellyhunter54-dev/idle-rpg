@@ -1,10 +1,10 @@
 import {
   BALANCE, COMPANION, COMPANIONS, GROWTH, GrowthKey, JobDef, MobStats, RARITIES, Rarity, SLOTS,
-  Slot, TIERS, TIER_WEIGHTS, ZONES, BOSS_MOVE_PCT, BossMove, bossName, bossPctScale, jobOf, companionHitMult, dealtLevelMult, enhanceCopies,
+  Slot, TIERS, TIER_WEIGHTS, ZONES, CAVE, BOSS_MOVE_PCT, BossMove, bossName, bossPctScale, jobOf, companionHitMult, dealtLevelMult, enhanceCopies,
   expLevelMult, expToNext, gearId, gearScore, mobForZone, parseGear, takenLevelMult,
 } from './data';
 import {
-  GameMap, PHYS, TILE, depthInZone, findPath, fits, generateLair, generateWorld, lineOfSight, moveCircle, walkablePoint,
+  GameMap, PHYS, TILE, depthInZone, findPath, fits, generateCave, generateLair, generateWorld, lineOfSight, moveCircle, walkablePoint,
   zoneAtX,
 } from './map';
 import { GameState } from './state';
@@ -163,6 +163,14 @@ export interface OfflineRewards {
   levels: number;
 }
 
+interface Camp {
+  x: number;
+  y: number;
+  zone: number;
+  mob: number | null;
+  timer: number;
+}
+
 function weighted<T>(items: T[], weights: number[], rand: () => number): T {
   const total = weights.reduce((a, b) => a + b, 0);
   let r = rand() * total;
@@ -222,12 +230,16 @@ export class Game {
   projectiles: Projectile[] = [];
   private nextMobId = 1;
   /** Fixed spawn camps spread evenly through each zone; each respawns its own monster. */
-  private camps: { x: number; y: number; zone: number; mob: number | null; timer: number }[] = [];
+  private camps: Camp[] = [];
+  private worldCamps: Camp[] = [];
+  private caveMap: GameMap | null = null;
+  /** Inside the Echoing Hollow (manual-only cave). */
+  inCave = false;
   private bossCooldown: number[] = ZONES.map(() => 0);
   private bossZone = -1;
   private lockedToastAt = -99;
   /** Where AUTO is walking to (zone travel / boss altar), if anywhere. */
-  travelGoal: { x: number; y: number; boss: number | null; label: string } | null = null;
+  travelGoal: { x: number; y: number; boss: number | null; label: string; cave?: boolean } | null = null;
   /** Rolling EXP log for the EXP/hour readout. */
   private expLog: { t: number; exp: number }[] = [];
   private aimHold = 0;
@@ -293,11 +305,16 @@ export class Game {
     return jobOf(this.state);
   }
 
+  /** AUTO is always off inside the manual-only cave. */
   get auto(): boolean {
-    return this.state.settings.auto;
+    return this.state.settings.auto && !this.inCave;
   }
 
   setAuto(on: boolean) {
+    if (this.inCave) {
+      this.onToast('AUTO does not work in the Echoing Hollow. This one is all you.', '#ff8c3b');
+      return;
+    }
     this.state.settings.auto = on;
     this.dirty = true;
   }
@@ -314,7 +331,91 @@ export class Game {
     this.zone = zoneAtX(this.map, this.player.x);
     // populate every zone so the world feels alive
     this.buildCamps();
+    this.worldCamps = this.camps;
     for (const c of this.camps) this.spawnAtCamp(c);
+  }
+
+  // ---------------- The Echoing Hollow (manual-only cave) ----------------
+  /** AUTO walks you to the cave mouth and in. AUTO switches off inside. */
+  goToCave() {
+    if (this.inLair >= 0) this.exitLair();
+    if (this.inCave) return;
+    const c = this.worldMap.cave;
+    if (!c) return;
+    this.travelGoal = { x: c.x, y: c.y, boss: null, label: CAVE.name, cave: true };
+    this.target = null;
+    this.path = null;
+    if (!this.state.settings.auto) this.setAuto(true);
+  }
+
+  private checkCaveMouth() {
+    const c = this.map.cave;
+    if (!c || dist(c, this.player) > 75) return;
+    if (!this.manualActive && !this.travelGoal?.cave) return;
+    this.enterCave();
+  }
+
+  private enterCave() {
+    if (!this.caveMap) this.caveMap = generateCave();
+    this.worldMobs = this.mobs;
+    this.mobs = [];
+    this.map = this.caveMap;
+    this.inCave = true;
+    this.zone = CAVE.zone;
+    this.resetTransient();
+    Object.assign(this.player, { ...this.map.entrances[0], angle: 0 });
+    for (const c of this.party) Object.assign(c, { x: this.player.x, y: this.player.y });
+    // fresh camps every visit, spread through the tunnels
+    const floor = this.map.zoneFloor[0];
+    const n = BALANCE.caveCamps;
+    const camps: Camp[] = [];
+    for (let k = 0; k < n; k++) {
+      const lo = (10 + ((this.map.w - 12) * k) / n) * TILE;
+      const hi = (10 + ((this.map.w - 12) * (k + 1)) / n) * TILE;
+      const pool = floor.filter((i) => {
+        const x = ((i % this.map.w) + 0.5) * TILE;
+        return x >= lo && x < hi;
+      });
+      if (!pool.length) continue;
+      const i = pool[Math.floor(this.rand() * pool.length)];
+      const tx = i % this.map.w;
+      camps.push({ x: (tx + 0.5) * TILE, y: ((i - tx) / this.map.w + 0.5) * TILE, zone: CAVE.zone, mob: null, timer: 0 });
+    }
+    this.camps = camps;
+    for (const c of camps) this.spawnAtCamp(c);
+    this.lastInputTime = this.time;
+    this.onToast(`You enter the ${CAVE.name}. AUTO is off in here, but every kill gives ${BALANCE.caveExpMult}x EXP.`, '#c9a227');
+    this.dirty = true;
+  }
+
+  exitCave() {
+    if (!this.inCave) return;
+    this.map = this.worldMap;
+    this.mobs = this.worldMobs;
+    this.worldMobs = [];
+    this.camps = this.worldCamps;
+    this.inCave = false;
+    this.resetTransient();
+    Object.assign(this.player, this.outsideCave());
+    for (const c of this.party) Object.assign(c, { x: this.player.x, y: this.player.y });
+    this.zone = zoneAtX(this.map, this.player.x);
+    this.dirty = true;
+  }
+
+  private outsideCave(): Vec {
+    const c = this.worldMap.cave!;
+    for (const d of [140, 180, 110, 220])
+      for (const a of [Math.PI / 2, Math.PI / 3, (2 * Math.PI) / 3, 0, Math.PI]) {
+        const p = { x: c.x + Math.cos(a) * d, y: c.y + Math.sin(a) * d };
+        if (fits(this.worldMap, p.x, p.y, PHYS.playerRadius)) return p;
+      }
+    return { ...this.worldMap.entrances[0] };
+  }
+
+  /** Cave monsters match your level, up to a couple of levels higher deeper in. */
+  private caveLevel(x: number): number {
+    const depth = Math.max(0, Math.min(1, x / (this.map.w * TILE)));
+    return this.state.level + Math.round(BALANCE.caveLevelBonus * depth);
   }
 
   /** Monster level at a spot: rises from the zone's min level at the entrance to its max at the far end. */
@@ -346,6 +447,7 @@ export class Game {
 
   /** AUTO walks to a zone's entrance. */
   travelToZone(z: number) {
+    if (this.inCave) this.exitCave();
     if (this.inLair >= 0) this.exitLair();
     const e = this.map.entrances[z];
     if (!e) return;
@@ -362,6 +464,7 @@ export class Game {
       if (!this.auto) this.setAuto(true);
       return;
     }
+    if (this.inCave) this.exitCave();
     if (this.inLair >= 0) this.exitLair();
     const a = this.map.altars[z];
     if (!a) return;
@@ -508,8 +611,11 @@ export class Game {
       this.deadTimer -= dt;
       if (this.deadTimer <= 0) {
         this.hp = this.stats.maxHp;
-        if (this.inLair >= 0) this.exitLair();
-        Object.assign(this.player, { ...this.map.entrances[this.zone], dash: null });
+        if (this.inCave) this.exitCave(); // you wake up outside the cave
+        else {
+          if (this.inLair >= 0) this.exitLair();
+          Object.assign(this.player, { ...this.map.entrances[this.zone], dash: null });
+        }
       }
       inp.skills = inp.skills.map(() => false);
       return;
@@ -529,9 +635,12 @@ export class Game {
     for (let z = 0; z < this.bossCooldown.length; z++) this.bossCooldown[z] -= dt;
     if (this.inLair < 0) this.updateSpawning(dt);
     this.movePlayer(dt);
-    if (this.inLair < 0) {
+    if (this.inCave) {
+      if (this.map.exit && dist(this.map.exit, this.player) < 40) this.exitCave();
+    } else if (this.inLair < 0) {
       this.trackZone();
       this.checkLairDoors();
+      this.checkCaveMouth();
     } else this.checkLairExit();
     this.updateMobs(dt);
     this.updateTelegraphs(dt);
@@ -555,7 +664,7 @@ export class Game {
       }
     }
     // Saved position is always a world spot (inside a lair we save the spot outside its door)
-    const spot = this.inLair >= 0 ? this.outsideDoorCached() : this.player;
+    const spot = this.inCave ? this.outsideCave() : this.inLair >= 0 ? this.outsideDoorCached() : this.player;
     const pos = this.state.pos;
     if (pos) {
       pos.x = spot.x;
@@ -686,8 +795,13 @@ export class Game {
     }
   }
 
-  private spawnAtCamp(c: { x: number; y: number; zone: number; mob: number | null; timer: number }) {
-    const stats = mobForZone(c.zone, this.levelAt(c.x), false, this.rand);
+  private spawnAtCamp(c: Camp) {
+    let stats: MobStats;
+    if (c.zone === CAVE.zone) {
+      const lvl = this.caveLevel(c.x);
+      const look = lvl < 10 ? 0 : lvl < 20 ? 1 : 2; // borrow monster looks from the matching zone
+      stats = mobForZone(look, lvl, false, this.rand);
+    } else stats = mobForZone(c.zone, this.levelAt(c.x), false, this.rand);
     const mob = this.makeMob(stats, c, PHYS.mobRadius, c.zone);
     mob.camp = this.camps.indexOf(c);
     c.mob = mob.id;
@@ -778,7 +892,7 @@ export class Game {
       const g = this.travelGoal;
       const gd = dist(p, g);
       if (gd < (g.boss !== null ? PHYS.altarRadius * 0.5 : 60)) {
-        if (g.boss === null) this.travelGoal = null;
+        if (g.boss === null && !g.cave) this.travelGoal = null;
         return zero;
       }
       return this.walkTo(g, dt);
@@ -1584,13 +1698,14 @@ export class Game {
     const camp = this.camps[m.camp];
     if (camp && camp.mob === m.id) {
       camp.mob = null;
-      camp.timer = 10 + this.rand() * 8;
+      const [lo, hi] = this.inCave ? BALANCE.caveRespawn : [10, 18];
+      camp.timer = lo + this.rand() * (hi - lo);
     }
     this.telegraphs = this.telegraphs.filter((t) => t.ownerId !== m.id);
     if (this.target === m) this.target = null;
     this.effect('poof', m.x, m.y, m.r * 1.4, m.color, 0.4);
-    s.gold += m.gold;
-    const exp = m.exp * expLevelMult(m.level, s.level);
+    s.gold += m.gold * (this.inCave ? BALANCE.caveGoldMult : 1);
+    const exp = m.exp * expLevelMult(m.level, s.level) * (this.inCave ? BALANCE.caveExpMult : 1);
     this.expLog.push({ t: this.time, exp });
     if (this.expLog.length > 600) this.expLog.splice(0, 100);
     this.addExp(exp);

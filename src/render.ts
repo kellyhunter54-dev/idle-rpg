@@ -72,7 +72,7 @@ export class Renderer {
   draw(g: Game, time: number) {
     const { ctx, w, h } = this;
     if (w === 0 || h === 0) return;
-    const lair = g.map.kind === 'lair';
+    const lair = g.map.kind !== 'world'; // lairs and caves are dark interiors
     const chOf = (tx: number) =>
       CHAPTERS[g.map.palette ?? ZONES[Math.min(ZONES.length - 1, Math.floor(tx / g.map.zoneW))].chapter];
     const p = g.player;
@@ -184,6 +184,10 @@ export class Renderer {
       }
     }
     if (!lair) g.map.altars.forEach((a, z) => list.push({ depth: a.x + a.y + 40, draw: () => this.drawLairDoor(g, a, z, time) }));
+    if (!lair && g.map.cave) {
+      const c = g.map.cave;
+      list.push({ depth: c.x + c.y + 40, draw: () => this.drawCaveMouth(c, time) });
+    }
     if (lair && g.map.exit) {
       const ex = g.map.exit;
       list.push({ depth: ex.x + ex.y + 60, draw: () => this.drawExitPortal(ex, time) });
@@ -589,7 +593,7 @@ export class Renderer {
       }
       ctx.globalAlpha = 1;
     });
-    if (lair && g.map.exit) {
+    if (g.map.kind !== 'world' && g.map.exit) {
       const e = g.map.exit;
       ctx.fillStyle = 'rgba(90,150,255,0.18)';
       ctx.beginPath();
@@ -674,6 +678,47 @@ export class Renderer {
     ctx.textBaseline = 'bottom';
     ctx.fillStyle = st === 'locked' ? '#9a9a9a' : '#e8d7a9';
     outlineText(ctx, `${CHAPTERS[ZONES[z].chapter].boss}'s Lair${st === 'locked' ? ' (sealed)' : ''}`, sx, sy - h - 44 * k);
+  }
+
+  /** World: rocky mound with a dark opening into the Echoing Hollow. */
+  private drawCaveMouth(c: { x: number; y: number }, time: number) {
+    const ctx = this.ctx;
+    const k = this.k;
+    const sx = this.px(c.x, c.y);
+    const sy = this.py(c.x, c.y);
+    if (sx < -250 || sx > this.w + 250 || sy < -250 || sy > this.h + 200) return;
+    // mound
+    ctx.fillStyle = '#4b4438';
+    ctx.beginPath();
+    ctx.moveTo(sx - 120 * k, sy + 10 * k);
+    ctx.quadraticCurveTo(sx - 110 * k, sy - 130 * k, sx, sy - 150 * k);
+    ctx.quadraticCurveTo(sx + 110 * k, sy - 130 * k, sx + 120 * k, sy + 10 * k);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#5c5446';
+    ctx.beginPath();
+    ctx.ellipse(sx - 40 * k, sy - 110 * k, 40 * k, 22 * k, -0.3, 0, Math.PI * 2);
+    ctx.fill();
+    // opening with a faint purple glow from within
+    const g = ctx.createRadialGradient(sx, sy - 40 * k, 2, sx, sy - 40 * k, 60 * k);
+    g.addColorStop(0, `rgba(150,90,255,${0.35 + 0.15 * Math.sin(time * 2)})`);
+    g.addColorStop(0.4, '#0a0710');
+    g.addColorStop(1, '#050308');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.moveTo(sx - 46 * k, sy + 4 * k);
+    ctx.quadraticCurveTo(sx - 46 * k, sy - 80 * k, sx, sy - 86 * k);
+    ctx.quadraticCurveTo(sx + 46 * k, sy - 80 * k, sx + 46 * k, sy + 4 * k);
+    ctx.closePath();
+    ctx.fill();
+    ctx.font = 'bold 12px Georgia, serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.fillStyle = '#d8c3ff';
+    outlineText(ctx, 'Echoing Hollow', sx, sy - 160 * k);
+    ctx.font = '11px Georgia, serif';
+    ctx.fillStyle = '#ffb38a';
+    outlineText(ctx, 'manual only · bonus EXP', sx, sy - 160 * k + 14);
   }
 
   /** Lair: shimmering blue portal back to the world. */
@@ -789,6 +834,11 @@ export class Renderer {
       ctx.fillStyle = m.boss ? '#ff4d6d' : '#d64545';
       const [mx, my] = toMini(m.x, m.y);
       circle(ctx, mx, my, m.boss ? 4 : 1.6);
+    }
+    if (g.map.cave) {
+      ctx.fillStyle = '#a06eff';
+      const [cx, cy] = toMini(g.map.cave.x, g.map.cave.y);
+      ctx.fillRect(cx - 3, cy - 3, 6, 6);
     }
     if (g.travelGoal) {
       ctx.strokeStyle = '#c9a227';

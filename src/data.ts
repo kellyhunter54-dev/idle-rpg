@@ -11,10 +11,16 @@ export const BALANCE = {
   bossEnrageDamage: 1.5,
   bossPhaseAt: [0.6, 0.25],
   bossMeleePct: 0.22,
+  // The Echoing Hollow (manual-only cave)
+  caveExpMult: 2.5,
+  caveGoldMult: 1.5,
+  caveCamps: 26,
+  caveRespawn: [6, 10] as number[],
+  caveLevelBonus: 2, // monsters are your level up to this many levels higher (deeper = higher)
   flaskCharges: 3,
   flaskHeal: 0.45,
   flaskRegen: 45, // seconds per charge while out in the world
-  bossHpMult: 200,
+  bossHpMult: [80, 110, 170] as number[], // per zone
   bossRespawn: 30, // seconds before a beaten boss can be fought again
   bossLeash: 900, // boss resets if you run this far from its altar
   bossAtkMult: 1.6,
@@ -81,11 +87,16 @@ export function rarityIndex(r: Rarity): number {
 export function expToNext(level: number): number {
   return Math.floor(650 * Math.pow(1.18, level - 1));
 }
+/**
+ * Your level is the main source of power: base ATK and HP grow at about the same rate
+ * monsters get tougher, so out-levelling something really matters.
+ */
+export const LEVEL_POWER = { atkBase: 30, atkGrowth: 1.25, hpBase: 160, hpGrowth: 1.22 };
 export function levelBaseAtk(level: number): number {
-  return 10 + 3 * (level - 1);
+  return LEVEL_POWER.atkBase * Math.pow(LEVEL_POWER.atkGrowth, level - 1);
 }
 export function levelBaseHp(level: number): number {
-  return 100 + 20 * (level - 1);
+  return LEVEL_POWER.hpBase * Math.pow(LEVEL_POWER.hpGrowth, level - 1);
 }
 
 // ---------- Growth (gold upgrades) ----------
@@ -103,14 +114,14 @@ export interface GrowthDef {
 
 export const GROWTH: GrowthDef[] = [
   {
-    key: 'atk', name: 'Attack', icon: '⚔️', max: Infinity, display: 'flat',
-    value: (l) => 100 * (Math.pow(1.05, l) - 1),
-    cost: (l) => 10 * Math.pow(1.07, l),
+    key: 'atk', name: 'Attack', icon: '⚔️', max: Infinity, display: 'pct',
+    value: (l) => l * 0.03, // +3% ATK per upgrade, on top of your level
+    cost: (l) => 10 * Math.pow(1.09, l),
   },
   {
-    key: 'hp', name: 'Max HP', icon: '❤️', max: Infinity, display: 'flat',
-    value: (l) => 500 * (Math.pow(1.05, l) - 1),
-    cost: (l) => 10 * Math.pow(1.07, l),
+    key: 'hp', name: 'Max HP', icon: '❤️', max: Infinity, display: 'pct',
+    value: (l) => l * 0.03, // +3% HP per upgrade
+    cost: (l) => 10 * Math.pow(1.09, l),
   },
   {
     key: 'critRate', name: 'Crit Rate', icon: '🎯', max: 250, display: 'pct',
@@ -371,7 +382,7 @@ export function mobFor(stage: number, boss: boolean, rand = Math.random): MobSta
   if (!boss) return { level: stage, name: pick.name, color: pick.color, hp, atk, gold, exp, boss };
   return {
     level: stage, name: c.boss, color: pick.color, boss,
-    hp: hp * B.bossHpMult, atk: atk * B.bossAtkMult,
+    hp: hp * B.bossHpMult[0], atk: atk * B.bossAtkMult,
     gold: gold * B.bossGoldMult, exp: exp * B.bossExpMult,
   };
 }
@@ -426,6 +437,8 @@ export const ZONES: ZoneDef[] = [
   },
 ];
 
+export const CAVE = { name: 'Echoing Hollow', zone: 99 };
+
 export function bossName(z: number): string {
   return CHAPTERS[(ZONES[z] ?? ZONES[0]).chapter].boss;
 }
@@ -454,7 +467,7 @@ export function mobForZone(zone: number, level: number, boss: boolean, rand = Ma
   if (!boss) return { level, name: pick.name, color: pick.color, hp, atk, gold, exp, boss };
   return {
     level, name: c.boss, color: pick.color, boss,
-    hp: hp * B.bossHpMult, atk: atk * B.bossAtkMult,
+    hp: hp * (B.bossHpMult[zone] ?? B.bossHpMult[B.bossHpMult.length - 1]), atk: atk * B.bossAtkMult,
     gold: gold * B.bossGoldMult, exp: exp * B.bossExpMult,
   };
 }
