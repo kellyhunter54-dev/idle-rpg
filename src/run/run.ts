@@ -38,6 +38,9 @@ export interface Enemy {
   bleedStacks: number;
   bleedPer: number;
   bleedUntil: number;
+  /** bleed damage waiting to be shown as a number */
+  bleedShow: number;
+  bleedShowT: number;
   hitFlash: number;
   /** ranged shot / boss move timer */
   cd: number;
@@ -913,7 +916,7 @@ export class Run {
       id: this.nextId++, def, x, y, r, hp, maxHp: hp, speed: def.speed * (elite ? 0.9 : 1) * (0.92 + this.rand() * 0.16),
       dmg: def.dmg * (1 + this.runT / 600) * (elite ? ELITE.dmgMult : 1), xp: def.xp * (elite ? ELITE.xpMult : 1),
       color: elite ? ELITE.color : def.color, elite, boss: 0, name: '', slowUntil: 0, hitFlash: 0, cd: 1 + this.rand() * 2,
-      kx: 0, ky: 0, dead: false, angle: 0, moving: true, touchCd: 0, move: '', moveT: 0, dirX: 0, dirY: 0, spawnT: 0.35, z: 0, marked: false, burnDps: 0, burnUntil: 0, bleedStacks: 0, bleedPer: 0, bleedUntil: 0,
+      kx: 0, ky: 0, dead: false, angle: 0, moving: true, touchCd: 0, move: '', moveT: 0, dirX: 0, dirY: 0, spawnT: 0.35, z: 0, marked: false, burnDps: 0, burnUntil: 0, bleedStacks: 0, bleedPer: 0, bleedUntil: 0, bleedShow: 0, bleedShowT: 0,
     };
   }
 
@@ -980,7 +983,7 @@ export class Run {
     const e: Enemy = {
       id: this.nextId++, def: null, x: p.x, y: p.y, r: def.r, hp, maxHp: hp, speed: def.speed, dmg: def.dmg, xp: tier === 1 ? 120 : 400,
       color: def.color, elite: false, boss: tier, name: def.name, slowUntil: 0, hitFlash: 0, cd: 2.5, kx: 0, ky: 0, dead: false,
-      angle: 0, moving: true, touchCd: 0, move: '', moveT: 0, dirX: 0, dirY: 0, spawnT: 0.6, z: 0, marked: false, burnDps: 0, burnUntil: 0, bleedStacks: 0, bleedPer: 0, bleedUntil: 0,
+      angle: 0, moving: true, touchCd: 0, move: '', moveT: 0, dirX: 0, dirY: 0, spawnT: 0.6, z: 0, marked: false, burnDps: 0, burnUntil: 0, bleedStacks: 0, bleedPer: 0, bleedUntil: 0, bleedShow: 0, bleedShowT: 0,
     };
     this.enemies.push(e);
     this.boss = e;
@@ -1063,6 +1066,13 @@ export class Run {
       if (e.bleedUntil > this.t && e.bleedStacks > 0 && !e.dead) {
         const b = e.bleedPer * e.bleedStacks * dt;
         this.bleedTotal += b;
+        e.bleedShow += b;
+        if (this.t >= e.bleedShowT) {
+          e.bleedShowT = this.t + 0.5;
+          if (e.bleedShow >= 1 && this.fx.length < 240)
+            this.fx.push({ kind: 'text', x: e.x + (this.rand() - 0.5) * 24, y: e.y, t: 0, dur: 0.7, r: 0, color: '#ff4d4d', text: String(Math.round(e.bleedShow)) });
+          e.bleedShow = 0;
+        }
         if (dist2(e.x, e.y, this.x, this.y) < 600 * 600) onBleed();
         if (e.boss === 3 && this.jelly) this.jelly.damage(b);
         else {
@@ -1625,7 +1635,8 @@ export class Run {
   private applyBleed(e: Enemy, dmg: number, crit: boolean) {
     const share = this.sp('bleed');
     if (!share || e.dead) return;
-    const per = (dmg * share) / 4;
+    // each stack bleeds for 2x the share over its 4 s (share/2 of the hit every second)
+    const per = (dmg * share) / 2;
     if (e.bleedUntil < this.t) {
       e.bleedStacks = 0;
       e.bleedPer = 0;
@@ -1930,7 +1941,7 @@ export class Run {
     const e: Enemy = {
       id: this.nextId++, def: null, x, y, r, hp: 1, maxHp: 1, speed: 0, dmg: 0, xp: 0, color: JELLY.color, elite: false, boss: 3, name,
       slowUntil: 0, hitFlash: 0, cd: 0, kx: 0, ky: 0, dead: false, angle: 0, moving: false, touchCd: 0, move: '', moveT: 0, dirX: 0, dirY: 0,
-      spawnT: 0.4, z: 0, marked: false, burnDps: 0, burnUntil: 0, bleedStacks: 0, bleedPer: 0, bleedUntil: 0,
+      spawnT: 0.4, z: 0, marked: false, burnDps: 0, burnUntil: 0, bleedStacks: 0, bleedPer: 0, bleedUntil: 0, bleedShow: 0, bleedShowT: 0,
     };
     this.enemies.push(e);
     return e;

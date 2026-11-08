@@ -266,7 +266,9 @@ function updateHud(r: Run) {
   const b = r.boss;
   $('bossbar').classList.toggle('hidden', !b || b.dead);
   if (b && !b.dead) {
-    setText('bossname', b.name);
+    // bleed on the boss (any of King Jelly's slimes)
+    const bl = r.inLair && r.jelly ? Math.max(0, ...r.jelly.slimes.filter((x) => !x.dead && x.bleedUntil > r.t).map((x) => x.bleedStacks)) : b.bleedUntil > r.t ? b.bleedStacks : 0;
+    setText('bossname', bl > 0 ? `${b.name}  🩸x${bl}` : b.name);
     setWidth('bossfill', b.hp / b.maxHp);
   }
   // interact hint

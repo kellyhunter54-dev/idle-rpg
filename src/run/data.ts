@@ -433,13 +433,13 @@ const T = (id: string, name: string, icon: string, desc: string, spec: TalentSpe
   id, name, icon, desc, stats: spec.stats, special: spec.sp?.[0]?.[0], step: spec.sp?.[0]?.[1], extra: spec.sp?.slice(1), flat: true, max: 1,
 });
 const BLEED = (id: string, name: string, icon: string, what: string, share: number) =>
-  T(id, name, icon, `${what} make foes bleed for ${pct(share)} of the hit over 4s (stacks 5 times).`, { sp: [['bleed', share]] });
+  T(id, name, icon, `${what} make foes bleed for ${pct(share * 2)} of the hit over 4s (stacks 5 times, bosses too).`, { sp: [['bleed', share]] });
 const RUPTURE = (id: string) =>
   T(id, 'Rupture', '💥', 'KEYSTONE. A 5th bleed stack tears the wound open: all the bleed left lands at once.', { sp: [['rupture', 1]] });
 /** Level 7: one class choice before your job. */
 export const CLASS_TALENTS: Record<JobId, TalentPair> = {
-  warrior: [BLEED('w_rend', 'Rending Strikes', '🩸', 'Your hits', 0.15), T('w_iron', 'Iron Hide', '🛡️', '+30 max HP and 10% less damage taken.', { stats: { maxHp: 30, armor: 0.1 } })],
-  archer: [BLEED('a_barbed', 'Barbed Arrows', '🩸', 'Your hits', 0.18), T('a_rapid', 'Rapid Fire', '💨', '+20% attack speed.', { stats: { cd: 0.2 } })],
+  warrior: [BLEED('w_rend', 'Rending Strikes', '🩸', 'Your hits', 0.22), T('w_iron', 'Iron Hide', '🛡️', '+30 max HP and 10% less damage taken.', { stats: { maxHp: 30, armor: 0.1 } })],
+  archer: [BLEED('a_barbed', 'Barbed Arrows', '🩸', 'Your hits', 0.25), T('a_rapid', 'Rapid Fire', '💨', '+20% attack speed.', { stats: { cd: 0.2 } })],
   mage: [T('m_ignite', 'Ignition', '🔥', 'Fire abilities burn for 40% of the hit over 3s.', { sp: [['ignite', 0.4]] }), T('m_focus', 'Focused Mind', '🧠', 'Mana builds 50% faster and +5% crit chance.', { stats: { crit: 0.05 }, sp: [['coreGain', 0.5]] })],
 };
 /** Levels 13 / 20 / 30 / 40: choices inside your job. */
