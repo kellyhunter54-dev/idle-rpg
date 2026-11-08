@@ -14,29 +14,34 @@
       <section id="battle">
         <canvas id="canvas"></canvas>
 
-        <!-- HUD floating over the game -->
-        <header id="topbar" class="hudpanel">
-          <div class="lvl">
-            <span id="lvl">Lv. 1</span>
-            <div class="expbar"><div id="expfill"></div></div>
+        <!-- Unit frame (top left): portrait, name, level, currencies, status effects -->
+        <header id="unitframe" class="hudpanel">
+          <canvas id="uportrait" width="48" height="48"></canvas>
+          <div class="uf-main">
+            <div class="uf-top">
+              <span id="lvl">Lv. 1</span>
+              <button id="switchbtn" class="hudbtn mini" title="Switch character">👥</button>
+            </div>
+            <div class="uf-cur">
+              <span class="chip">🪙 <b id="gold">0</b></span>
+              <span class="chip">💎 <b id="gems">0</b></span>
+              <span class="chip pow" title="Power">⚡ <b id="power">0</b></span>
+            </div>
           </div>
-          <div class="cur"><span>🪙</span><b id="gold">0</b></div>
-          <div class="cur"><span>💎</span><b id="gems">0</b></div>
-          <button id="switchbtn" class="cur hudswitch" title="Switch character">👥</button>
         </header>
         <div id="hud-top">
           <button id="autobtn" class="hudbtn">AUTO</button>
           <span id="modebadge" class="badge hidden">MANUAL</span>
+          <div id="status"></div>
         </div>
-        <div id="keyhint">WASD move · Mouse aim · Click / J attack · Space class ability · 1-3 skills · F deadeye · R flask · E summon · Q auto · Esc close menu</div>
 
+        <!-- Zone plate (top right, under the minimap) -->
         <section id="stagebar" class="hudpanel">
           <div class="stage-info">
             <div id="stagename">Stage</div>
             <div class="killbar"><div id="killfill"></div><span id="killtext"></span></div>
           </div>
           <div class="stage-side">
-            <div class="power">⚡ <b id="power">0</b></div>
             <button id="bossbtn" class="btn boss hidden">Fight boss</button>
             <span id="phasepick" class="hidden" title="Testing: summon straight into a later phase">
               <button class="btn alt" data-summon-phase="1">P2</button>
@@ -56,27 +61,46 @@
             <button id="respawnbtn" class="btn alt">Respawn</button>
           </div>
         </div>
-        <div id="skillbar"></div>
         <div id="stick" class="hidden"><div id="stick-knob"></div></div>
         <div id="pad-right" class="pad">
           <button data-key="attack">⚔️</button>
         </div>
+        <div id="keyhint">WASD move · Click / J attack · Space class ability · 1-3 skills · F deadeye · R flask · E summon · Q auto · Esc close</div>
 
-        <nav id="tabs">
-          <button data-tab="growth" title="Growth">📈<span>Growth</span></button>
-          <button data-tab="world" title="World">🗺️<span>World</span></button>
-          <button data-tab="talents" class="tabdot-host" title="Talents">🌟<span>Talents</span><i id="talentdot" class="tabdot hidden"></i></button>
-          <button data-tab="gear" title="Gear">🗡️<span>Gear</span></button>
-          <button data-tab="companions" title="Companions">🐾<span>Allies</span></button>
-          <button data-tab="summon" title="Summon">✨<span>Summon</span></button>
-          <button data-tab="info" title="Info">⚙️<span>Info</span></button>
-        </nav>
+        <!-- Action bar (bottom): HP orb, resource, skills, EXP, menu, EXP orb -->
+        <footer id="actionbar">
+          <div class="orb hp" id="hporb" title="Health">
+            <div class="orb-liquid"><div class="orb-fill" id="hpfill"></div></div>
+            <span class="orb-val" id="hptext">0</span>
+            <span class="orb-label">HP</span>
+          </div>
+          <div class="ab-center">
+            <div id="resbar" class="resbar hidden"><div id="resfill"></div><span id="restext"></span></div>
+            <div id="skillbar"></div>
+            <div class="expline" title="Experience"><div id="expfill"></div><span id="exptext"></span></div>
+          </div>
+          <nav id="tabs">
+            <button data-tab="growth" title="Growth">📈<span>Growth</span></button>
+            <button data-tab="world" title="World">🗺️<span>World</span></button>
+            <button data-tab="talents" class="tabdot-host" title="Talents">🌟<span>Talents</span><i id="talentdot" class="tabdot hidden"></i></button>
+            <button data-tab="gear" title="Gear">🗡️<span>Gear</span></button>
+            <button data-tab="companions" title="Allies">🐾<span>Allies</span></button>
+            <button data-tab="summon" title="Summon">✨<span>Summon</span></button>
+            <button data-tab="info" title="Info">⚙️<span>Info</span></button>
+          </nav>
+          <div class="orb xp" id="xporb" title="Experience">
+            <div class="orb-liquid"><div class="orb-fill" id="xpfill"></div></div>
+            <span class="orb-val" id="xptext">0%</span>
+            <span class="orb-label">EXP</span>
+          </div>
+        </footer>
 
         <div id="window" class="hidden">
           <div class="win-head">
-            <span id="wintitle"></span>
+            <nav id="wintabs"></nav>
             <button id="winclose" title="Close (Esc)">✕</button>
           </div>
+          <div class="win-title"><span id="wintitle"></span></div>
           <main id="panel"></main>
         </div>
       </section>

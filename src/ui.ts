@@ -7,6 +7,7 @@ import { fmt, fmtPct, fmtTime } from './format';
 import { Game, OfflineRewards, SummonResult } from './game';
 import { exportSave, importSave, saveGame } from './save';
 import { talentBlocked, talentsAvailable, talentsSpent } from './stats';
+import { drawUnitPortrait } from './render';
 
 type Tab = 'growth' | 'world' | 'talents' | 'gear' | 'companions' | 'summon' | 'info';
 
@@ -75,7 +76,14 @@ export class UI {
         else this.openWindow(tab);
       });
     });
+    // the same tabs, inside the window, to flip between menus without closing it
+    const wt = $('wintabs');
+    wt.innerHTML = [...document.querySelectorAll<HTMLButtonElement>('#tabs button')]
+      .map((b) => `<button data-wtab="${b.dataset.tab}" title="${b.title}">${b.childNodes[0]?.textContent ?? ''}<span>${b.title}</span></button>`)
+      .join('');
+    wt.querySelectorAll<HTMLButtonElement>('button').forEach((b) => b.addEventListener('click', () => this.openWindow(b.dataset.wtab as Tab)));
     $('winclose').addEventListener('click', () => this.closeWindow());
+    drawUnitPortrait($('uportrait') as HTMLCanvasElement, game.job.id);
     window.addEventListener('keydown', (e) => {
       if (e.code !== 'Escape') return;
       if (!$('modal').classList.contains('hidden')) this.closeModal();
@@ -272,7 +280,41 @@ export class UI {
     const g = this.game;
     const s = g.state;
     setText(el('lvl'), `${s.name}  ·  Lv. ${s.level} ${g.job.name}`);
-    setStyle(el('expfill'), 'width', `${Math.min(100, (s.exp / expToNext(s.level)) * 100)}%`);
+    const expPct = Math.min(100, (s.exp / expToNext(s.level)) * 100);
+    setStyle(el('expfill'), 'width', `${expPct}%`);
+    setText(el('exptext'), `Lv ${s.level}  ·  ${fmt(s.exp)} / ${fmt(expToNext(s.level))} EXP`);
+    setStyle(el('xpfill'), 'height', `${expPct.toFixed(1)}%`);
+    setText(el('xptext'), `${Math.floor(expPct)}%`);
+    // HP orb
+    const maxHp = Math.max(1, g.stats.maxHp);
+    const hpFrac = Math.max(0, Math.min(1, g.hp / maxHp));
+    setStyle(el('hpfill'), 'height', `${(hpFrac * 100).toFixed(1)}%`);
+    setText(el('hptext'), fmt(Math.max(0, Math.ceil(g.hp))));
+    el('hporb').classList.toggle('low', hpFrac < 0.3 && g.hp > 0);
+    el('hporb').title = `Health ${fmt(Math.ceil(g.hp))} / ${fmt(maxHp)}`;
+    // class resource: Mage mana, Marksman focus
+    const rb = el('resbar');
+    if (g.stats.maxMana > 0) {
+      rb.classList.remove('hidden');
+      rb.dataset.kind = 'mana';
+      setStyle(el('resfill'), 'width', `${((g.mana / g.stats.maxMana) * 100).toFixed(1)}%`);
+      setText(el('restext'), `Mana ${Math.floor(g.mana)} / ${Math.floor(g.stats.maxMana)}`);
+    } else if (g.usesFocus) {
+      rb.classList.remove('hidden');
+      rb.dataset.kind = g.deadeye ? 'deadeye' : 'focus';
+      setStyle(el('resfill'), 'width', `${Math.min(100, g.focus).toFixed(1)}%`);
+      setText(el('restext'), g.deadeye ? 'DEADEYE' : `Focus ${Math.floor(g.focus)} / 100`);
+    } else rb.classList.add('hidden');
+    // status effects
+    const st: string[] = [];
+    if (g.rooted) st.push('<span class="stat-ico bad">🟢 Rooted</span>');
+    if (g.slowed) st.push('<span class="stat-ico bad">🐌 Slowed</span>');
+    if (g.slimeStacks > 0) st.push(`<span class="stat-ico ${g.slimeStacks >= 8 ? 'bad' : ''}">🫧 Slimed ${g.slimeStacks}/10</span>`);
+    if (g.parrying) st.push('<span class="stat-ico good">🛡️ Parry</span>');
+    if (g.sprinting) st.push('<span class="stat-ico good">💨 Sprint</span>');
+    if (g.deadeye) st.push('<span class="stat-ico good">🎯 Deadeye</span>');
+    const stHtml = st.join('');
+    if (changed(el('status'), 'html', stHtml)) el('status').innerHTML = stHtml;
     setText(el('gold'), fmt(s.gold));
     setText(el('gems'), fmt(s.gems));
     setText(el('power'), fmt(g.stats.power));
@@ -388,6 +430,7 @@ export class UI {
     const btn = document.querySelector<HTMLElement>(`#tabs button[data-tab="${tab}"]`);
     $('wintitle').textContent = btn?.title ?? '';
     document.querySelectorAll('#tabs button').forEach((x) => x.classList.toggle('active', x === btn));
+    document.querySelectorAll<HTMLElement>('#wintabs button').forEach((x) => x.classList.toggle('active', x.dataset.wtab === tab));
     $('window').classList.remove('hidden');
     this.renderPanel(true);
     $('panel').scrollTop = 0;
@@ -744,7 +787,7 @@ export class UI {
       </div>
       <button class="btn wide" style="background:#7f1d1d;margin-top:12px" data-action="reset">Reset this character to Lv 1</button>
       <p class="small" style="text-align:center;margin-top:16px"><a href="./side/">Play the classic side-scroller version</a></p>
-      <p class="muted small" style="text-align:center">v0.27.0</p>`;
+      <p class="muted small" style="text-align:center">v0.28.0</p>`;
   }
 
   // ---------------- Modals & toasts ----------------

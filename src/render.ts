@@ -176,6 +176,7 @@ export class Renderer {
     }
   }
   private overlayWorld = true;
+  private mini: { key: string; map: unknown; c: HTMLCanvasElement } | null = null;
   /** Run drawing code on the crisp overlay layer. */
   private onOverlay(fn: () => void, world = true) {
     const saved = this.ctx;
@@ -536,7 +537,7 @@ export class Renderer {
     const boss = g.mobs.find((m) => m.boss);
     if (boss) {
       // sits below the floating HUD (further down on phones / narrow screens)
-      const o = this.compact ? 170 : 62;
+      const o = this.compact ? 250 : 62;
       const bw = Math.min(420, w * 0.6);
       const x = (w - bw) / 2;
       ctx.fillStyle = '#e8d7a9';
@@ -1465,23 +1466,37 @@ export class Renderer {
 
   private minimap(g: Game) {
     const ctx = this.ctx;
-    const k = Math.min(Math.min(240, this.w * 0.36) / g.map.w, 100 / g.map.h);
+    const k = Math.min(Math.min(230, this.w * 0.36) / g.map.w, 96 / g.map.h);
     const mw = g.map.w * k;
     const mh = g.map.h * k;
-    const x0 = this.w - mw - 10;
-    const y0 = this.compact ? 58 : 10;
-    ctx.fillStyle = 'rgba(10,8,6,0.8)';
-    ctx.fillRect(x0 - 3, y0 - 3, mw + 6, mh + 6);
-    ctx.strokeStyle = '#6b5a36';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(x0 - 3, y0 - 3, mw + 6, mh + 6);
-    for (let i = 0; i < g.map.tiles.length; i++) {
-      const t = g.map.tiles[i];
-      if (t === Tile.Rock || t === Tile.Tree) continue;
-      const tx = i % g.map.w;
-      ctx.fillStyle = t === Tile.Gate ? '#a06eff' : Math.floor(tx / g.map.zoneW) === g.zone ? 'rgba(255,255,255,0.16)' : 'rgba(255,255,255,0.07)';
-      ctx.fillRect(x0 + tx * k, y0 + ((i - tx) / g.map.w) * k, k + 0.3, k + 0.3);
+    const x0 = Math.round(this.w - mw - 14);
+    const y0 = this.compact ? 84 : 14;
+    // pixel frame: dark rim, gold trim
+    ctx.fillStyle = '#0b0806';
+    ctx.fillRect(x0 - 6, y0 - 6, mw + 12, mh + 12);
+    ctx.fillStyle = '#c9a227';
+    ctx.fillRect(x0 - 4, y0 - 4, mw + 8, mh + 8);
+    ctx.fillStyle = '#7a5a18';
+    ctx.fillRect(x0 - 2, y0 - 2, mw + 4, mh + 4);
+    ctx.fillStyle = '#120d09';
+    ctx.fillRect(x0, y0, mw, mh);
+    // the tile layer only changes with the map or zone: cache it
+    const key = `${g.map.w}x${g.map.h}:${g.map.kind}:${g.zone}:${Math.round(mw)}`;
+    if (!this.mini || this.mini.key !== key || this.mini.map !== g.map) {
+      const c = document.createElement('canvas');
+      c.width = Math.ceil(mw);
+      c.height = Math.ceil(mh);
+      const mc = c.getContext('2d')!;
+      for (let i = 0; i < g.map.tiles.length; i++) {
+        const t = g.map.tiles[i];
+        if (t === Tile.Rock || t === Tile.Tree) continue;
+        const tx = i % g.map.w;
+        mc.fillStyle = t === Tile.Gate ? '#a06eff' : Math.floor(tx / g.map.zoneW) === g.zone ? 'rgba(255,255,255,0.18)' : 'rgba(255,255,255,0.07)';
+        mc.fillRect(tx * k, ((i - tx) / g.map.w) * k, k + 0.3, k + 0.3);
+      }
+      this.mini = { key, map: g.map, c };
     }
+    ctx.drawImage(this.mini.c, x0, y0, mw, mh);
     const toMini = (x: number, y: number): [number, number] => [x0 + (x / TILE) * k, y0 + (y / TILE) * k];
     g.map.altars.forEach((a, idx) => {
       const st = g.bossStatus(g.map.kind === 'lair' ? g.inLair : idx);
@@ -1642,6 +1657,19 @@ export function drawHeroFigure(
   if (dir.dy > -0.6) circle(ctx, sx + flip * 5 * k, hy + 2 * k, 2 * k);
 
   if (dir.dy >= 0) drawWeapon();
+}
+
+/** The hero's face for the unit frame (pixel bust, scaled up). */
+export function drawUnitPortrait(canvas: HTMLCanvasElement, job: JobId) {
+  const ctx = canvas.getContext('2d')!;
+  ctx.imageSmoothingEnabled = false;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#2a2019';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  const img = PX.hero(job, false, 0);
+  const S = 3;
+  const cropH = Math.min(img.height, 16);
+  ctx.drawImage(img, 0, 0, 16, cropH, (canvas.width - 16 * S) / 2, canvas.height - cropH * S + 2, 16 * S, cropH * S);
 }
 
 /** Draws an idle, slowly turning hero for the character select screen. */
