@@ -45,7 +45,10 @@
         <div id="deathbox" class="hudpanel hidden">
           <div class="death-title">You have fallen</div>
           <div class="death-btns">
-            <button id="retrybtn" class="btn boss">⚔ Fight again</button>
+            <span class="death-label">Fight again:</span>
+            <button class="btn boss" data-retry="0">Phase 1</button>
+            <button class="btn boss" data-retry="1">Phase 2</button>
+            <button class="btn boss" data-retry="2">Phase 3</button>
             <button id="respawnbtn" class="btn alt">Respawn</button>
           </div>
         </div>

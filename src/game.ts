@@ -744,8 +744,8 @@ export class Game {
     this.dirty = true;
   }
 
-  /** After dying to a boss (testing): full HP and flasks, a fresh boss at once. */
-  retryBoss() {
+  /** After dying to a boss (testing): full HP and flasks, a fresh boss at once, starting in `phase` (0-2). */
+  retryBoss(phase = 0) {
     const z = this.retryZone;
     if (z < 0) return;
     this.retryZone = -1;
@@ -761,6 +761,15 @@ export class Game {
     }
     this.bossCooldown[z] = 0;
     this.startBoss(z);
+    if (phase > 0) {
+      // start at that phase: health just under its threshold (splits and all)
+      const boss = this.mobs.find((m) => m.boss);
+      if (boss) {
+        boss.hp = boss.maxHp * phaseAt(z)[Math.min(1, phase - 1)] - 1;
+        this.checkPhase(boss);
+        for (const b of this.mobs) if (b.boss) b.hp = boss.hp;
+      }
+    }
   }
 
   /** Drink a healing flask. Returns false if none are left (or you just drank). */

@@ -54,7 +54,7 @@ function startGame(slot: number) {
     const why = game.activateDeadeye();
     if (why) ui.toast(why, '#ffd166');
   });
-  document.getElementById('retrybtn')!.addEventListener('click', () => game.retryBoss());
+  document.querySelectorAll<HTMLElement>('[data-retry]').forEach((b) => b.addEventListener('click', () => game.retryBoss(Number(b.dataset.retry))));
   document.getElementById('respawnbtn')!.addEventListener('click', () => game.respawnNow());
   document.getElementById('evadebtn')!.addEventListener('pointerdown', (e) => {
     e.preventDefault();
