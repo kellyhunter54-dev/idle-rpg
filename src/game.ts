@@ -127,6 +127,8 @@ export interface Telegraph {
   follow: boolean;
   /** Telegraphs from one volley share this id and hit you at most once. */
   volley?: number;
+  /** Slime landings draw differently: 'landing' (split-offs) or 'wave' (crowned slime, rings follow). */
+  style?: 'landing' | 'wave';
   /** AUTO only: seconds after it appears before AUTO reacts, and whether AUTO misses it entirely. */
   noticeAt?: number;
   unnoticed?: boolean;
@@ -1616,7 +1618,7 @@ export class Game {
     this.telegraphs.push({
       kind: 'circle', x: to.x, y: to.y, r: SPLIT.mainSlamRadius * SPLIT.attackSize[m.gen], inner: 0, angle: 0, width: 0,
       time: dur, total: dur, damage: m.atk * COMBAT.telegraphDamageMult, boss: true, ownerId: m.id, wait: 0, follow: false,
-      pct: BOSS_MOVE_PCT.slam * SPLIT.damage[m.gen] * (this.enraged ? BALANCE.bossEnrageDamage : 1),
+      style: 'wave', pct: BOSS_MOVE_PCT.slam * SPLIT.damage[m.gen] * (this.enraged ? BALANCE.bossEnrageDamage : 1),
     });
   }
 
@@ -1795,7 +1797,7 @@ export class Game {
     this.telegraphs.push({
       kind: 'circle', x: to.x, y: to.y, r: SPLIT.hopRadius * SPLIT.attackSize[m.gen], inner: 0, angle: 0, width: 0,
       time: dur, total: dur, damage: m.atk * COMBAT.telegraphDamageMult * 0.5, boss: true, ownerId: m.id, wait: 0, follow: false,
-      pct: SPLIT.hopPct * (this.enraged ? BALANCE.bossEnrageDamage : 1),
+      style: 'landing', pct: SPLIT.hopPct * (this.enraged ? BALANCE.bossEnrageDamage : 1),
     });
   }
 

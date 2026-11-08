@@ -182,7 +182,7 @@ export class Renderer {
     this.drawAltars(g, time);
     if (g.travelGoal) this.drawGoal(g.travelGoal, time);
     this.drawGoo(g, time);
-    for (const t of g.telegraphs) this.drawTelegraph(t);
+    for (const t of g.telegraphs) this.drawTelegraph(t, g);
     this.drawGroundEffects(g);
 
     // shadows
@@ -328,10 +328,43 @@ export class Renderer {
   }
 
   // ---------------- Ground layer ----------------
-  private drawTelegraph(t: Telegraph) {
+  private drawTelegraph(t: Telegraph, g: Game) {
     if (t.wait > 0) return;
     const ctx = this.ctx;
     const prog = 1 - t.time / t.total;
+    if (t.style) {
+      // a slime is in the air: faint outline, red filling in from the middle as it travels,
+      // and a dotted line from the slime to where it lands
+      const owner = g.mobs.find((m) => m.id === t.ownerId);
+      if (owner && owner.hop) {
+        ctx.setLineDash([6, 10]);
+        ctx.lineWidth = 2.5;
+        ctx.strokeStyle = `rgba(255,120,120,${0.25 + 0.35 * prog})`;
+        ctx.beginPath();
+        ctx.moveTo(owner.x, owner.y);
+        ctx.lineTo(t.x, t.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = `rgba(220,40,40,${0.35 + 0.55 * prog})`;
+      ctx.beginPath();
+      ctx.arc(t.x, t.y, t.r, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = `rgba(220,40,40,${0.22 + 0.25 * prog})`;
+      ctx.beginPath();
+      ctx.arc(t.x, t.y, t.r * prog, 0, Math.PI * 2);
+      ctx.fill();
+      if (t.style === 'wave') {
+        // the crowned slime's landing: a second outline (rings will spread from here)
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = `rgba(220,40,40,${0.25 + 0.45 * prog})`;
+        ctx.beginPath();
+        ctx.arc(t.x, t.y, t.r + 12, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      return;
+    }
     if (t.kind === 'square') {
       // checkerboard globe: red square, and the globe's shadow growing and darkening as it falls
       ctx.fillStyle = `rgba(200,30,30,${0.12 + 0.18 * prog})`;
