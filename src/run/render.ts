@@ -894,6 +894,42 @@ export class RunRenderer {
       ctx.fillRect((ex - gap) * B, ey * B, B, eh * B);
       ctx.fillRect((ex + gap) * B, ey * B, B, eh * B);
     }
+    // burning: embers rising off it
+    if (e.burnUntil > now) {
+      for (let k = 0; k < 3; k++) {
+        const ph = (time * 1.4 + k * 0.37 + e.id * 0.13) % 1;
+        const dx = Math.round(((k * 5 + e.id) % 7) - 3 + (k - 1) * r * 0.4);
+        ctx.fillStyle = ph < 0.5 ? '#ffd166' : '#ff7b2e';
+        ctx.fillRect(Math.round(sx / B + dx) * B, Math.round(top / B + img.height * 0.4 - ph * (img.height * 0.7 + 4)) * B, B, B);
+      }
+    }
+    // chilled: frost glints at its sides
+    if (e.slowUntil > now) {
+      ctx.fillStyle = '#d6f4ff';
+      const yy = Math.round(top / B + img.height * 0.55);
+      const half = Math.round(img.width / 2);
+      ctx.fillRect((Math.round(sx / B) - half) * B, yy * B, B, 2 * B);
+      ctx.fillRect((Math.round(sx / B) + half - 1) * B, (yy - 1) * B, B, 2 * B);
+      ctx.fillRect(Math.round(sx / B) * B, (Math.round(top / B) + 1) * B, B, B);
+    }
+    // shocked: a spark that flickers across it
+    if (e.shockUntil > now && Math.floor(time * 12 + e.id) % 3 === 0) {
+      ctx.fillStyle = '#fff07a';
+      const cx = Math.round(sx / B + (((time * 37 + e.id) | 0) % 5) - 2);
+      const cy = Math.round(top / B + img.height * 0.3);
+      ctx.fillRect(cx * B, cy * B, B, B);
+      ctx.fillRect((cx + 1) * B, (cy + 1) * B, B, B);
+      ctx.fillRect(cx * B, (cy + 2) * B, B, B);
+    }
+    // marked (Hunter's Mark): a red marker over bosses and elites
+    if (e.marked && (e.boss || e.elite)) {
+      ctx.fillStyle = '#ff4d4d';
+      const mx = Math.round(sx / B);
+      const my = Math.round(top / B) - 9;
+      ctx.fillRect((mx - 2) * B, my * B, 5 * B, B);
+      ctx.fillRect((mx - 1) * B, (my + 1) * B, 3 * B, B);
+      ctx.fillRect(mx * B, (my + 2) * B, B, B);
+    }
     // bleeding: drops of blood falling off the slime (more with more stacks)
     if (e.bleedStacks > 0 && e.bleedUntil > now) {
       ctx.fillStyle = '#c4161c';

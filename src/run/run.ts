@@ -3,6 +3,9 @@
 import { JobId } from '../data';
 import { GameMap, TILE, Tile, fits, moveCircle } from '../map';
 import { JELLY, JellyFight } from './jelly';
+
+/** Shocked foes take this much more damage (lightning hits, 2 s). */
+export const SHOCKED_AMP = 0.1;
 import {
   BossDef, ELITE, ENEMIES, EnemyDef, FINAL_BOSS, HEROES, HeroDef, ITEM, ITEMS, ItemDef, PStat, RUN, RUN_RARITIES,
   ABILITY_LEVELS, ADVANCE_LEVELS, BRANCHES, BRANCH_TALENTS, CLASS_TALENTS, TALENT_LEVELS, BranchDef, CLASS_CORE, CORE_MAX, CORE_RATE, CoreDef, PASSIVE, PASSIVES, PSpecial, PassiveDef, RunRarity, SHRINE_BOONS, SHRINE_RADIUS, SHRINE_TIME, STAT_LABEL, WEAPON, WSTAT_NAME, WSTAT_STEP, WStat,
@@ -41,6 +44,11 @@ export interface Enemy {
   /** bleed damage waiting to be shown as a number */
   bleedShow: number;
   bleedShowT: number;
+  /** Shocked (lightning hits): takes more damage for a moment */
+  shockUntil: number;
+  /** burn damage waiting to be shown */
+  burnShow: number;
+  burnShowT: number;
   hitFlash: number;
   /** ranged shot / boss move timer */
   cd: number;
@@ -375,6 +383,7 @@ export class Run {
   talentsTaken = 0;
   /** total bleed damage (end screen) */
   bleedTotal = 0;
+  burnTotal = 0;
   private lastCrit = false;
   private rampageUntil = 0;
   private combustDepth = 0;
@@ -916,7 +925,7 @@ export class Run {
       id: this.nextId++, def, x, y, r, hp, maxHp: hp, speed: def.speed * (elite ? 0.9 : 1) * (0.92 + this.rand() * 0.16),
       dmg: def.dmg * (1 + this.runT / 600) * (elite ? ELITE.dmgMult : 1), xp: def.xp * (elite ? ELITE.xpMult : 1),
       color: elite ? ELITE.color : def.color, elite, boss: 0, name: '', slowUntil: 0, hitFlash: 0, cd: 1 + this.rand() * 2,
-      kx: 0, ky: 0, dead: false, angle: 0, moving: true, touchCd: 0, move: '', moveT: 0, dirX: 0, dirY: 0, spawnT: 0.35, z: 0, marked: false, burnDps: 0, burnUntil: 0, bleedStacks: 0, bleedPer: 0, bleedUntil: 0, bleedShow: 0, bleedShowT: 0,
+      kx: 0, ky: 0, dead: false, angle: 0, moving: true, touchCd: 0, move: '', moveT: 0, dirX: 0, dirY: 0, spawnT: 0.35, z: 0, marked: false, burnDps: 0, burnUntil: 0, bleedStacks: 0, bleedPer: 0, bleedUntil: 0, bleedShow: 0, bleedShowT: 0, shockUntil: 0, burnShow: 0, burnShowT: 0,
     };
   }
 
@@ -983,7 +992,7 @@ export class Run {
     const e: Enemy = {
       id: this.nextId++, def: null, x: p.x, y: p.y, r: def.r, hp, maxHp: hp, speed: def.speed, dmg: def.dmg, xp: tier === 1 ? 120 : 400,
       color: def.color, elite: false, boss: tier, name: def.name, slowUntil: 0, hitFlash: 0, cd: 2.5, kx: 0, ky: 0, dead: false,
-      angle: 0, moving: true, touchCd: 0, move: '', moveT: 0, dirX: 0, dirY: 0, spawnT: 0.6, z: 0, marked: false, burnDps: 0, burnUntil: 0, bleedStacks: 0, bleedPer: 0, bleedUntil: 0, bleedShow: 0, bleedShowT: 0,
+      angle: 0, moving: true, touchCd: 0, move: '', moveT: 0, dirX: 0, dirY: 0, spawnT: 0.6, z: 0, marked: false, burnDps: 0, burnUntil: 0, bleedStacks: 0, bleedPer: 0, bleedUntil: 0, bleedShow: 0, bleedShowT: 0, shockUntil: 0, burnShow: 0, burnShowT: 0,
     };
     this.enemies.push(e);
     this.boss = e;
@@ -1083,16 +1092,23 @@ export class Run {
           }
         }
       }
-      if (e.burnUntil > this.t && !e.dead && e.boss === 3 && this.jelly) {
-        this.jelly.damage(e.burnDps * dt);
-      } else if (e.burnUntil > this.t && !e.dead) {
+      if (e.burnUntil > this.t && !e.dead) {
         const b = e.burnDps * dt;
-        e.hp -= b;
-        const wi = this.weapons.findIndex((x) => x.def.id === 'ember');
-        if (wi >= 0) this.weapons[wi].total += b;
-        if (e.hp <= 0) {
-          this.kill(e);
-          continue;
+        this.burnTotal += b;
+        e.burnShow += b;
+        if (this.t >= e.burnShowT) {
+          e.burnShowT = this.t + 0.5;
+          if (e.burnShow >= 1 && this.fx.length < 240)
+            this.fx.push({ kind: 'text', x: e.x + (this.rand() - 0.5) * 24, y: e.y, t: 0, dur: 0.7, r: 0, color: '#ff9a3c', text: String(Math.round(e.burnShow)) });
+          e.burnShow = 0;
+        }
+        if (e.boss === 3 && this.jelly) this.jelly.damage(b);
+        else {
+          e.hp -= b;
+          if (e.hp <= 0) {
+            this.kill(e);
+            continue;
+          }
         }
       }
       if (e.spawnT > 0) {
@@ -1267,6 +1283,9 @@ export class Run {
     const fb = this.sp('frostbite');
     if (fb && e.slowUntil > this.t) dmg *= 1 + fb;
     const def = w >= 0 ? this.weapons[w]?.def : undefined;
+    // Shocked: lightning hits leave foes taking +10% damage for 2 s
+    if (e.shockUntil > this.t) dmg *= 1 + SHOCKED_AMP;
+    if (def?.shock) e.shockUntil = this.t + 2;
     const hs = this.sp('headshot');
     if (hs && def?.shot && !e.boss && this.rand() < hs) {
       dmg *= 3;
@@ -1288,7 +1307,7 @@ export class Run {
       if (w >= 0 && def && !this.coreActive && this.coreTagMatch(def)) this.addCore(this.core.gain.hit + (crit ? this.core.gain.crit ?? 0 : 0));
       if (e.hitFlash < -0.25) e.hitFlash = 0.07;
       if (this.fx.length < 220 && (crit || this.rand() < 0.5))
-        this.fx.push({ kind: 'text', x: e.x + (this.rand() - 0.5) * 20, y: e.y, t: 0, dur: 0.6, r: 0, color: crit ? '#ffd166' : '#ffffff', text: String(Math.round(dmg)), crit });
+        this.fx.push({ kind: 'text', x: e.x + (this.rand() - 0.5) * 20, y: e.y, t: 0, dur: 0.6, r: 0, color: crit ? '#ffd166' : def?.fire ? '#ffc48a' : def?.shock ? '#b8e4ff' : '#ffffff', text: String(Math.round(dmg)), crit });
       this.jelly.damage(dmg);
       return false;
     }
@@ -1310,7 +1329,7 @@ export class Run {
       e.ky += (dy / l) * k;
     }
     if (this.fx.length < 220 && (crit || this.rand() < 0.6))
-      this.fx.push({ kind: 'text', x: e.x + (this.rand() - 0.5) * 20, y: e.y, t: 0, dur: 0.6, r: 0, color: crit ? '#ffd166' : '#ffffff', text: String(Math.round(dmg)), crit });
+      this.fx.push({ kind: 'text', x: e.x + (this.rand() - 0.5) * 20, y: e.y, t: 0, dur: 0.6, r: 0, color: crit ? '#ffd166' : def?.fire ? '#ffc48a' : def?.shock ? '#b8e4ff' : '#ffffff', text: String(Math.round(dmg)), crit });
     // burning: fire abilities with Ignite / Kindling, or a built-in burn
     const burn = (def?.fire ? (def.burn ?? 0) + this.sp('ignite') : 0) * (this.coreActive && this.core.id === 'firestorm' ? 2 : 1);
     if (burn > 0) {
@@ -1631,6 +1650,49 @@ export class Run {
     }
   }
 
+  /** Debuffs on a foe, for the boss tray and tooltips: what it is, stacks, time left, and what it does. */
+  debuffs(e: Enemy): { id: string; icon: string; name: string; stacks: number; left: number; dur: number; color: string; text: string }[] {
+    const t = this.t;
+    const out: { id: string; icon: string; name: string; stacks: number; left: number; dur: number; color: string; text: string }[] = [];
+    if (e.bleedStacks > 0 && e.bleedUntil > t) {
+      const amp = this.sp('bleedAmp');
+      out.push({ id: 'bleed', icon: '🩸', name: 'Bleeding', stacks: e.bleedStacks, left: e.bleedUntil - t, dur: 4, color: '#ff4d4d',
+        text: `${Math.round(e.bleedPer * e.bleedStacks)} damage a second${amp ? `, takes +${Math.round(amp * 100)}% damage` : ''}` });
+    }
+    if (e.burnUntil > t) {
+      const amp = this.sp('burnAmp');
+      out.push({ id: 'burn', icon: '🔥', name: 'Burning', stacks: 0, left: e.burnUntil - t, dur: 3, color: '#ff9a3c',
+        text: `${Math.round(e.burnDps)} damage a second${amp ? `, takes +${Math.round(amp * 100)}% damage` : ''}` });
+    }
+    if (e.slowUntil > t) {
+      const fb = this.sp('frostbite');
+      out.push({ id: 'chill', icon: '❄️', name: 'Chilled', stacks: 0, left: e.slowUntil - t, dur: 2, color: '#a8e6ff', text: `slowed${fb ? `, takes +${Math.round(fb * 100)}% damage` : ''}` });
+    }
+    if (e.shockUntil > t) out.push({ id: 'shock', icon: '⚡', name: 'Shocked', stacks: 0, left: e.shockUntil - t, dur: 2, color: '#ffe66d', text: `takes +${Math.round(SHOCKED_AMP * 100)}% damage` });
+    if (e.marked && this.sp('mark')) out.push({ id: 'mark', icon: '🔻', name: 'Marked', stacks: 0, left: 0, dur: 0, color: '#ff6b6b', text: `takes +${Math.round(this.sp('mark') * 100)}% damage` });
+    return out;
+  }
+
+  /** Buffs and debuffs on the hero, for the buff tray. */
+  heroStatus(): { icon: string; name: string; value: string; color: string; bad?: boolean; left?: number; dur?: number }[] {
+    const t = this.t;
+    const out: { icon: string; name: string; value: string; color: string; bad?: boolean; left?: number; dur?: number }[] = [];
+    const c = this.core;
+    if (this.coreActive) out.push({ icon: c.icon, name: c.name, value: c.id === 'deadeye' && this.sp('trueshot') ? `${Math.ceil(this.coreMeter)}` : `${this.coreLeft.toFixed(0)}s`, color: c.color, left: this.coreLeft, dur: c.dur + this.sp('coreDur') });
+    if (this.rampage > 0 && t < this.rampageUntil && this.sp('rampage')) out.push({ icon: '🔥', name: 'Rampage', value: `+${Math.round(this.rampage * this.sp('rampage') * 100)}%`, color: '#ff8a5c', left: this.rampageUntil - t, dur: 3 });
+    const smax = this.sp('shield');
+    if (smax && this.shield > 1) out.push({ icon: '🫧', name: 'Mana Shield', value: `${Math.round(this.shield)}`, color: '#8fd3ff' });
+    if (this.moving && this.sp('momentum')) out.push({ icon: '🏃', name: 'Momentum', value: `+${Math.round(this.sp('momentum') * 100)}%`, color: '#e0b073' });
+    if (this.moving && this.sp('kite')) out.push({ icon: '💨', name: 'Kiting', value: `+${Math.round(this.sp('kite') * 100)}%`, color: '#a8f0c6' });
+    if (!this.moving && this.sp('steady')) out.push({ icon: '🧘', name: 'Steady', value: `+${Math.round(this.sp('steady') * 100)}%`, color: '#ffd166' });
+    const bz = this.sp('berserk') * (1 - this.hp / this.stats.maxHp);
+    if (bz > 0.02) out.push({ icon: '😤', name: 'Berserker', value: `+${Math.round(bz * 100)}%`, color: '#e05a5a' });
+    if (this.hasProc('frenzy') && this.hp < this.stats.maxHp * 0.5) out.push({ icon: '🥁', name: 'War Drum', value: '+40%', color: '#e05a5a' });
+    if (this.rootUntil > t) out.push({ icon: '🟢', name: 'Rooted', value: `${(this.rootUntil - t).toFixed(1)}s`, color: '#6ccf5a', bad: true, left: this.rootUntil - t, dur: 1.4 });
+    if (this.slowedUntil > t) out.push({ icon: '🐌', name: 'Slowed', value: `${(this.slowedUntil - t).toFixed(1)}s`, color: '#9be38a', bad: true, left: this.slowedUntil - t, dur: 2 });
+    return out;
+  }
+
   /** Bleed talents: each hit adds a stack (crits 2 with Lethal Wounds), max 5, 4 s; Rupture bursts a full wound. */
   private applyBleed(e: Enemy, dmg: number, crit: boolean) {
     const share = this.sp('bleed');
@@ -1941,7 +2003,7 @@ export class Run {
     const e: Enemy = {
       id: this.nextId++, def: null, x, y, r, hp: 1, maxHp: 1, speed: 0, dmg: 0, xp: 0, color: JELLY.color, elite: false, boss: 3, name,
       slowUntil: 0, hitFlash: 0, cd: 0, kx: 0, ky: 0, dead: false, angle: 0, moving: false, touchCd: 0, move: '', moveT: 0, dirX: 0, dirY: 0,
-      spawnT: 0.4, z: 0, marked: false, burnDps: 0, burnUntil: 0, bleedStacks: 0, bleedPer: 0, bleedUntil: 0, bleedShow: 0, bleedShowT: 0,
+      spawnT: 0.4, z: 0, marked: false, burnDps: 0, burnUntil: 0, bleedStacks: 0, bleedPer: 0, bleedUntil: 0, bleedShow: 0, bleedShowT: 0, shockUntil: 0, burnShow: 0, burnShowT: 0,
     };
     this.enemies.push(e);
     return e;

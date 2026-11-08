@@ -190,6 +190,20 @@ function renderCards(r: Run) {
   $('skipbtn').classList.toggle('hidden', r.choiceTitle !== 'Level up!');
 }
 
+/** A status chip: icon, short value, and a draining bar for time left. */
+function chip(icon: string, value: string, title: string, color: string, frac: number, bad = false) {
+  const w = Math.round(Math.max(0, Math.min(1, frac)) * 10) * 10;
+  return `<div class="chipfx${bad ? ' bad' : ''}" style="--c:${color}" title="${title}"><span>${icon}</span><b>${value}</b><i style="width:${w}%"></i></div>`;
+}
+/** "+25% damage taken" -> "+25%", "120 damage a second" -> "120/s". */
+function shortVal(text: string) {
+  const amp = text.match(/\+(\d+)%/);
+  if (amp) return `+${amp[1]}%`;
+  const dps = text.match(/^(\d+) damage a second/);
+  if (dps) return `${dps[1]}/s`;
+  return '';
+}
+
 function slotHtml(icon: string, level: number | string, title: string, color = '') {
   return `<div class="rslot" title="${title}"${color ? ` style="--rc:${color}"` : ''}><span>${icon}</span><b>${level}</b></div>`;
 }
@@ -250,6 +264,9 @@ function updateHud(r: Run) {
     const d = PASSIVE[p.id];
     return d.desc ? slotHtml(d.icon, '★', `Talent. ${d.name}: ${d.desc}`, '#b388ff') : slotHtml(d.icon, p.level, `${d.name}: ${r.passiveTotal(p)}`);
   });
+  // phones: one short row, the rest folded into "+N"
+  const compact = matchMedia('(pointer: coarse), (max-width: 720px)').matches;
+  if (compact && ts.length > 5) ts.splice(4, ts.length - 4, `<div class="rslot more" title="${r.passives.length} passives and talents"><span>+${ts.length - 4}</span></div>`);
   setHtml('tslots', ts.join(''));
   // items: grouped with counts
   const counts = new Map<string, number>();
@@ -266,11 +283,19 @@ function updateHud(r: Run) {
   const b = r.boss;
   $('bossbar').classList.toggle('hidden', !b || b.dead);
   if (b && !b.dead) {
-    // bleed on the boss (any of King Jelly's slimes)
-    const bl = r.inLair && r.jelly ? Math.max(0, ...r.jelly.slimes.filter((x) => !x.dead && x.bleedUntil > r.t).map((x) => x.bleedStacks)) : b.bleedUntil > r.t ? b.bleedStacks : 0;
-    setText('bossname', bl > 0 ? `${b.name}  🩸x${bl}` : b.name);
+    setText('bossname', b.name);
+    // debuffs on the boss (King Jelly: the slime carrying the most)
+    const pool = r.inLair && r.jelly ? r.jelly.slimes.filter((x) => !x.dead) : [b];
+    let best = r.debuffs(b);
+    for (const x of pool) {
+      const d = r.debuffs(x);
+      if (d.length > best.length || (d.length === best.length && (d[0]?.stacks ?? 0) > (best[0]?.stacks ?? 0))) best = d;
+    }
+    setHtml('bossdebuffs', best.map((d) => chip(d.icon, d.stacks ? `x${d.stacks}` : shortVal(d.text), `${d.name}: ${d.text}`, d.color, d.dur ? d.left / d.dur : 1)).join(''));
     setWidth('bossfill', b.hp / b.maxHp);
   }
+  // your buffs and debuffs
+  setHtml('buffs', r.heroStatus().map((st) => chip(st.icon, st.value, st.name, st.color, st.dur && st.left !== undefined ? st.left / st.dur : 1, st.bad)).join(''));
   // interact hint
   let hint = '';
   const near = r.chests.find((c) => !c.opened && !c.free && Math.hypot(c.x - r.x, c.y - r.y) < 70);
@@ -295,7 +320,7 @@ function updateHud(r: Run) {
     el.textContent = `${n.icon ?? ''} ${n.text}`;
     const box = $('notices');
     box.appendChild(el);
-    while (box.children.length > 3) box.firstElementChild!.remove();
+    while (box.children.length > (matchMedia('(pointer: coarse), (max-width: 720px)').matches ? 2 : 3)) box.firstElementChild!.remove();
     setTimeout(() => el.classList.add('fade'), 2400);
     setTimeout(() => el.remove(), 3000);
   }
@@ -316,11 +341,12 @@ function showEnd(r: Run) {
   const record = saveBest(r.job, { time: r.t, win, level: r.level, kills: r.kills });
   setText('endtitle', win ? 'The tide breaks!' : 'Swept away');
   const all = [...r.weapons, ...r.retired.filter((w) => w.total > 0)];
-  const tot = all.reduce((a, w) => a + w.total, 0) + r.bleedTotal || 1;
+  const tot = all.reduce((a, w) => a + w.total, 0) + r.bleedTotal + r.burnTotal || 1;
   const rows = all
     .sort((a, b) => b.total - a.total)
     .map((w) => `<div class="dmg-row"><span>${w.def.icon} ${w.def.name} <i>Lv ${w.level}</i></span><div class="dmg-bar"><div style="width:${(w.total / tot) * 100}%"></div></div><b>${fmtBig(w.total)}</b></div>`)
     .join('') +
+    (r.burnTotal > 0 ? `<div class="dmg-row"><span>🔥 Burn</span><div class="dmg-bar"><div style="width:${(r.burnTotal / tot) * 100}%"></div></div><b>${fmtBig(r.burnTotal)}</b></div>` : "") +
     (r.bleedTotal > 0 ? `<div class="dmg-row"><span>🩸 Bleed</span><div class="dmg-bar"><div style="width:${(r.bleedTotal / tot) * 100}%"></div></div><b>${fmtBig(r.bleedTotal)}</b></div>` : '');
   $('endstats').innerHTML = `
     <div class="end-sum">

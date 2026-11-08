@@ -1,7 +1,7 @@
 /* Gloomtide (run mode) HUD and screens. Builds on the pixel theme in style.css. */
 body.runmode { overflow: hidden; }
 .runmode #canvas { position: absolute; }
-#bossbar:not(.hidden) ~ #notices { top: 150px; }
+#bossbar:not(.hidden) ~ #notices { top: 186px; }
 
 /* ---------- title ---------- */
 .screen { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; padding: 16px;
@@ -172,3 +172,26 @@ body.runmode { overflow: hidden; }
 /* touch: no browser gestures, callouts or text selection during play */
 body.runmode, body.runmode #battle { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; overscroll-behavior: none; }
 body.runmode .choice-box { touch-action: pan-y; }
+
+/* status chips: boss debuffs and your buffs */
+#bossdebuffs, #buffs { display: flex; gap: 4px; justify-content: center; flex-wrap: wrap; }
+#bossdebuffs { margin-top: 5px; }
+#buffs { position: absolute; left: 50%; transform: translateX(-50%); bottom: 66px; z-index: 6; max-width: 80vw; pointer-events: auto; }
+.chipfx { position: relative; display: flex; align-items: center; gap: 3px; padding: 2px 6px 4px 4px; background: #0b0806d0; border: 2px solid var(--c);
+  font-size: 13px; text-shadow: 1px 1px 0 #000; color: #fff; overflow: hidden; }
+.chipfx span { font-size: 15px; line-height: 1; }
+.chipfx b { color: var(--c); font-weight: 600; min-width: 0; }
+.chipfx i { position: absolute; left: 0; bottom: 0; height: 2px; background: var(--c); }
+.chipfx.bad { border-style: dashed; animation: pxpulse 0.6s steps(2) infinite; }
+#hint { bottom: 104px; }
+@media (pointer: coarse), (max-width: 720px) {
+  #buffs { bottom: 150px; left: 8px; transform: none; justify-content: flex-start; max-width: 60vw; }
+  .chipfx { font-size: 11px; }
+}
+
+@media (pointer: coarse), (max-width: 720px) {
+  #notices, #bossbar:not(.hidden) ~ #notices { top: auto; bottom: 196px; max-width: 86vw; }
+  #notices .notice { font-size: 11px; padding: 2px 6px; }
+  #bossbar { top: 172px; }
+  #tslots .rslot, #wslots .rslot { width: 26px; height: 26px; font-size: 13px; }
+}
