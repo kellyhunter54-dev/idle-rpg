@@ -24,6 +24,9 @@ export class Renderer {
   private overlay: HTMLCanvasElement;
   private octx: CanvasRenderingContext2D;
   private odpr = 1;
+  /** Scratch canvas: vector layers are drawn here, then snapped to hard pixels (pixel art). */
+  private fx: HTMLCanvasElement | null = null;
+  private fxSaved: CanvasRenderingContext2D | null = null;
   /** Pixel art: CSS px per game pixel (1 in classic mode). */
   private block = 1;
   private vignette: HTMLCanvasElement | null = null;
@@ -147,6 +150,69 @@ export class Renderer {
     fn();
     this.ctx = saved;
   }
+  /** Start drawing vector shapes onto the scratch canvas (pixel art only). */
+  private beginCrisp() {
+    if (!this.pixel) return;
+    const c = this.canvas;
+    if (!this.fx) {
+      this.fx = document.createElement('canvas');
+      const fc = this.fx.getContext('2d', { willReadFrequently: true })!;
+      const arc = fc.arc.bind(fc);
+      fc.arc = (x, y, r, a0, a1, ccw) => arc(x, y, Math.max(0, r), a0, a1, ccw);
+      const ell = fc.ellipse.bind(fc);
+      fc.ellipse = (x, y, rx, ry, rot, a0, a1, ccw) => ell(x, y, Math.max(0, rx), Math.max(0, ry), rot, a0, a1, ccw);
+    }
+    if (this.fx.width !== c.width || this.fx.height !== c.height) {
+      this.fx.width = c.width;
+      this.fx.height = c.height;
+    }
+    const f = this.fx.getContext('2d', { willReadFrequently: true })!;
+    f.setTransform(1, 0, 0, 1, 0, 0);
+    f.clearRect(0, 0, this.fx.width, this.fx.height);
+    this.fxSaved = this.ctx;
+    this.ctx = f;
+    this.screenTransform();
+  }
+  /**
+   * Snap the scratch canvas to hard pixels (alpha in a few steps, no soft edges) and paste it
+   * onto the world. Optional region in CSS px keeps it cheap for single objects.
+   */
+  private endCrisp(rx = 0, ry = 0, rw = this.w, rh = this.h) {
+    if (!this.pixel || !this.fx || !this.fxSaved) return;
+    const t0 = performance.now();
+    const f = this.ctx;
+    this.ctx = this.fxSaved;
+    this.fxSaved = null;
+    const d = this.dpr;
+    const x0 = Math.max(0, Math.floor(rx * d));
+    const y0 = Math.max(0, Math.floor(ry * d));
+    const x1 = Math.min(this.fx.width, Math.ceil((rx + rw) * d));
+    const y1 = Math.min(this.fx.height, Math.ceil((ry + rh) * d));
+    if (x1 <= x0 || y1 <= y0) return;
+    const img = f.getImageData(x0, y0, x1 - x0, y1 - y0);
+    const a = img.data;
+    for (let i = 3; i < a.length; i += 4) {
+      const v = a[i];
+      if (!v) continue;
+      a[i] = v < 24 ? 0 : v < 96 ? 64 : v < 160 ? 128 : v < 224 ? 192 : 255;
+    }
+    f.putImageData(img, x0, y0);
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.drawImage(this.fx, x0, y0, x1 - x0, y1 - y0, x0, y0, x1 - x0, y1 - y0);
+    ctx.restore();
+    const perf = (window as unknown as { __perf?: { crisp?: number } }).__perf;
+    if (perf) perf.crisp = (perf.crisp ?? 0) * 0.95 + (performance.now() - t0) * 0.05 * 3; // ~3 calls a frame
+  }
+  /** Draw one vector object crisply (region around it in CSS px). */
+  private crisp(fn: () => void, sx: number, sy: number, halfW: number, up: number, down: number) {
+    if (!this.pixel) return fn();
+    this.beginCrisp();
+    fn();
+    this.endCrisp(sx - halfW, sy - up, halfW * 2, up + down);
+  }
+
   /** Draw a pixel sprite with its anchor (ax, ay in sprite pixels) at screen point (sx, sy), snapped to the pixel grid. */
   private blit(img: HTMLCanvasElement, sx: number, sy: number, ax: number, ay: number, flip = false, alpha = 1) {
     const B = this.block;
@@ -183,7 +249,8 @@ export class Renderer {
     // frame-rate independent smoothing, so the camera never judders when frame times vary
     const fdt = Math.min(0.1, Math.max(0, time - this.lastTime));
     this.lastTime = time;
-    const follow = 1 - Math.exp(-fdt * 9);
+    // pixel art locks the camera to the hero, so the hero never jitters against the world
+    const follow = this.pixel ? 1 : 1 - Math.exp(-fdt * 9);
     this.camX += (p.x - this.camX) * follow;
     this.camY += (p.y - this.camY) * follow;
     const centerY = this.touch ? h * 0.42 : h * 0.52;
@@ -196,6 +263,8 @@ export class Renderer {
     }
     this.octx.setTransform(1, 0, 0, 1, 0, 0);
     this.octx.clearRect(0, 0, this.overlay.width, this.overlay.height);
+    this.octx.setTransform(this.odpr, 0, 0, this.odpr, 0, 0);
+    textLayer = this.pixel ? this.octx : null;
     const pixel = this.pixel;
     const chIdx = (tx: number) => g.map.palette ?? ZONES[Math.min(ZONES.length - 1, Math.floor(tx / g.map.zoneW))].chapter;
 
@@ -267,6 +336,8 @@ export class Renderer {
     }
 
     // ---- ground layer: telegraphs, spell circles, shadows ----
+    this.beginCrisp();
+    this.groundTransform();
     this.drawAltars(g, time);
     if (g.travelGoal) this.drawGoal(g.travelGoal, time);
     this.drawGoo(g, time);
@@ -274,6 +345,8 @@ export class Renderer {
     this.drawGroundEffects(g);
 
     // shadows
+    {
+    const ctx = this.ctx;
     ctx.fillStyle = 'rgba(0,0,0,0.3)';
     const shadow = (x: number, y: number, r: number) => {
       ctx.beginPath();
@@ -300,6 +373,8 @@ export class Renderer {
       ctx.fillStyle = 'rgba(0,0,0,0.3)';
     }
     for (const c of g.party) shadow(c.x, c.y, 10);
+    }
+    this.endCrisp();
 
     // ---- standing layer, depth-sorted ----
     this.screenTransform();
@@ -320,8 +395,15 @@ export class Renderer {
           depth: cx + cy,
           draw: () => {
             const tc = chOf(tx);
-            if (tile === Tile.Gate) this.drawGate(cx, cy, time);
-            else if (tile === Tile.Pillar) this.drawBrazier(cx, cy, tc.rock, time);
+            if (tile === Tile.Gate) {
+              if (pixel) this.blit(PX.barrier(Math.floor(time * 6 + tx) & 3), this.px(cx, cy), this.py(cx, cy), PX.TILE_W / 2, PX.TILE_H / 2);
+              else this.drawGate(cx, cy, time);
+            } else if (tile === Tile.Pillar) {
+              if (pixel) {
+                const img = PX.brazier(tc.rock, Math.floor(time * 8 + tx * 3) % 3);
+                this.blit(img, this.px(cx, cy), this.py(cx, cy), img.width >> 1, img.height - 1);
+              } else this.drawBrazier(cx, cy, tc.rock, time);
+            }
             else if (pixel) this.drawPixelObstacle(tile, cx, cy, chIdx(tx), tc.rock, front, lair, g.map.variant[ty * g.map.w + tx] + tx * 3 + ty * 5);
             else if (tile === Tile.Tree) this.drawTree(cx, cy, tc.tree, front, g.map.variant[ty * g.map.w + tx]);
             else this.drawRock(cx, cy, tc.rock, front);
@@ -329,14 +411,18 @@ export class Renderer {
         });
       }
     }
-    if (!lair) g.map.altars.forEach((a, z) => list.push({ depth: a.x + a.y + 40, draw: () => this.drawLairDoor(g, a, z, time) }));
+    const K = this.k;
+    if (!lair)
+      g.map.altars.forEach((a, z) =>
+        list.push({ depth: a.x + a.y + 40, draw: () => this.crisp(() => this.drawLairDoor(g, a, z, time), this.px(a.x, a.y), this.py(a.x, a.y), 110 * K, 230 * K, 60 * K) }),
+      );
     if (!lair && g.map.cave) {
       const c = g.map.cave;
-      list.push({ depth: c.x + c.y + 40, draw: () => this.drawCaveMouth(c, time) });
+      list.push({ depth: c.x + c.y + 40, draw: () => this.crisp(() => this.drawCaveMouth(c, time), this.px(c.x, c.y), this.py(c.x, c.y), 160 * K, 180 * K, 80 * K) });
     }
     if (lair && g.map.exit) {
       const ex = g.map.exit;
-      list.push({ depth: ex.x + ex.y + 60, draw: () => this.drawExitPortal(ex, time) });
+      list.push({ depth: ex.x + ex.y + 60, draw: () => this.crisp(() => this.drawExitPortal(ex, time), this.px(ex.x, ex.y), this.py(ex.x, ex.y), 90 * K, 160 * K, 60 * K) });
     }
     const splitMain = new Set<number>();
     for (const m of g.mobs) if (m.group && m.id !== m.group) splitMain.add(m.group);
@@ -347,9 +433,11 @@ export class Renderer {
     for (const d of list) d.draw();
 
     // ---- air effects (bolts, falling stars) ----
+    this.beginCrisp();
     this.drawProjectiles(g);
     this.drawAirEffects(g);
     this.drawFallingGlobes(g);
+    this.endCrisp();
 
     // ---- floating text (crisp overlay) ----
     this.onOverlay(() => this.drawFloats(g));
@@ -776,7 +864,7 @@ export class Renderer {
     const p = g.player;
     const k = this.k;
     const sx = this.px(p.x, p.y);
-    const bob = p.moving ? Math.abs(Math.sin(time * 11)) * 4 : Math.sin(time * 2.5) * 1.2;
+    const bob = this.pixel ? 0 : p.moving ? Math.abs(Math.sin(time * 11)) * 4 : Math.sin(time * 2.5) * 1.2;
     const sy = this.py(p.x, p.y) - bob;
     if (g.deadeye) {
       const glow = ctx.createRadialGradient(sx, sy - 30 * k, 4, sx, sy - 30 * k, 60 * k);
@@ -804,7 +892,7 @@ export class Renderer {
     const dir = this.screenDir(p.angle);
     const back = dir.dy < -0.15;
     const flip = dir.dx < 0;
-    const frame = p.moving ? [0, 1, 0, 2][Math.floor(time * 8) % 4] : 0;
+    const frame = p.moving ? [1, 0, 2, 0][Math.floor(time * 9) % 4] : 0;
     const img = PX.hero(g.job.id, back, frame, g.anim.playerHit > 0.5);
     const alpha = g.deadTimer > 0 ? 0.3 : 1;
     const wp = PX.weapon(g.job.id);
@@ -895,6 +983,11 @@ export class Renderer {
   private drawCompanion(g: Game, c: { id: string; x: number; y: number; hit: number }, time: number) {
     const def = COMPANION[c.id];
     if (!def) return;
+    if (this.pixel) {
+      const img = PX.spirit(def.color, Math.floor(time * 6 + c.x) & 1);
+      this.blit(img, this.px(c.x, c.y), this.py(c.x, c.y, 34 + Math.sin(time * 3 + c.x) * 6), img.width >> 1, img.height >> 1);
+      return;
+    }
     const ctx = this.ctx;
     const k = this.k;
     const sx = this.px(c.x, c.y);
@@ -1562,11 +1655,24 @@ function bar(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: 
   }
 }
 
+/** Pixel art: text drawn on the low-res world goes to the crisp overlay instead (same screen coords). */
+let textLayer: CanvasRenderingContext2D | null = null;
+
 function outlineText(ctx: CanvasRenderingContext2D, text: string, x: number, y: number) {
-  ctx.lineWidth = 3;
-  ctx.strokeStyle = 'rgba(0,0,0,0.85)';
-  ctx.strokeText(text, x, y);
-  ctx.fillText(text, x, y);
+  let c = ctx;
+  if (textLayer && ctx !== textLayer) {
+    c = textLayer;
+    c.font = ctx.font;
+    c.fillStyle = ctx.fillStyle;
+    c.textAlign = ctx.textAlign;
+    c.textBaseline = ctx.textBaseline;
+    c.globalAlpha = ctx.globalAlpha;
+  }
+  c.lineWidth = 3;
+  c.strokeStyle = 'rgba(0,0,0,0.85)';
+  c.strokeText(text, x, y);
+  c.fillText(text, x, y);
+  if (c !== ctx) c.globalAlpha = 1;
 }
 
 function hexToRgb(hex: string): [number, number, number] {

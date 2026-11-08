@@ -522,12 +522,12 @@ const ROBE_B = [
   '..oCCCCCCCCCCo..',
   '..oooooooooooo..',
 ];
+// walk cycle: stand, left leg forward, stand, right leg forward (the raised foot is the back one)
 const LEGS = [
-  ['...opppoPPPo....', '...oppo.oPPo....', '...okko.okko....', '...oooo.oooo....'],
-  ['...opppoPPPo....', '..oppo...oPPo...', '..okko....okko..', '..oooo....oooo..'],
-  ['...opppoPPPo....', '....oppooPPo....', '....okkookko....', '....oooooooo....'],
+  ['...opppoPPPo....', '...oppo.oPPo....', '...oppo.oPPo....', '...okko.okko....', '...oooo.oooo....'],
+  ['...opppoPPPo....', '..oppo..oPPo....', '..oppo..okko....', '..okko..oooo....', '..oooo..........'],
+  ['...opppoPPPo....', '...oppo..oPPo...', '...okko..oPPo...', '...oooo..okko...', '.........oooo...'],
 ];
-
 const JOB_PAL: Record<JobId, { c: string; b: string; p: string; k: string; H: string }> = {
   warrior: { c: '#3d5a80', b: '#5a3a22', p: '#4a4038', k: '#2e241c', H: '#9aa3ad' },
   archer: { c: '#3f6b3a', b: '#6b4426', p: '#5a4630', k: '#3a2a1c', H: '#4f7a3a' },
@@ -602,5 +602,80 @@ export function shadowSprite(w: number): HTMLCanvasElement {
         if (nx * nx + ny * ny <= 1) img.set(x, y, [10, 8, 14], 90);
       }
     return img.canvas();
+  });
+}
+
+/** Stone column with a fire bowl (lair braziers). flame frame 0-2. Anchor: bottom centre. */
+export function brazier(stoneHex: string, frame: number): HTMLCanvasElement {
+  return cached(`br${stoneHex}:${frame}`, () => {
+    const w = 16;
+    const h = 40;
+    const img = new PixelImage(w, h);
+    const t = ramp(hexRgb(stoneHex));
+    // column
+    for (let y = 16; y < h - 1; y++)
+      for (let x = 4; x < 12; x++) {
+        const band = (y - 16) % 7 === 6;
+        img.set(x, y, band ? t[1] : x < 6 ? t[3] : x > 9 ? t[1] : t[2]);
+      }
+    for (let x = 3; x < 13; x++) {
+      img.set(x, h - 2, t[1]);
+      img.set(x, 16, t[3]);
+    }
+    // bowl
+    const iron = ramp(hexRgb('#4a3f38'));
+    for (let x = 2; x < 14; x++) {
+      img.set(x, 14, iron[3]);
+      img.set(x, 15, iron[1]);
+    }
+    for (let x = 3; x < 13; x++) img.set(x, 13, [255, 140, 40]);
+    // flame
+    const flame: string[][] = [
+      ['....yy....', '...yYYy...', '..yYWWYy..', '..yYWWYy..', '.yYYWWYYy.', '.yYYYYYYy.'],
+      ['...y......', '...yYy.y..', '..yYWYyY..', '..yYWWYy..', '.yYYWWYYy.', '.yYYYYYYy.'],
+      ['......y...', '..y.yYy...', '..YyYWYy..', '..yYWWYy..', '.yYYWWYYy.', '.yYYYYYYy.'],
+    ];
+    const pal: Record<string, RGB> = { y: [214, 72, 24], Y: [255, 150, 40], W: [255, 236, 150] };
+    flame[frame % 3].forEach((row, y) => [...row].forEach((ch, x) => pal[ch] && img.set(x + 3, y + 7, pal[ch])));
+    return img.outline().canvas();
+  });
+}
+
+/** Zone barrier: a shimmering purple crystal wall the size of a tile. frame 0-3. Anchor: bottom centre. */
+export function barrier(frame: number): HTMLCanvasElement {
+  return cached(`bar${frame}`, () => {
+    const W = TILE_W;
+    const H = 30;
+    const img = new PixelImage(W, TILE_H + H);
+    const t = ramp(hexRgb('#8a5cff'));
+    for (let y = 0; y < TILE_H + H; y++)
+      for (let x = 0; x < W; x++) {
+        const topEdge = x < W / 2 ? TILE_H / 2 + Math.floor(x / 2) : TILE_H / 2 + Math.floor((W - 1 - x) / 2);
+        const inTop = inDiamond(x, y);
+        if (!inTop && (y < topEdge || y >= topEdge + H)) continue;
+        // vertical shimmer bands that drift up each frame
+        const band = (y + frame * 3 + (x >> 2)) % 12;
+        let c = inTop ? t[4] : x < W / 2 ? t[3] : t[2];
+        if (band < 2) c = t[4];
+        img.set(x, y, c, inTop ? 200 : 120 + (band < 2 ? 70 : 0));
+        if (hash(x, y, frame) > 0.985) img.set(x, y, [255, 255, 255]);
+      }
+    return img.outline(hexRgb('#2a1550')).canvas();
+  });
+}
+
+/** A floating ally spirit in its colour, with little wings. frame 0-1 (wing flap). Anchor: centre. */
+export function spirit(colorHex: string, frame: number): HTMLCanvasElement {
+  return cached(`sp${colorHex}:${frame}`, () => {
+    const img = new PixelImage(16, 14);
+    const t = ramp(hexRgb(colorHex));
+    blobs(img, [{ x: 8, y: 8, r: 4.6 }], t, 5, 0);
+    const wing: RGB = [240, 248, 255];
+    const up = frame ? -1 : 0;
+    for (const [x, y] of [[2, 5], [3, 5], [2, 6], [1, 6], [13, 5], [12, 5], [13, 6], [14, 6]]) img.set(x, y + up, wing, 220);
+    img.set(7, 8, [27, 20, 16]);
+    img.set(10, 8, [27, 20, 16]);
+    img.set(6, 6, [255, 255, 245]);
+    return img.outline().canvas();
   });
 }
