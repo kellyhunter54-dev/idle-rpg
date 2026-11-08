@@ -1655,18 +1655,7 @@ export class Game {
         m.hop = null;
         m.hopTimer = SPLIT.mainHopEvery[0] + this.rand() * (SPLIT.mainHopEvery[1] - SPLIT.mainHopEvery[0]);
         this.effect('ring', m.x, m.y, SPLIT.mainSlamRadius * SPLIT.attackSize[m.gen], m.color, 0.4);
-        // phase 1: two rings, phase 2: three; each ring's gaps are shifted from the one before
-        const base = this.rand() * Math.PI * 2;
-        const step = (Math.PI * 2) / SPLIT.waveGaps;
-        const count = SPLIT.waveCount[m.phase] ?? 2;
-        for (let w = 0; w < count; w++) {
-          const off = base + (w % 2) * step * 0.5;
-          this.waves.push({
-            x: m.x, y: m.y, r: m.r - w * SPLIT.waveSpacing, gaps: Array.from({ length: SPLIT.waveGaps }, (_, i) => off + i * step),
-            hit: false, ownerId: m.id, level: m.level, damage: m.atk * COMBAT.telegraphDamageMult * 0.6,
-            pct: SPLIT.wavePct * (this.enraged ? BALANCE.bossEnrageDamage : 1),
-          });
-        }
+        this.emitRings(m);
       }
       return;
     }
@@ -1683,6 +1672,21 @@ export class Game {
       time: dur, total: dur, damage: m.atk * COMBAT.telegraphDamageMult, boss: true, ownerId: m.id, wait: 0, follow: false,
       style: 'wave', pct: BOSS_MOVE_PCT.slam * SPLIT.damage[m.gen] * (this.enraged ? BALANCE.bossEnrageDamage : 1),
     });
+  }
+
+  /** Rings of slime from the crowned slime: 2 / 3 / 4 by phase, each with gaps shifted from the last. */
+  private emitRings(m: Mob) {
+    const base = this.rand() * Math.PI * 2;
+    const step = (Math.PI * 2) / SPLIT.waveGaps;
+    const count = SPLIT.waveCount[m.phase] ?? 2;
+    for (let w = 0; w < count; w++) {
+      const off = base + (w % 2) * step * 0.5;
+      this.waves.push({
+        x: m.x, y: m.y, r: m.r - w * SPLIT.waveSpacing, gaps: Array.from({ length: SPLIT.waveGaps }, (_, i) => off + i * step),
+        hit: false, ownerId: m.id, level: m.level, damage: m.atk * COMBAT.telegraphDamageMult * 0.6,
+        pct: SPLIT.wavePct * (this.enraged ? BALANCE.bossEnrageDamage : 1),
+      });
+    }
   }
 
   /** A random open spot in the arena for a slime of this size, at least `minFromPlayer` away from you. */
@@ -1763,6 +1767,9 @@ export class Game {
   /** King Jelly's last phase: leap to the middle, then bounce in place and rain globes. */
   private updateAnchored(m: Mob, dt: number) {
     const c = this.map.altars[0] ?? { x: m.x, y: m.y };
+    // in the middle: rings nonstop (a new set as soon as the last ring of the previous set is halfway out)
+    const centred = Math.hypot(m.x - c.x, m.y - c.y) <= 20 && !(m.hop && (m.hop.fx !== m.hop.tx || m.hop.fy !== m.hop.ty));
+    if (centred && m.invuln <= 0 && !this.waves.some((w) => w.ownerId === m.id && w.r < SPLIT.waveMaxR * SPLIT.waveRest)) this.emitRings(m);
     if (m.hop) {
       const h = m.hop;
       h.t += dt;
