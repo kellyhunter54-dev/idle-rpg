@@ -454,7 +454,7 @@ export const SPLIT = {
     chargeLen: 3000, // charges run wall to wall (they stop at the wall)
     chargeSpeed: 800,
     /** The crowned slime's slime rain: a constant drizzle of globs all over the room (no goo; each hit = Slimed). */
-    rainEvery: [0.05, 0.12] as [number, number], // seconds between globs (about 12 a second)
+    rainEvery: [0.08, 0.17] as [number, number], // seconds between globs (about 8 a second, ~16 circles on the field)
     rainNearPlayer: 0.2, // share of globs aimed near you
     spoutRadius: 45,
     spoutTime: 2.0, // slow fall: plenty of time to see each one coming

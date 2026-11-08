@@ -1797,6 +1797,14 @@ export class Game {
     // in the middle: rings nonstop (a new set as soon as the last ring of the previous set is halfway out)
     const centred = Math.hypot(m.x - c.x, m.y - c.y) <= 20 && !(m.hop && (m.hop.fx !== m.hop.tx || m.hop.fy !== m.hop.ty));
     if (centred && m.invuln <= 0 && !this.waves.some((w) => w.ownerId === m.id && w.r < SPLIT.waveMaxR * SPLIT.waveRest)) this.emitRings(m);
+    // constant slime rain (independent of the bouncing; several globs per frame if needed)
+    if (centred && m.invuln <= 0 && !SPLIT.wild.globes) {
+      const w = SPLIT.wild;
+      while (m.actionTimer <= 0) {
+        m.actionTimer += (w.rainEvery[0] + this.rand() * (w.rainEvery[1] - w.rainEvery[0])) * (this.enraged ? 0.75 : 1);
+        this.spout(m);
+      }
+    }
     if (m.hop) {
       const h = m.hop;
       h.t += dt;
@@ -1833,12 +1841,7 @@ export class Game {
       m.actionTimer = (SPLIT.globeEvery[0] + this.rand() * (SPLIT.globeEvery[1] - SPLIT.globeEvery[0])) * (this.enraged ? 0.75 : 1);
       this.globeRain(m);
     }
-    else if (m.actionTimer <= 0 && m.invuln <= 0) {
-      // constant slime rain: one glob at a time, all over the room
-      const w = SPLIT.wild;
-      m.actionTimer = (w.rainEvery[0] + this.rand() * (w.rainEvery[1] - w.rainEvery[0])) * (this.enraged ? 0.75 : 1);
-      this.spout(m);
-    }
+
   }
 
   /** Wild phase: one glob of the crowned slime's constant slime rain. */
