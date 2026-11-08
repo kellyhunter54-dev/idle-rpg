@@ -1,7 +1,7 @@
 import { JOBS, JOB_LIST, JobId, ZONES, jobOf } from './data';
 import { TILE, ZONE_TILES } from './map';
 import { drawHeroPortrait } from './render';
-import { SLOT_COUNT, createCharacter, deleteSlot, readSlot, resetCharacter } from './save';
+import { SLOT_COUNT, createCharacter, deleteSlot, readSlot, resetCharacter, writeSlot } from './save';
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
@@ -67,6 +67,7 @@ export function showCharacterSelect(onPlay: (slot: number) => void) {
           <button class="btn wide" data-act="play" data-arg="${i}">Play</button>
           <div class="cs-row">
             <button class="btn alt" data-act="reset" data-arg="${i}" title="Testing: wipe this character back to level 1">Reset to Lv 1</button>
+            <button class="btn alt" data-act="setlvl" data-arg="${i}" title="Testing: set this character's level">Set level</button>
             <button class="btn alt" data-act="delete" data-arg="${i}">Delete</button>
           </div>
         </div>`);
@@ -109,6 +110,17 @@ export function showCharacterSelect(onPlay: (slot: number) => void) {
       case 'reset': {
         const s = readSlot(i);
         if (s && confirm(`Reset ${s.name} back to level 1? All progress for this character is wiped.`)) resetCharacter(i);
+        break;
+      }
+      case 'setlvl': {
+        const s = readSlot(i);
+        if (!s) break;
+        const v = Number(prompt(`Set ${s.name}'s level to:`, String(s.level)));
+        if (v >= 1) {
+          s.level = Math.min(200, Math.round(v));
+          s.exp = 0;
+          writeSlot(i, s);
+        }
         break;
       }
       case 'delete': {

@@ -152,6 +152,27 @@ export class UI {
         g.goToBoss(Number(arg));
         this.toast(`Heading to the ${ZONES[Number(arg)].name} altar...`, '#c9a227');
         break;
+      case 'setLevel': {
+        const v = Number(($<HTMLInputElement>('lvlinput')).value);
+        if (!v || v < 1) {
+          this.toast('Type a level first.', '#ef4444');
+          return;
+        }
+        g.setLevel(v);
+        this.toast(`${g.state.name} is now level ${g.state.level}.`, '#c9a227');
+        this.renderPanel(true);
+        return;
+      }
+      case 'addLevel':
+        g.setLevel(g.state.level + Number(arg));
+        this.toast(`${g.state.name} is now level ${g.state.level}.`, '#c9a227');
+        this.renderPanel(true);
+        return;
+      case 'testMode':
+        g.setTestMode(!g.state.settings.testMode);
+        this.toast(g.state.settings.testMode ? 'Test mode ON: invincible, 10x damage.' : 'Test mode off.', '#c9a227');
+        this.renderPanel(true);
+        return;
       case 'switch':
         this.onSwitchCharacter();
         return;
@@ -266,7 +287,7 @@ export class UI {
     // keep text typed in the save box
     const ta = document.getElementById('savebox') as HTMLTextAreaElement | null;
     const keep = ta?.value;
-    if (this.tab === 'info' && !force && ta) return; // info panel is static; don't wipe the textarea
+    if (this.tab === 'info' && !force && ta) return; // info panel is static; don't wipe typed text
     this.lastPanelHtml = html;
     $('panel').innerHTML = html;
     if (keep) {
@@ -500,6 +521,29 @@ export class UI {
       <p class="muted small"><b>🧪 Flasks (R)</b> heal ${Math.round(BALANCE.flaskHeal * 100)}% of your HP. You carry ${BALANCE.flaskCharges}; they refill when you enter a lair and slowly out in the world. AUTO drinks when low.</p>
       <p class="muted small">Monsters flash red and show an orange arc before they swing.</p>
       <p class="muted small">Your hero fights on its own. Spend 🪙 gold on Growth and summon gear and companions with 💎 gems. Explore east into harder zones when you are ready (the 🗺️ World tab shows where your level fits), and challenge each zone's boss at its altar. You keep earning for up to ${BALANCE.offlineCapHours} hours while away, farming wherever you left your hero.</p>
+      <h3>🧪 Testing tools</h3>
+      <div class="row">
+        <div class="info">
+          <div class="name">Level</div>
+          <div class="sub">Currently Lv. ${s.level}. Higher level = bosses and monsters hit you less and give you less EXP.</div>
+        </div>
+        <input id="lvlinput" type="number" min="1" max="200" value="${s.level}" class="lvlinput" />
+        <button class="btn" data-action="setLevel">Set</button>
+      </div>
+      <div class="toolbar">
+        <button class="btn alt" data-action="addLevel" data-arg="-5">-5</button>
+        <button class="btn alt" data-action="addLevel" data-arg="-1">-1</button>
+        <button class="btn alt" data-action="addLevel" data-arg="1">+1</button>
+        <button class="btn alt" data-action="addLevel" data-arg="5">+5</button>
+        <button class="btn alt" data-action="addLevel" data-arg="10">+10</button>
+      </div>
+      <div class="row">
+        <div class="info">
+          <div class="name">Test mode ${s.settings.testMode ? '<span class="tag" style="background:#2d6a4f">ON</span>' : ''}</div>
+          <div class="sub">Invincible and 10x damage, for trying content quickly.</div>
+        </div>
+        <button class="btn ${s.settings.testMode ? '' : 'alt'}" data-action="testMode">${s.settings.testMode ? 'Turn off' : 'Turn on'}</button>
+      </div>
       <h3>Save</h3>
       <p class="muted small">The game saves automatically. Use export to back up your save or move it to another device.</p>
       <textarea id="savebox" placeholder="Paste a save code here to import"></textarea>
@@ -510,7 +554,7 @@ export class UI {
       </div>
       <button class="btn wide" style="background:#7f1d1d;margin-top:12px" data-action="reset">Reset this character to Lv 1</button>
       <p class="small" style="text-align:center;margin-top:16px"><a href="./side/">Play the classic side-scroller version</a></p>
-      <p class="muted small" style="text-align:center">v0.7.0</p>`;
+      <p class="muted small" style="text-align:center">v0.7.1</p>`;
   }
 
   // ---------------- Modals & toasts ----------------

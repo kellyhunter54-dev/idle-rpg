@@ -400,6 +400,24 @@ export class Game {
     return null;
   }
 
+  // ---------------- Testing tools ----------------
+  /** Testing: jump straight to a level (EXP bar resets). */
+  setLevel(level: number) {
+    this.state.level = Math.max(1, Math.min(200, Math.round(level)));
+    this.state.exp = 0;
+    this.recalc();
+    this.hp = this.stats.maxHp;
+    this.target = null;
+    this.dirty = true;
+  }
+
+  /** Testing: invincible and 10x damage. */
+  setTestMode(on: boolean) {
+    this.state.settings.testMode = on;
+    if (on) this.hp = this.stats.maxHp;
+    this.dirty = true;
+  }
+
   /** Drink a healing flask. Returns false if none are left (or you just drank). */
   drinkFlask(): boolean {
     if (this.flasks <= 0 || this.flaskCd > 0 || this.deadTimer > 0 || this.hp >= this.stats.maxHp) return false;
@@ -1220,6 +1238,11 @@ export class Game {
     const flat = amount * takenLevelMult(fromLevel, this.state.level);
     const share = pct > 0 ? this.stats.maxHp * pct * bossPctScale(fromLevel, this.state.level) : 0;
     amount = Math.max(flat, share) * this.job.damageTaken;
+    if (this.state.settings.testMode) {
+      // testing: nothing can hurt you
+      this.float(p.x, p.y, 40, 'Immune', '#9be89b', 13);
+      return;
+    }
     this.hp -= amount;
     this.anim.playerHit = 1;
     this.float(p.x, p.y, 40, '-' + fmtDmg(amount), '#ff6b6b', 15);
@@ -1514,7 +1537,7 @@ export class Game {
       return;
     }
     const crit = this.rand() < this.stats.critRate;
-    const dmg = base * (crit ? this.stats.critDmg : 1) * (0.9 + this.rand() * 0.2) * dealtLevelMult(m.level, this.state.level);
+    const dmg = base * (crit ? this.stats.critDmg : 1) * (0.9 + this.rand() * 0.2) * dealtLevelMult(m.level, this.state.level) * (this.state.settings.testMode ? 10 : 1);
     m.hp -= dmg;
     m.hitFlash = 1;
     if (m.state === 'idle') m.state = 'chase';
