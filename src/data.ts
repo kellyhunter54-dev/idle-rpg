@@ -198,7 +198,7 @@ export interface SkillDef {
 }
 
 export const SKILLS: SkillDef[] = [
-  { id: 'strike', name: 'Power Strike', unlock: 1, cd: 4, mult: 3, color: '#ffd166', icon: '✴️' },
+  { id: 'strike', name: 'Dash Strike', unlock: 1, cd: 4, mult: 3, color: '#ffd166', icon: '⚡' },
   { id: 'cyclone', name: 'Cyclone', unlock: 8, cd: 10, mult: 8, color: '#4ecdc4', icon: '🌀' },
   { id: 'starfall', name: 'Starfall', unlock: 20, cd: 25, mult: 25, color: '#c77dff', icon: '🌠' },
 ];
@@ -210,6 +210,9 @@ export interface ChapterDef {
   ground: string;
   mobs: { name: string; color: string }[];
   boss: string;
+  floor: [string, string]; // isometric floor tile colors (two shades)
+  tree: string;
+  rock: string;
 }
 
 export const CHAPTERS: ChapterDef[] = [
@@ -217,26 +220,31 @@ export const CHAPTERS: ChapterDef[] = [
     name: 'Sprout Meadow', sky: ['#9be7ff', '#e0f7ff'], ground: '#6cbf5a',
     mobs: [{ name: 'Jelly', color: '#7ee081' }, { name: 'Beetle', color: '#c08552' }, { name: 'Sprig', color: '#a7c957' }],
     boss: 'King Jelly',
+    floor: ['#3f5a2c', '#46632f'], tree: '#1f3d1c', rock: '#6b6b5e',
   },
   {
     name: 'Whisper Woods', sky: ['#4a6c4f', '#a3c9a8'], ground: '#3d5a3a',
     mobs: [{ name: 'Shroomling', color: '#e76f51' }, { name: 'Bark Imp', color: '#8d6e63' }, { name: 'Wisp', color: '#b8f2e6' }],
     boss: 'Elder Treant',
+    floor: ['#2c3a2a', '#31402e'], tree: '#14261a', rock: '#55594c',
   },
   {
     name: 'Ember Canyon', sky: ['#ff9e64', '#ffd6a5'], ground: '#9c4a1a',
     mobs: [{ name: 'Cinder', color: '#ff5400' }, { name: 'Scorpid', color: '#c1121f' }, { name: 'Ash Bat', color: '#6d6875' }],
     boss: 'Magma Titan',
+    floor: ['#5a3524', '#633b28'], tree: '#3a1f14', rock: '#7a4a32',
   },
   {
     name: 'Frostpeak', sky: ['#a9d6e5', '#edf6f9'], ground: '#cfe8f3',
     mobs: [{ name: 'Snowpup', color: '#ffffff' }, { name: 'Ice Sprite', color: '#90e0ef' }, { name: 'Yeti Cub', color: '#d9d9d9' }],
     boss: 'Glacier Wyrm',
+    floor: ['#8fa3b0', '#9aaebb'], tree: '#2f4a52', rock: '#c7d3da',
   },
   {
     name: 'Skyreach Ruins', sky: ['#3a0ca3', '#7209b7'], ground: '#4a4e69',
     mobs: [{ name: 'Gargoyle', color: '#9a8c98' }, { name: 'Rune Eye', color: '#f72585' }, { name: 'Sky Ray', color: '#4cc9f0' }],
     boss: 'The Warden',
+    floor: ['#34304a', '#3a3552'], tree: '#1e1b2e', rock: '#5e5878',
   },
 ];
 

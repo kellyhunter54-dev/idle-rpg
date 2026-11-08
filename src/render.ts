@@ -1,16 +1,23 @@
 import { BALANCE, COMPANION, chapterOf } from './data';
-import { Game, Mob } from './game';
-import { PHYS } from './world';
+import { Game, Mob, Telegraph, Vec } from './game';
+import { TILE, Tile } from './map';
 
-/** Draws the battle scene with simple shapes and a camera that follows the hero. */
+/**
+ * Isometric renderer. Ground-level things (tiles, telegraphs, spell circles) are drawn in world
+ * coordinates through an isometric canvas transform; standing things (trees, rocks, characters)
+ * are drawn upright at their projected position, sorted back to front.
+ */
 export class Renderer {
   private ctx: CanvasRenderingContext2D;
   private w = 0;
   private h = 0;
+  private dpr = 1;
+  private k = 0.6; // zoom: screen pixels per world unit
+  private ox = 0; // screen position of world origin
+  private oy = 0;
   private camX = 0;
   private camY = 0;
-  private scale = 1;
-  private groundPx = 0;
+  private camInit = false;
 
   constructor(private canvas: HTMLCanvasElement) {
     this.ctx = canvas.getContext('2d')!;
@@ -19,324 +26,541 @@ export class Renderer {
   }
 
   private resize() {
-    const dpr = window.devicePixelRatio || 1;
+    this.dpr = window.devicePixelRatio || 1;
     const r = this.canvas.getBoundingClientRect();
     this.w = r.width;
     this.h = r.height;
-    this.canvas.width = Math.round(r.width * dpr);
-    this.canvas.height = Math.round(r.height * dpr);
-    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this.canvas.width = Math.round(r.width * this.dpr);
+    this.canvas.height = Math.round(r.height * this.dpr);
   }
 
-  // world -> screen
-  private sx(x: number) {
-    return (x - this.camX) * this.scale;
+  // ---- projection ----
+  private px(x: number, y: number) {
+    return this.ox + (x - y) * this.k;
   }
-  private sy(y: number) {
-    return this.groundPx - (y - this.camY) * this.scale;
+  private py(x: number, y: number, z = 0) {
+    return this.oy + (x + y) * this.k * 0.5 - z * this.k;
+  }
+  /** Screen (CSS px inside the canvas) to world ground point. */
+  screenToWorld(sx: number, sy: number): Vec {
+    const X = sx - this.ox;
+    const Y = sy - this.oy;
+    return { x: (X + 2 * Y) / (2 * this.k), y: (2 * Y - X) / (2 * this.k) };
+  }
+  /** Converts a world direction to its on-screen direction (for facing / weapons). */
+  private screenDir(angle: number) {
+    const c = Math.cos(angle);
+    const s = Math.sin(angle);
+    const dx = c - s;
+    const dy = (c + s) * 0.5;
+    const l = Math.hypot(dx, dy) || 1;
+    return { dx: dx / l, dy: dy / l };
+  }
+  private groundTransform() {
+    const k = this.k;
+    this.ctx.setTransform(k * this.dpr, (k / 2) * this.dpr, -k * this.dpr, (k / 2) * this.dpr, this.ox * this.dpr, this.oy * this.dpr);
+  }
+  private screenTransform() {
+    this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
   }
 
   draw(g: Game, time: number) {
     const { ctx, w, h } = this;
     if (w === 0 || h === 0) return;
-    const s = g.state;
-    const ch = chapterOf(s.stage).def;
+    const ch = chapterOf(g.state.stage).def;
     const p = g.player;
 
-    // On touch screens the controls sit at the bottom, so lift the ground above them
-    // and zoom out a bit on narrow screens so you can see more of the map.
+    // zoom: about 11-14 tiles across, never too tiny on phones
+    this.k = Math.max(0.42, Math.min(0.78, w / 1250));
+    if (!this.camInit || Math.hypot(p.x - this.camX, p.y - this.camY) > 900) {
+      this.camX = p.x;
+      this.camY = p.y;
+      this.camInit = true;
+    }
+    this.camX += (p.x - this.camX) * 0.12;
+    this.camY += (p.y - this.camY) * 0.12;
     const touch = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches;
-    const bottom = touch ? 132 : 46;
-    this.scale = Math.min((h - bottom + 46) / PHYS.viewHeight, w / 560);
-    this.groundPx = h - bottom;
-    const viewW = w / this.scale;
-    const targetX = Math.max(0, Math.min(g.layout.width - viewW, p.x - viewW / 2));
-    this.camX += (targetX - this.camX) * 0.15;
-    if (g.layout.width <= viewW) this.camX = (g.layout.width - viewW) / 2;
-    // follow the hero up onto high platforms a little
-    const targetY = Math.max(0, p.y - 160);
-    this.camY += (targetY - this.camY) * 0.1;
+    const centerY = touch ? h * 0.42 : h * 0.52;
+    this.ox = w / 2 - (this.camX - this.camY) * this.k;
+    this.oy = centerY - (this.camX + this.camY) * this.k * 0.5;
 
-    // Sky
-    const sky = ctx.createLinearGradient(0, 0, 0, h);
-    sky.addColorStop(0, ch.sky[0]);
-    sky.addColorStop(1, ch.sky[1]);
-    ctx.fillStyle = sky;
+    this.screenTransform();
+    ctx.fillStyle = '#0b0a08';
     ctx.fillRect(0, 0, w, h);
 
-    // Parallax hills (far, then near)
-    this.hills(0.2, 260, 110, 'rgba(0,0,0,0.07)');
-    this.hills(0.45, 180, 70, 'rgba(0,0,0,0.09)');
+    // ---- visible tile range ----
+    const corners = [this.screenToWorld(0, -80), this.screenToWorld(w, -80), this.screenToWorld(0, h + 120), this.screenToWorld(w, h + 120)];
+    const minTx = Math.max(0, Math.floor(Math.min(...corners.map((c) => c.x)) / TILE) - 1);
+    const maxTx = Math.min(g.map.w - 1, Math.ceil(Math.max(...corners.map((c) => c.x)) / TILE) + 1);
+    const minTy = Math.max(0, Math.floor(Math.min(...corners.map((c) => c.y)) / TILE) - 1);
+    const maxTy = Math.min(g.map.h - 1, Math.ceil(Math.max(...corners.map((c) => c.y)) / TILE) + 1);
 
-    // Ground
-    const gy = this.sy(0);
-    ctx.fillStyle = ch.ground;
-    ctx.fillRect(0, gy, w, h - gy);
-    ctx.fillStyle = 'rgba(0,0,0,0.15)';
-    ctx.fillRect(0, gy, w, 5);
-    // map edges
-    ctx.fillStyle = 'rgba(0,0,0,0.35)';
-    if (this.sx(0) > 0) ctx.fillRect(0, 0, this.sx(0), h);
-    const right = this.sx(g.layout.width);
-    if (right < w) ctx.fillRect(right, 0, w - right, h);
-
-    // Platforms
-    for (const pl of g.layout.platforms) {
-      const x1 = this.sx(pl.x1);
-      const x2 = this.sx(pl.x2);
-      const y = this.sy(pl.y);
-      if (x2 < 0 || x1 > w) continue;
-      const th = 16 * this.scale;
-      ctx.fillStyle = ch.ground;
-      roundRect(ctx, x1, y, x2 - x1, th, 6);
-      ctx.fill();
-      ctx.fillStyle = 'rgba(255,255,255,0.18)';
-      ctx.fillRect(x1 + 4, y, x2 - x1 - 8, 3);
-      ctx.fillStyle = 'rgba(0,0,0,0.18)';
-      ctx.fillRect(x1 + 4, y + th - 4, x2 - x1 - 8, 4);
-    }
-
-    // Skill flash
-    if (g.anim.flash > 0) {
-      ctx.fillStyle = hexA(g.anim.flashColor, g.anim.flash * 0.18);
-      ctx.fillRect(0, 0, w, h);
-    }
-
-    // Mobs
-    for (const m of g.mobs) this.drawMob(m, time);
-
-    // Companions
-    for (const c of g.party) {
-      const def = COMPANION[c.id];
-      if (!def) continue;
-      const cx = this.sx(c.x);
-      const cy = this.sy(c.y);
-      const r = 15 * this.scale * (1 + c.hit * 0.15);
-      ctx.fillStyle = def.color;
-      circle(ctx, cx, cy, r);
-      ctx.strokeStyle = 'rgba(0,0,0,0.3)';
-      ctx.lineWidth = 2;
-      ctx.stroke();
-      ctx.font = `${r * 1.1}px sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(def.icon, cx, cy + 1);
-    }
-
-    // Player
-    this.drawPlayer(g, time);
-
-    // Effects
-    for (const e of g.effects) {
-      const t = 1 - e.life / e.maxLife;
-      ctx.globalAlpha = Math.max(0, e.life / e.maxLife);
-      const ex = this.sx(e.x);
-      const ey = this.sy(e.y);
-      if (e.kind === 'ring') {
-        ctx.strokeStyle = e.color;
-        ctx.lineWidth = 6 * (1 - t) + 2;
-        ctx.beginPath();
-        ctx.ellipse(ex, ey, e.r * this.scale * (0.3 + 0.7 * t), e.r * this.scale * 0.5 * (0.3 + 0.7 * t), 0, 0, Math.PI * 2);
-        ctx.stroke();
-      } else if (e.kind === 'slash') {
-        ctx.strokeStyle = e.color;
-        ctx.lineWidth = 5;
-        ctx.beginPath();
-        ctx.arc(ex, ey, e.r * this.scale * 0.6, -1.2 + t, 1.2 + t);
-        ctx.stroke();
-      } else if (e.kind === 'star') {
-        // a falling star landing on the target
-        const fy = ey - (1 - Math.min(1, t * 2.5)) * 220 * this.scale;
-        ctx.fillStyle = e.color;
-        star(ctx, ex, fy, e.r * this.scale * 0.5, 5);
-        if (t > 0.4) {
-          ctx.strokeStyle = e.color;
-          ctx.lineWidth = 3;
-          ctx.beginPath();
-          ctx.arc(ex, ey, e.r * this.scale * t, 0, Math.PI * 2);
-          ctx.stroke();
-        }
-      } else if (e.kind === 'bolt' && e.x2 !== undefined && e.y2 !== undefined) {
-        const tx = this.sx(e.x2);
-        const ty = this.sy(e.y2);
-        const k = Math.min(1, t * 1.6);
-        ctx.fillStyle = e.color;
-        circle(ctx, ex + (tx - ex) * k, ey + (ty - ey) * k, 6);
-      } else if (e.kind === 'poof') {
-        ctx.fillStyle = e.color;
-        for (let i = 0; i < 6; i++) {
-          const a = (i / 6) * Math.PI * 2;
-          const d = e.r * this.scale * t;
-          circle(ctx, ex + Math.cos(a) * d, ey + Math.sin(a) * d, 6 * (1 - t) + 1);
+    // ---- floor ----
+    this.groundTransform();
+    for (let ty = minTy; ty <= maxTy; ty++) {
+      for (let tx = minTx; tx <= maxTx; tx++) {
+        const i = ty * g.map.w + tx;
+        const v = g.map.variant[i];
+        ctx.fillStyle = (tx + ty) % 2 === 0 ? ch.floor[0] : ch.floor[1];
+        ctx.fillRect(tx * TILE, ty * TILE, TILE + 0.5, TILE + 0.5);
+        if (v === 0) {
+          // little tufts / pebbles for texture
+          ctx.fillStyle = 'rgba(0,0,0,0.12)';
+          ctx.fillRect(tx * TILE + 18, ty * TILE + 22, 6, 6);
+          ctx.fillRect(tx * TILE + 40, ty * TILE + 38, 5, 5);
+        } else if (v === 1) {
+          ctx.fillStyle = 'rgba(255,255,255,0.05)';
+          ctx.fillRect(tx * TILE + 10, ty * TILE + 44, 10, 4);
         }
       }
     }
-    ctx.globalAlpha = 1;
+    ctx.strokeStyle = 'rgba(0,0,0,0.12)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for (let tx = minTx; tx <= maxTx + 1; tx++) {
+      ctx.moveTo(tx * TILE, minTy * TILE);
+      ctx.lineTo(tx * TILE, (maxTy + 1) * TILE);
+    }
+    for (let ty = minTy; ty <= maxTy + 1; ty++) {
+      ctx.moveTo(minTx * TILE, ty * TILE);
+      ctx.lineTo((maxTx + 1) * TILE, ty * TILE);
+    }
+    ctx.stroke();
 
-    // Floating text
+    // ---- ground layer: telegraphs, spell circles, shadows ----
+    for (const t of g.telegraphs) this.drawTelegraph(t);
+    this.drawGroundEffects(g);
+
+    // shadows
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    const shadow = (x: number, y: number, r: number) => {
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+    };
+    shadow(p.x, p.y, p.r * 1.1);
+    for (const m of g.mobs) shadow(m.x, m.y, m.r * 1.05 * (1 - m.spawnAnim));
+    for (const c of g.party) shadow(c.x, c.y, 10);
+
+    // ---- standing layer, depth-sorted ----
+    this.screenTransform();
+    type Drawable = { depth: number; draw: () => void };
+    const list: Drawable[] = [];
+    for (let ty = minTy; ty <= maxTy; ty++) {
+      for (let tx = minTx; tx <= maxTx; tx++) {
+        const tile = g.map.tiles[ty * g.map.w + tx];
+        if (tile === Tile.Floor) continue;
+        const cx = (tx + 0.5) * TILE;
+        const cy = (ty + 0.5) * TILE;
+        // fade obstacles that stand in front of the hero
+        const sxp = this.px(cx, cy);
+        const syp = this.py(cx, cy);
+        const front = cx + cy > p.x + p.y && Math.abs(sxp - this.px(p.x, p.y)) < 70 && syp - this.py(p.x, p.y) < 140;
+        list.push({
+          depth: cx + cy,
+          draw: () => (tile === Tile.Tree ? this.drawTree(cx, cy, ch.tree, front, g.map.variant[ty * g.map.w + tx]) : this.drawRock(cx, cy, ch.rock, front)),
+        });
+      }
+    }
+    for (const m of g.mobs) list.push({ depth: m.x + m.y, draw: () => this.drawMob(m, time) });
+    for (const c of g.party) list.push({ depth: c.x + c.y, draw: () => this.drawCompanion(g, c, time) });
+    list.push({ depth: p.x + p.y, draw: () => this.drawPlayer(g, time) });
+    list.sort((a, b) => a.depth - b.depth);
+    for (const d of list) d.draw();
+
+    // ---- air effects (bolts, falling stars) ----
+    this.drawAirEffects(g);
+
+    // ---- floating text ----
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     for (const f of g.floats) {
       ctx.globalAlpha = Math.min(1, f.life * 2);
       ctx.fillStyle = f.color;
-      ctx.font = `bold ${f.size}px sans-serif`;
-      outlineText(ctx, f.text, this.sx(f.x), this.sy(f.y));
+      ctx.font = `bold ${f.size}px Georgia, serif`;
+      outlineText(ctx, f.text, this.px(f.x, f.y), this.py(f.x, f.y, f.z));
     }
     ctx.globalAlpha = 1;
 
-    // Minimap
+    // ---- mood: vignette + skill flash ----
+    const vg = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.35, w / 2, h / 2, Math.max(w, h) * 0.75);
+    vg.addColorStop(0, 'rgba(0,0,0,0)');
+    vg.addColorStop(1, 'rgba(0,0,0,0.6)');
+    ctx.fillStyle = vg;
+    ctx.fillRect(0, 0, w, h);
+    if (g.anim.flash > 0) {
+      ctx.fillStyle = hexA(g.anim.flashColor, g.anim.flash * 0.12);
+      ctx.fillRect(0, 0, w, h);
+    }
+    if (g.anim.playerHit > 0.3) {
+      ctx.strokeStyle = `rgba(200,30,30,${g.anim.playerHit * 0.5})`;
+      ctx.lineWidth = 10;
+      ctx.strokeRect(0, 0, w, h);
+    }
+
     this.minimap(g);
 
-    // Boss timer
+    // ---- boss bar ----
     const boss = g.mobs.find((m) => m.boss);
     if (boss) {
-      const t = g.bossTimer / BALANCE.bossTimeLimit;
-      bar(ctx, w * 0.25, 44, w * 0.5, 12, boss.hp / boss.maxHp, '#f72585');
-      bar(ctx, w * 0.25, 60, w * 0.5, 6, t, t < 0.3 ? '#ef4444' : '#ffc23d');
-      ctx.fillStyle = '#fff';
-      ctx.font = 'bold 13px sans-serif';
+      const bw = Math.min(420, w * 0.6);
+      const x = (w - bw) / 2;
+      ctx.fillStyle = '#e8d7a9';
+      ctx.font = 'bold 14px Georgia, serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'bottom';
-      outlineText(ctx, `${boss.name}  ·  ${Math.ceil(g.bossTimer)}s`, w / 2, 41);
+      outlineText(ctx, `${boss.name}`, w / 2, 58);
+      bar(ctx, x, 62, bw, 12, boss.hp / boss.maxHp, '#a4161a', '#c9a227');
+      const t = g.bossTimer / BALANCE.bossTimeLimit;
+      bar(ctx, x, 77, bw, 5, t, t < 0.3 ? '#ef4444' : '#c9a227');
+      ctx.font = '11px Georgia, serif';
+      ctx.textBaseline = 'top';
+      ctx.fillStyle = '#e8d7a9';
+      outlineText(ctx, `${Math.ceil(g.bossTimer)}s`, w / 2, 85);
     }
 
     if (g.deadTimer > 0) {
-      ctx.fillStyle = 'rgba(0,0,0,0.35)';
+      ctx.fillStyle = 'rgba(0,0,0,0.5)';
       ctx.fillRect(0, 0, w, h);
-      ctx.fillStyle = '#fff';
-      ctx.font = 'bold 22px sans-serif';
+      ctx.fillStyle = '#c9a227';
+      ctx.font = 'bold 26px Georgia, serif';
       ctx.textAlign = 'center';
-      outlineText(ctx, 'Recovering...', w / 2, h / 2);
+      ctx.textBaseline = 'middle';
+      outlineText(ctx, 'You have fallen...', w / 2, h / 2);
     }
   }
 
-  private hills(parallax: number, spacing: number, height: number, color: string) {
-    const { ctx, w } = this;
-    const gy = this.sy(0);
-    ctx.fillStyle = color;
-    const off = (this.camX * this.scale * parallax) % spacing;
-    for (let x = -spacing; x < w + spacing * 2; x += spacing) {
+  // ---------------- Ground layer ----------------
+  private drawTelegraph(t: Telegraph) {
+    const ctx = this.ctx;
+    const prog = 1 - t.time / t.total;
+    const base = t.boss ? 'rgba(200,30,30,' : 'rgba(230,120,40,';
+    ctx.lineWidth = 3;
+    const path = (scale: number) => {
       ctx.beginPath();
-      ctx.ellipse(x - off, gy, spacing * 0.7, height * this.scale, 0, Math.PI, 0);
+      if (t.kind === 'circle') ctx.arc(t.x, t.y, t.r * scale, 0, Math.PI * 2);
+      else if (t.kind === 'ring') {
+        ctx.arc(t.x, t.y, t.inner + (t.r - t.inner) * scale, 0, Math.PI * 2);
+        ctx.arc(t.x, t.y, t.inner, 0, Math.PI * 2, true);
+      } else if (t.kind === 'cone') {
+        ctx.moveTo(t.x, t.y);
+        ctx.arc(t.x, t.y, t.r * scale, t.angle - t.width, t.angle + t.width);
+        ctx.closePath();
+      } else {
+        const c = Math.cos(t.angle);
+        const s = Math.sin(t.angle);
+        const hw = t.width / 2;
+        const len = t.r * scale;
+        ctx.moveTo(t.x - s * hw, t.y + c * hw);
+        ctx.lineTo(t.x - s * hw + c * len, t.y + c * hw + s * len);
+        ctx.lineTo(t.x + s * hw + c * len, t.y - c * hw + s * len);
+        ctx.lineTo(t.x + s * hw, t.y - c * hw);
+        ctx.closePath();
+      }
+    };
+    path(1);
+    ctx.fillStyle = base + '0.18)';
+    ctx.fill('evenodd');
+    ctx.strokeStyle = base + '0.75)';
+    ctx.stroke();
+    // inner fill grows until it hits
+    path(prog);
+    ctx.fillStyle = base + '0.35)';
+    ctx.fill('evenodd');
+  }
+
+  private drawGroundEffects(g: Game) {
+    const ctx = this.ctx;
+    for (const e of g.effects) {
+      const t = 1 - e.life / e.maxLife;
+      ctx.globalAlpha = Math.max(0, e.life / e.maxLife);
+      if (e.kind === 'ring') {
+        ctx.strokeStyle = e.color;
+        ctx.lineWidth = 14 * (1 - t) + 3;
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, e.r * (0.35 + 0.65 * t), 0, Math.PI * 2);
+        ctx.stroke();
+      } else if (e.kind === 'blast') {
+        ctx.fillStyle = e.color;
+        ctx.globalAlpha *= 0.45;
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, e.r * (0.6 + 0.4 * t), 0, Math.PI * 2);
+        ctx.fill();
+      } else if (e.kind === 'star') {
+        // target circle on the ground while the star falls
+        ctx.strokeStyle = e.color;
+        ctx.lineWidth = 4;
+        ctx.setLineDash([12, 8]);
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      } else if (e.kind === 'dash' && e.x2 !== undefined && e.y2 !== undefined) {
+        ctx.strokeStyle = e.color;
+        ctx.lineWidth = e.r * (1 - t);
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(e.x, e.y);
+        ctx.lineTo(e.x2, e.y2);
+        ctx.stroke();
+        ctx.lineCap = 'butt';
+      } else if (e.kind === 'slash' && e.angle !== undefined) {
+        ctx.strokeStyle = e.color;
+        ctx.lineWidth = 10 * (1 - t) + 2;
+        ctx.beginPath();
+        ctx.arc(e.x - Math.cos(e.angle) * 40, e.y - Math.sin(e.angle) * 40, e.r + 30, e.angle - 1 + t * 0.6, e.angle + 1 + t * 0.6);
+        ctx.stroke();
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  private drawAirEffects(g: Game) {
+    const ctx = this.ctx;
+    for (const e of g.effects) {
+      const t = 1 - e.life / e.maxLife;
+      ctx.globalAlpha = Math.max(0, Math.min(1, (e.life / e.maxLife) * 1.5));
+      if (e.kind === 'bolt' && e.x2 !== undefined && e.y2 !== undefined) {
+        const k = Math.min(1, t * 1.6);
+        const x = e.x + (e.x2 - e.x) * k;
+        const y = e.y + (e.y2 - e.y) * k;
+        ctx.fillStyle = e.color;
+        circle(ctx, this.px(x, y), this.py(x, y, 30), 5);
+      } else if (e.kind === 'star') {
+        const fall = Math.max(0, 1 - t * 1.6);
+        ctx.fillStyle = e.color;
+        star(ctx, this.px(e.x, e.y), this.py(e.x, e.y, 20 + fall * 420), 16, 5);
+      } else if (e.kind === 'poof') {
+        ctx.fillStyle = e.color;
+        for (let i = 0; i < 7; i++) {
+          const a = (i / 7) * Math.PI * 2;
+          const d = e.r * t;
+          const x = e.x + Math.cos(a) * d;
+          const y = e.y + Math.sin(a) * d;
+          circle(ctx, this.px(x, y), this.py(x, y, 20 + t * 30), 6 * (1 - t) + 1);
+        }
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // ---------------- Standing layer ----------------
+  private drawTree(x: number, y: number, color: string, faded: boolean, v: number) {
+    const ctx = this.ctx;
+    const sx = this.px(x, y);
+    const sy = this.py(x, y);
+    const k = this.k;
+    ctx.globalAlpha = faded ? 0.35 : 1;
+    ctx.fillStyle = '#2b1d12';
+    ctx.fillRect(sx - 5 * k, sy - 40 * k, 10 * k, 40 * k);
+    const hgt = 95 + v * 12;
+    const layers = [
+      { y: 40, r: 40 },
+      { y: 70, r: 33 },
+      { y: hgt, r: 22 },
+    ];
+    for (const [i, l] of layers.entries()) {
+      ctx.fillStyle = shade(color, i * 0.08);
+      ctx.beginPath();
+      ctx.moveTo(sx - l.r * k, sy - (l.y - 10) * k);
+      ctx.lineTo(sx, sy - (l.y + 38) * k);
+      ctx.lineTo(sx + l.r * k, sy - (l.y - 10) * k);
+      ctx.closePath();
       ctx.fill();
     }
+    ctx.globalAlpha = 1;
+  }
+
+  private drawRock(x: number, y: number, color: string, faded: boolean) {
+    const ctx = this.ctx;
+    const half = TILE * 0.42;
+    const hgt = 34;
+    const pts = [
+      [x - half, y - half], [x + half, y - half], [x + half, y + half], [x - half, y + half],
+    ].map(([a, b]) => [this.px(a, b), this.py(a, b)]);
+    const up = hgt * this.k;
+    ctx.globalAlpha = faded ? 0.45 : 1;
+    // right face
+    ctx.fillStyle = shade(color, -0.25);
+    poly(ctx, [pts[1], pts[2], [pts[2][0], pts[2][1] - up], [pts[1][0], pts[1][1] - up]]);
+    // left face
+    ctx.fillStyle = shade(color, -0.4);
+    poly(ctx, [pts[2], pts[3], [pts[3][0], pts[3][1] - up], [pts[2][0], pts[2][1] - up]]);
+    // top
+    ctx.fillStyle = color;
+    poly(ctx, pts.map(([a, b]) => [a, b - up]));
+    ctx.globalAlpha = 1;
   }
 
   private drawPlayer(g: Game, time: number) {
-    const { ctx } = this;
+    const ctx = this.ctx;
     const p = g.player;
-    const sc = this.scale;
-    const pw = p.w * sc;
-    const ph = p.h * sc;
-    const x = this.sx(p.x);
-    const feet = this.sy(p.y);
-    const walking = Math.abs(p.vx) > 1 && p.onGround;
-    const bob = walking ? Math.abs(Math.sin(time * 12)) * 4 : Math.sin(time * 3) * 1.5;
-    const top = feet - ph - bob;
+    const k = this.k;
+    const sx = this.px(p.x, p.y);
+    const bob = p.moving ? Math.abs(Math.sin(time * 11)) * 4 : Math.sin(time * 2.5) * 1.2;
+    const sy = this.py(p.x, p.y) - bob;
+    const dir = this.screenDir(p.angle);
+    const flip = dir.dx >= 0 ? 1 : -1;
+    const bw = 30 * k;
+    const bh = 46 * k;
+    ctx.save();
+    ctx.globalAlpha = g.deadTimer > 0 ? 0.3 : 1;
 
-    ctx.save();
-    ctx.globalAlpha = g.deadTimer > 0 ? 0.35 : 1;
-    shadow(ctx, x, this.sy(this.groundUnder(g)), pw * 0.5);
-    ctx.fillStyle = g.anim.playerHit > 0.5 ? '#ff8f8f' : '#3a86ff';
-    roundRect(ctx, x - pw / 2, top, pw, ph, pw * 0.25);
+    // weapon behind body when facing away (up the screen)
+    const drawSword = () => {
+      const swing = (g.anim.swing - 0.5) * 2.2;
+      const base = Math.atan2(dir.dy, dir.dx) + swing * flip * -1;
+      ctx.save();
+      ctx.translate(sx + dir.dx * 12 * k, sy - bh * 0.55 + dir.dy * 6 * k);
+      ctx.rotate(base);
+      ctx.fillStyle = '#c9ced6';
+      ctx.fillRect(4 * k, -3 * k, 46 * k, 6 * k);
+      ctx.fillStyle = '#c9a227';
+      ctx.fillRect(0, -7 * k, 6 * k, 14 * k);
+      ctx.restore();
+    };
+    if (dir.dy < 0) drawSword();
+
+    // legs
+    ctx.fillStyle = '#3b2f24';
+    const step = p.moving ? Math.sin(time * 11) * 5 * k : 0;
+    ctx.fillRect(sx - 9 * k, sy - 14 * k + step, 7 * k, 14 * k - step);
+    ctx.fillRect(sx + 2 * k, sy - 14 * k - step, 7 * k, 14 * k + step);
+    // cloak / body
+    ctx.fillStyle = g.anim.playerHit > 0.5 ? '#d66' : '#3d5a80';
+    roundRect(ctx, sx - bw / 2, sy - bh, bw, bh - 10 * k, 8 * k);
     ctx.fill();
-    // eyes face the movement direction
-    const f = p.facing;
-    ctx.fillStyle = '#fff';
-    circle(ctx, x + f * pw * 0.05, top + ph * 0.36, pw * 0.11);
-    circle(ctx, x + f * pw * 0.3, top + ph * 0.36, pw * 0.11);
+    ctx.fillStyle = '#2b4060';
+    ctx.fillRect(sx - bw / 2, sy - 22 * k, bw, 6 * k); // belt
+    ctx.fillStyle = '#c9a227';
+    ctx.fillRect(sx - 3 * k, sy - 22 * k, 6 * k, 6 * k);
+    // head + helmet
+    ctx.fillStyle = '#e0b48a';
+    circle(ctx, sx, sy - bh - 9 * k, 11 * k);
+    ctx.fillStyle = '#7d8590';
+    ctx.beginPath();
+    ctx.arc(sx, sy - bh - 10 * k, 12 * k, Math.PI, 0);
+    ctx.fill();
+    // eye toward facing
     ctx.fillStyle = '#111';
-    circle(ctx, x + f * pw * 0.09, top + ph * 0.37, pw * 0.055);
-    circle(ctx, x + f * pw * 0.34, top + ph * 0.37, pw * 0.055);
-    // sword
-    ctx.save();
-    ctx.translate(x + f * pw * 0.45, top + ph * 0.62);
-    ctx.scale(f, 1);
-    ctx.rotate(-1.0 + g.anim.swing * 2.2);
-    ctx.fillStyle = '#e0e0e0';
-    ctx.fillRect(0, -3, pw * 0.85, 6);
-    ctx.fillStyle = '#8d6e63';
-    ctx.fillRect(-6, -6, 8, 12);
+    if (dir.dy > -0.6) circle(ctx, sx + flip * 5 * k, sy - bh - 7 * k, 2 * k);
+
+    if (dir.dy >= 0) drawSword();
     ctx.restore();
-    ctx.restore();
-    bar(ctx, x - pw / 2, top - 12, pw, 6, g.hp / g.stats.maxHp, '#4ade80');
+    bar(ctx, sx - 22 * k, sy - bh - 32 * k, 44 * k, 5, g.hp / g.stats.maxHp, '#4caf50');
   }
 
-  private groundUnder(g: Game): number {
-    const p = g.player;
-    let y = 0;
-    for (const pl of g.layout.platforms) if (p.x >= pl.x1 && p.x <= pl.x2 && pl.y <= p.y + 1 && pl.y > y) y = pl.y;
-    return y;
+  private drawCompanion(g: Game, c: { id: string; x: number; y: number; hit: number }, time: number) {
+    const def = COMPANION[c.id];
+    if (!def) return;
+    const ctx = this.ctx;
+    const k = this.k;
+    const sx = this.px(c.x, c.y);
+    const sy = this.py(c.x, c.y, 34 + Math.sin(time * 3 + c.x) * 6);
+    const r = 14 * k * (1 + c.hit * 0.15) + 4;
+    ctx.fillStyle = def.color;
+    circle(ctx, sx, sy, r);
+    ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.font = `${r * 1.1}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(def.icon, sx, sy + 1);
+    void g;
   }
 
   private drawMob(m: Mob, time: number) {
-    const { ctx } = this;
-    const sc = this.scale;
+    const ctx = this.ctx;
+    const k = this.k;
     const grow = 1 - m.spawnAnim;
-    const mw = m.w * sc * grow;
-    const mh = m.h * sc * grow;
-    const x = this.sx(m.x) + m.lunge * m.facing * 10;
-    const feet = this.sy(m.y);
-    if (x < -mw || x > this.w + mw) return;
-    const squish = m.dir ? Math.sin(time * 8 + m.id) * 0.06 : Math.sin(time * 2 + m.id) * 0.03;
-    const cy = feet - mh * 0.5;
-    shadow(ctx, x, feet, mw * 0.5);
-    ctx.fillStyle = m.hitFlash > 0.6 ? '#ffffff' : m.color;
+    if (grow <= 0) return;
+    const sx = this.px(m.x, m.y);
+    const sy = this.py(m.x, m.y);
+    if (sx < -120 || sx > this.w + 120 || sy < -150 || sy > this.h + 150) return;
+    const rw = m.r * 1.15 * k * grow;
+    const rh = m.r * 1.1 * k * grow;
+    const squish = m.moving ? Math.sin(time * 9 + m.id) * 0.08 : Math.sin(time * 2 + m.id) * 0.03;
+    const windup = m.state === 'windup';
+    const cy = sy - rh * (1 - squish);
+    ctx.fillStyle = m.hitFlash > 0.6 ? '#ffffff' : windup ? mix(m.color, '#ff3b3b', 0.45) : m.color;
     ctx.beginPath();
-    ctx.ellipse(x, cy + mh * squish * 0.5, mw * 0.5 * (1 + squish), mh * 0.5 * (1 - squish), 0, 0, Math.PI * 2);
+    ctx.ellipse(sx, cy, rw * (1 + squish), rh * (1 - squish), 0, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+    ctx.strokeStyle = 'rgba(0,0,0,0.5)';
     ctx.lineWidth = 2;
     ctx.stroke();
-    // eyes look where it's facing
-    ctx.fillStyle = '#111';
-    circle(ctx, x + m.facing * mw * 0.08, cy - mh * 0.08, Math.max(2, mw * 0.06));
-    circle(ctx, x + m.facing * mw * 0.28, cy - mh * 0.08, Math.max(2, mw * 0.06));
+    // shading
+    ctx.fillStyle = 'rgba(0,0,0,0.18)';
+    ctx.beginPath();
+    ctx.ellipse(sx, cy + rh * 0.35, rw * 0.85, rh * 0.45, 0, 0, Math.PI);
+    ctx.fill();
+    // eyes face their movement
+    const d = this.screenDir(m.angle);
+    if (d.dy > -0.5) {
+      ctx.fillStyle = windup ? '#ffdd00' : '#111';
+      const ex = sx + d.dx * rw * 0.35;
+      const ey = cy - rh * 0.15 + d.dy * rh * 0.15;
+      circle(ctx, ex - rw * 0.2, ey, Math.max(2, rw * 0.11));
+      circle(ctx, ex + rw * 0.2, ey, Math.max(2, rw * 0.11));
+    }
     if (m.boss) {
-      ctx.fillStyle = '#ffc23d';
-      const ty = cy - mh * 0.48;
-      ctx.beginPath();
-      ctx.moveTo(x - mw * 0.22, ty);
-      ctx.lineTo(x - mw * 0.22, ty - mh * 0.2);
-      ctx.lineTo(x - mw * 0.11, ty - mh * 0.08);
-      ctx.lineTo(x, ty - mh * 0.25);
-      ctx.lineTo(x + mw * 0.11, ty - mh * 0.08);
-      ctx.lineTo(x + mw * 0.22, ty - mh * 0.2);
-      ctx.lineTo(x + mw * 0.22, ty);
-      ctx.closePath();
-      ctx.fill();
+      // horns
+      ctx.fillStyle = '#e8d7a9';
+      for (const s of [-1, 1]) {
+        ctx.beginPath();
+        ctx.moveTo(sx + s * rw * 0.45, cy - rh * 0.75);
+        ctx.lineTo(sx + s * rw * 0.85, cy - rh * 1.45);
+        ctx.lineTo(sx + s * rw * 0.2, cy - rh * 0.9);
+        ctx.closePath();
+        ctx.fill();
+      }
     } else if (m.hp < m.maxHp) {
-      bar(ctx, x - mw * 0.45, feet - mh - 10, mw * 0.9, 5, m.hp / m.maxHp, '#ef4444');
+      bar(ctx, sx - rw, cy - rh - 12, rw * 2, 5, m.hp / m.maxHp, '#b91c1c');
     }
   }
 
   private minimap(g: Game) {
-    const { ctx, w } = this;
-    const mw = Math.min(180, w * 0.32);
-    const mh = 40;
-    const x0 = w - mw - 8;
-    const y0 = 34;
-    const k = mw / g.layout.width;
-    const ky = (mh - 8) / 300;
-    ctx.fillStyle = 'rgba(0,0,0,0.45)';
-    roundRect(ctx, x0, y0, mw, mh, 6);
-    ctx.fill();
-    const base = y0 + mh - 4;
-    ctx.fillStyle = 'rgba(255,255,255,0.35)';
-    ctx.fillRect(x0 + 2, base, mw - 4, 2);
-    for (const pl of g.layout.platforms) ctx.fillRect(x0 + pl.x1 * k, base - pl.y * ky, (pl.x2 - pl.x1) * k, 2);
+    const ctx = this.ctx;
+    const size = Math.min(130, this.w * 0.28);
+    const x0 = this.w - size - 10;
+    const y0 = 42;
+    const k = size / Math.max(g.map.w, g.map.h);
+    ctx.fillStyle = 'rgba(10,8,6,0.75)';
+    ctx.fillRect(x0 - 3, y0 - 3, size + 6, size + 6);
+    ctx.strokeStyle = '#6b5a36';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x0 - 3, y0 - 3, size + 6, size + 6);
+    ctx.fillStyle = 'rgba(255,255,255,0.08)';
+    for (let i = 0; i < g.map.tiles.length; i++) {
+      if (g.map.tiles[i] !== Tile.Floor) continue;
+      const tx = i % g.map.w;
+      ctx.fillRect(x0 + tx * k, y0 + ((i - tx) / g.map.w) * k, k + 0.3, k + 0.3);
+    }
+    const toMini = (x: number, y: number): [number, number] => [x0 + (x / TILE) * k, y0 + (y / TILE) * k];
     for (const m of g.mobs) {
-      ctx.fillStyle = m.boss ? '#f72585' : '#ef4444';
-      circle(ctx, x0 + m.x * k, base - m.y * ky - 2, m.boss ? 4 : 2);
+      ctx.fillStyle = m.boss ? '#ff4d6d' : '#d64545';
+      const [mx, my] = toMini(m.x, m.y);
+      circle(ctx, mx, my, m.boss ? 4 : 2);
     }
     ctx.fillStyle = '#ffd60a';
-    circle(ctx, x0 + g.player.x * k, base - g.player.y * ky - 3, 3.5);
+    const [pxm, pym] = toMini(g.player.x, g.player.y);
+    circle(ctx, pxm, pym, 3.5);
   }
 }
 
+// ---------------- helpers ----------------
 function circle(ctx: CanvasRenderingContext2D, x: number, y: number, r: number) {
   ctx.beginPath();
   ctx.arc(x, y, Math.max(0.1, r), 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function poly(ctx: CanvasRenderingContext2D, pts: number[][]) {
+  ctx.beginPath();
+  ctx.moveTo(pts[0][0], pts[0][1]);
+  for (const p of pts.slice(1)) ctx.lineTo(p[0], p[1]);
+  ctx.closePath();
   ctx.fill();
 }
 
@@ -351,13 +575,6 @@ function star(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, po
   ctx.fill();
 }
 
-function shadow(ctx: CanvasRenderingContext2D, x: number, y: number, r: number) {
-  ctx.fillStyle = 'rgba(0,0,0,0.18)';
-  ctx.beginPath();
-  ctx.ellipse(x, y + 2, Math.max(0.1, r), Math.max(0.1, r * 0.22), 0, 0, Math.PI * 2);
-  ctx.fill();
-}
-
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
   r = Math.min(r, w / 2, h / 2);
   ctx.beginPath();
@@ -369,26 +586,44 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
   ctx.closePath();
 }
 
-function bar(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, frac: number, color: string) {
-  ctx.fillStyle = 'rgba(0,0,0,0.5)';
-  roundRect(ctx, x, y, w, h, h / 2);
-  ctx.fill();
+function bar(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, frac: number, color: string, border?: string) {
+  ctx.fillStyle = 'rgba(0,0,0,0.65)';
+  ctx.fillRect(x, y, w, h);
   const f = Math.max(0, Math.min(1, frac));
-  if (f > 0) {
-    ctx.fillStyle = color;
-    roundRect(ctx, x + 1, y + 1, Math.max(h - 2, (w - 2) * f), h - 2, (h - 2) / 2);
-    ctx.fill();
+  ctx.fillStyle = color;
+  ctx.fillRect(x + 1, y + 1, (w - 2) * f, h - 2);
+  if (border) {
+    ctx.strokeStyle = border;
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(x, y, w, h);
   }
 }
 
 function outlineText(ctx: CanvasRenderingContext2D, text: string, x: number, y: number) {
   ctx.lineWidth = 3;
-  ctx.strokeStyle = 'rgba(0,0,0,0.7)';
+  ctx.strokeStyle = 'rgba(0,0,0,0.85)';
   ctx.strokeText(text, x, y);
   ctx.fillText(text, x, y);
 }
 
-function hexA(hex: string, a: number): string {
+function hexToRgb(hex: string): [number, number, number] {
   const n = parseInt(hex.slice(1), 16);
-  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+function hexA(hex: string, a: number): string {
+  const [r, g, b] = hexToRgb(hex);
+  return `rgba(${r},${g},${b},${a})`;
+}
+
+function shade(hex: string, amt: number): string {
+  const [r, g, b] = hexToRgb(hex);
+  const f = (c: number) => Math.max(0, Math.min(255, Math.round(amt >= 0 ? c + (255 - c) * amt : c * (1 + amt))));
+  return `rgb(${f(r)},${f(g)},${f(b)})`;
+}
+
+function mix(a: string, b: string, t: number): string {
+  const x = hexToRgb(a);
+  const y = hexToRgb(b);
+  return `rgb(${x.map((v, i) => Math.round(v + (y[i] - v) * t)).join(',')})`;
 }

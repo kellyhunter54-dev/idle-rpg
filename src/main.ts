@@ -25,7 +25,8 @@ const toggleAuto = () => {
   ui.toast(game.auto ? 'AUTO on: your hero plays itself.' : 'AUTO off: full manual control.', '#3a86ff');
 };
 document.getElementById('autobtn')!.addEventListener('click', toggleAuto);
-const pollInput = setupInput(game.input, toggleAuto);
+const canvas = document.getElementById('canvas') as HTMLCanvasElement;
+const pollInput = setupInput(game.input, canvas, (x, y) => renderer.screenToWorld(x, y), toggleAuto);
 
 ui.onReplaceState = (code) => {
   const next = code ? importSave(code) : newState();
@@ -69,3 +70,6 @@ document.addEventListener('visibilitychange', () => {
     if (r) ui.showOffline(r);
   }
 });
+
+// Handy for debugging in the browser console: __game.state, __game.challengeBoss(), ...
+(window as unknown as { __game: Game }).__game = game;

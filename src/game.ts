@@ -3,61 +3,83 @@ import {
   Slot, TIERS, TIER_WEIGHTS, chapterOf, companionHitMult, enhanceCopies, expToNext, gearId,
   gearScore, mobFor, parseGear,
 } from './data';
+import {
+  GameMap, PHYS, TILE, findPath, fits, generateMap, lineOfSight, moveCircle,
+} from './map';
 import { GameState } from './state';
 import { Stats, computeStats } from './stats';
-import {
-  BOSS_SIZE, LAYOUTS, MOB_SIZE, MapLayout, PHYS, PLAYER_SIZE, Surface, surfaceAt, surfaces,
-} from './world';
 
 // ---------------- Types ----------------
 
-/** Player input for one frame. Filled by the browser (keyboard/touch); empty in the simulator. */
+export interface Vec {
+  x: number;
+  y: number;
+}
+
+/** Player input for one frame, already converted to world space. Empty in the simulator. */
 export interface Input {
-  left: boolean;
-  right: boolean;
-  jump: boolean;
-  down: boolean;
+  moveX: number; // world-space direction, length <= 1
+  moveY: number;
   attack: boolean;
+  aim: Vec | null; // world point under the mouse (null on touch / keyboard only)
   skills: boolean[]; // one-shot presses, cleared by the game after reading
 }
 
 export function emptyInput(): Input {
-  return { left: false, right: false, jump: false, down: false, attack: false, skills: SKILLS.map(() => false) };
+  return { moveX: 0, moveY: 0, attack: false, aim: null, skills: SKILLS.map(() => false) };
 }
 
-export interface Body {
-  x: number; // center
-  y: number; // feet
-  vx: number;
-  vy: number;
-  w: number;
-  h: number;
-  onGround: boolean;
-  surface: number; // -1 ground, >=0 platform index, -2 airborne
-  dropTimer: number;
-  facing: 1 | -1;
+export interface Player {
+  x: number;
+  y: number;
+  r: number;
+  angle: number; // facing / aim direction (radians, world space)
+  moving: boolean;
+  dash: { tx: number; ty: number; t: number } | null;
 }
+
+type MobState = 'idle' | 'chase' | 'windup' | 'recover' | 'charge';
 
 export interface Mob extends MobStats {
   id: number;
   maxHp: number;
   x: number;
   y: number;
-  w: number;
-  h: number;
-  surface: number;
-  dir: number;
-  facing: 1 | -1;
-  wanderTimer: number;
-  atkTimer: number;
+  r: number;
+  angle: number;
+  state: MobState;
+  timer: number;
+  homeX: number;
+  homeY: number;
+  wander: Vec;
+  path: Vec[] | null;
+  pathTimer: number;
   hitFlash: number;
-  lunge: number;
   spawnAnim: number;
+  moving: boolean;
+  actionTimer: number; // boss: time until next special
+  chargeTo: Vec | null;
+}
+
+export interface Telegraph {
+  kind: 'circle' | 'cone' | 'line' | 'ring';
+  x: number;
+  y: number;
+  r: number; // circle/ring radius, cone/line length
+  inner: number; // ring inner radius
+  angle: number;
+  width: number; // cone: half-angle (rad); line: width
+  time: number;
+  total: number;
+  damage: number;
+  boss: boolean;
+  ownerId: number;
 }
 
 export interface FloatText {
-  x: number; // world units
+  x: number;
   y: number;
+  z: number;
   text: string;
   color: string;
   life: number;
@@ -65,12 +87,13 @@ export interface FloatText {
 }
 
 export interface Effect {
-  kind: 'ring' | 'slash' | 'star' | 'bolt' | 'poof';
+  kind: 'ring' | 'slash' | 'star' | 'bolt' | 'poof' | 'dash' | 'blast';
   x: number;
   y: number;
   x2?: number;
   y2?: number;
   r: number;
+  angle?: number;
   color: string;
   life: number;
   maxLife: number;
@@ -82,6 +105,14 @@ export interface Companion {
   y: number;
   timer: number;
   hit: number;
+}
+
+interface PendingBlast {
+  x: number;
+  y: number;
+  r: number;
+  time: number;
+  damage: number;
 }
 
 export interface SummonResult {
@@ -109,7 +140,32 @@ function weighted<T>(items: T[], weights: number[], rand: () => number): T {
   return items[items.length - 1];
 }
 
-const sign = (n: number) => (n > 0 ? 1 : n < 0 ? -1 : 0);
+const dist = (a: Vec, b: Vec) => Math.hypot(a.x - b.x, a.y - b.y);
+const angleTo = (a: Vec, b: Vec) => Math.atan2(b.y - a.y, b.x - a.x);
+const angDiff = (a: number, b: number) => {
+  let d = b - a;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return d;
+};
+
+export const COMBAT = {
+  attackRange: 80, // from player edge
+  attackHalfAngle: 1.05, // ~60 degrees each side
+  dashDistance: 190,
+  dashSpeed: 1100,
+  dashWidth: 55,
+  cycloneRadius: 160,
+  starfallRange: 440,
+  starfallRadius: 140,
+  starfallDelay: 0.5,
+  mobWindup: 0.5,
+  mobRecover: 0.6,
+  mobReach: 26, // beyond touching
+  bossActionEvery: 2.3,
+  telegraphDamageMult: 2.2,
+  aiReaction: 0.3, // seconds before AUTO starts dodging a telegraph
+};
 
 // ---------------- Game ----------------
 
@@ -119,11 +175,13 @@ export class Game {
   rand: () => number;
   time = 0;
 
-  layout!: MapLayout;
-  layoutIndex = -1;
-  player: Body;
+  map!: GameMap;
+  mapIndex = -1;
+  player: Player;
   hp = 0;
   mobs: Mob[] = [];
+  telegraphs: Telegraph[] = [];
+  private blasts: PendingBlast[] = [];
   private nextMobId = 1;
   private spawnTimer = 0;
   private bossQueued = false;
@@ -136,29 +194,28 @@ export class Game {
 
   input: Input = emptyInput();
   lastInputTime = -999;
-  private prevJump = false;
   private target: Mob | null = null;
   private targetTime = 0;
   private ignore = new Map<number, number>();
+  private path: Vec[] | null = null;
+  private pathTimer = 0;
+  private pathGoal: Vec | null = null;
 
   floats: FloatText[] = [];
   effects: Effect[] = [];
   anim = { swing: 0, playerHit: 0, flash: 0, flashColor: '#fff' };
 
-  /** Set to true whenever something the UI shows changes in a way worth re-rendering panels. */
   dirty = true;
   onToast: (msg: string, color?: string) => void = () => {};
 
   constructor(state: GameState, rand: () => number = Math.random) {
     this.state = state;
     this.rand = rand;
-    this.player = {
-      x: 200, y: 0, vx: 0, vy: 0, ...PLAYER_SIZE, onGround: true, surface: -1, dropTimer: 0, facing: 1,
-    };
+    this.player = { x: 0, y: 0, r: PHYS.playerRadius, angle: 0.8, moving: false, dash: null };
     this.recalc();
     this.hp = this.stats.maxHp;
     for (const s of SKILLS) this.skillCd[s.id] = s.cd * 0.5;
-    this.syncLayout();
+    this.syncMap();
     this.syncParty();
   }
 
@@ -183,25 +240,29 @@ export class Game {
     this.dirty = true;
   }
 
-  /** True while the player's own input is steering (AUTO resumes after a short pause). */
   get manualActive(): boolean {
     return !this.auto || this.time - this.lastInputTime < PHYS.manualTimeout;
   }
 
-  private syncLayout() {
-    const idx = (chapterOf(this.state.stage).chapter - 1) % LAYOUTS.length;
-    if (idx === this.layoutIndex) return;
-    this.layoutIndex = idx;
-    this.layout = LAYOUTS[idx];
+  private syncMap() {
+    const idx = (chapterOf(this.state.stage).chapter - 1) % 5;
+    if (idx === this.mapIndex) return;
+    this.mapIndex = idx;
+    this.map = generateMap(idx);
     this.mobs = [];
+    this.telegraphs = [];
+    this.blasts = [];
     this.target = null;
-    Object.assign(this.player, { x: 200, y: 0, vx: 0, vy: 0, onGround: true, surface: -1 });
+    this.path = null;
+    Object.assign(this.player, { x: this.map.spawn.x, y: this.map.spawn.y, dash: null });
   }
 
   private syncParty() {
     const ids = this.state.party.filter((x): x is string => !!x && !!this.state.companions[x]);
     const existing = new Map(this.party.map((c) => [c.id, c]));
-    this.party = ids.map((id, i) => existing.get(id) ?? { id, x: this.player?.x ?? 0, y: 60, timer: 0.3 * i, hit: 0 });
+    const px = this.player?.x ?? 0;
+    const py = this.player?.y ?? 0;
+    this.party = ids.map((id, i) => existing.get(id) ?? { id, x: px, y: py, timer: 0.3 * i, hit: 0 });
   }
 
   // ---------------- Main loop ----------------
@@ -209,33 +270,37 @@ export class Game {
     this.time += dt;
     this.decayVisuals(dt);
 
-    const anyInput =
-      this.input.left || this.input.right || this.input.jump || this.input.down || this.input.attack ||
-      this.input.skills.some(Boolean);
-    if (anyInput) this.lastInputTime = this.time;
+    const inp = this.input;
+    if (inp.moveX || inp.moveY || inp.attack || inp.skills.some(Boolean)) this.lastInputTime = this.time;
 
     if (this.deadTimer > 0) {
       this.deadTimer -= dt;
       if (this.deadTimer <= 0) {
         this.hp = this.stats.maxHp;
-        Object.assign(this.player, { vx: 0, vy: 0 });
+        Object.assign(this.player, { x: this.map.spawn.x, y: this.map.spawn.y, dash: null });
       }
-      this.input.skills = this.input.skills.map(() => false);
+      inp.skills = inp.skills.map(() => false);
       return;
     }
 
     this.updateSpawning(dt);
     this.movePlayer(dt);
     this.updateMobs(dt);
+    this.updateTelegraphs(dt);
+    if (this.deadTimer > 0) {
+      inp.skills = inp.skills.map(() => false);
+      return;
+    }
     this.playerAttacks(dt);
     this.castSkills(dt);
+    this.updateBlasts(dt);
     this.updateCompanions(dt);
 
     if (this.inBossFight) {
       this.bossTimer -= dt;
       if (this.bossTimer <= 0) this.failBoss('Time ran out!');
     }
-    this.input.skills = this.input.skills.map(() => false);
+    inp.skills = inp.skills.map(() => false);
   }
 
   private decayVisuals(dt: number) {
@@ -244,14 +309,13 @@ export class Game {
     this.anim.flash = Math.max(0, this.anim.flash - dt * 3);
     for (const f of this.floats) {
       f.life -= dt;
-      f.y += dt * 60;
+      f.z += dt * 55;
     }
     if (this.floats.some((f) => f.life <= 0)) this.floats = this.floats.filter((f) => f.life > 0);
     for (const e of this.effects) e.life -= dt;
     if (this.effects.some((e) => e.life <= 0)) this.effects = this.effects.filter((e) => e.life > 0);
     for (const m of this.mobs) {
       m.hitFlash = Math.max(0, m.hitFlash - dt * 5);
-      m.lunge = Math.max(0, m.lunge - dt * 4);
       m.spawnAnim = Math.max(0, m.spawnAnim - dt * 3);
     }
     for (const c of this.party) c.hit = Math.max(0, c.hit - dt * 4);
@@ -265,11 +329,12 @@ export class Game {
     if (wantBoss && !this.inBossFight) {
       if (!this.bossQueued) {
         this.bossQueued = true;
-        this.bossDelay = 1;
-        for (const m of this.mobs) this.effect('poof', m.x, m.y + m.h / 2, 30, '#ffffff', 0.4);
+        this.bossDelay = 1.2;
+        for (const m of this.mobs) this.effect('poof', m.x, m.y, 30, '#ffffff', 0.4);
         this.mobs = [];
+        this.telegraphs = [];
         this.target = null;
-        this.onToast('A boss appears!', '#f72585');
+        this.onToast('A boss approaches!', '#f72585');
       }
       this.bossDelay -= dt;
       if (this.bossDelay <= 0) {
@@ -281,167 +346,181 @@ export class Game {
     if (this.inBossFight) return;
 
     this.spawnTimer -= dt;
-    const alive = this.mobs.length;
-    if (alive < PHYS.maxMobs && (this.spawnTimer <= 0 || alive < 3)) {
+    if (this.mobs.length < PHYS.maxMobs && (this.spawnTimer <= 0 || this.mobs.length < 4)) {
       this.spawnTimer = PHYS.mobSpawnInterval;
       this.spawnMob();
     }
   }
 
-  private spawnMob() {
-    const surfs = surfaces(this.layout);
-    // weight surfaces by length so the ground gets more mobs
-    const surf = weighted(surfs, surfs.map((x) => x.x2 - x.x1), this.rand);
-    let x = 0;
-    for (let tries = 0; tries < 8; tries++) {
-      x = surf.x1 + MOB_SIZE.w + this.rand() * Math.max(1, surf.x2 - surf.x1 - MOB_SIZE.w * 2);
-      if (Math.abs(x - this.player.x) > 180 || Math.abs(surf.y - this.player.y) > 60) break;
+  private randomFloorPoint(minDist: number, maxDist = Infinity): Vec | null {
+    const tiles = this.map.floorTiles;
+    for (let tries = 0; tries < 30; tries++) {
+      const i = tiles[Math.floor(this.rand() * tiles.length)];
+      const tx = i % this.map.w;
+      const p = { x: (tx + 0.5) * TILE, y: ((i - tx) / this.map.w + 0.5) * TILE };
+      const d = dist(p, this.player);
+      if (d >= minDist && d <= maxDist) return p;
     }
+    return null;
+  }
+
+  private spawnMob() {
+    const p = this.randomFloorPoint(380);
+    if (!p) return;
     const stats = mobFor(this.state.stage, false, this.rand);
-    this.mobs.push(this.makeMob(stats, x, surf, MOB_SIZE));
+    this.mobs.push(this.makeMob(stats, p, PHYS.mobRadius));
   }
 
   private spawnBoss() {
+    const p = this.randomFloorPoint(280, 520) ?? this.randomFloorPoint(150) ?? { x: this.player.x + 200, y: this.player.y };
     const stats = mobFor(this.state.stage, true, this.rand);
-    const p = this.player;
-    const x = p.x + 420 < this.layout.width - 100 ? p.x + 420 : Math.max(100, p.x - 420);
-    this.mobs.push(this.makeMob(stats, x, surfaceAt(this.layout, -1), BOSS_SIZE));
+    const boss = this.makeMob(stats, p, PHYS.bossRadius);
+    boss.actionTimer = 2;
+    this.mobs.push(boss);
     this.bossTimer = BALANCE.bossTimeLimit;
     this.hp = this.stats.maxHp;
     this.dirty = true;
   }
 
-  private makeMob(stats: MobStats, x: number, surf: Surface, size: { w: number; h: number }): Mob {
+  private makeMob(stats: MobStats, p: Vec, r: number): Mob {
     return {
-      ...stats, id: this.nextMobId++, maxHp: stats.hp, x, y: surf.y, ...size, surface: surf.index,
-      dir: 0, facing: -1, wanderTimer: this.rand() * 2, atkTimer: BALANCE.mobAttackInterval,
-      hitFlash: 0, lunge: 0, spawnAnim: 1,
+      ...stats, id: this.nextMobId++, maxHp: stats.hp, x: p.x, y: p.y, r, angle: this.rand() * 6.28,
+      state: 'idle', timer: 0, homeX: p.x, homeY: p.y, wander: { x: 0, y: 0 }, path: null, pathTimer: 0,
+      hitFlash: 0, spawnAnim: 1, moving: false, actionTimer: 0, chargeTo: null,
     };
   }
 
   // ---------------- Player movement ----------------
   private movePlayer(dt: number) {
     const p = this.player;
-    let moveX = 0;
-    let jump = false;
-    let drop = false;
 
+    if (p.dash) {
+      const step = COMBAT.dashSpeed * dt;
+      const d = Math.hypot(p.dash.tx - p.x, p.dash.ty - p.y);
+      const a = Math.atan2(p.dash.ty - p.y, p.dash.tx - p.x);
+      const mv = Math.min(step, d);
+      const np = moveCircle(this.map, p.x, p.y, Math.cos(a) * mv, Math.sin(a) * mv, p.r);
+      const blocked = Math.hypot(np.x - p.x, np.y - p.y) < mv * 0.5;
+      p.x = np.x;
+      p.y = np.y;
+      p.dash.t -= dt;
+      if (d <= step || blocked || p.dash.t <= 0) p.dash = null;
+      p.moving = true;
+      return;
+    }
+
+    let mx = 0;
+    let my = 0;
     if (this.manualActive) {
-      moveX = (this.input.right ? 1 : 0) - (this.input.left ? 1 : 0);
-      const jumpPressed = this.input.jump && !this.prevJump;
-      if (jumpPressed && this.input.down) drop = true;
-      else if (jumpPressed) jump = true;
-      else if (this.input.down && this.input.jump) drop = true;
+      mx = this.input.moveX;
+      my = this.input.moveY;
     } else {
-      ({ moveX, jump, drop } = this.autoPilot(dt));
+      ({ x: mx, y: my } = this.autoPilot(dt));
     }
-    this.prevJump = this.input.jump;
-
-    if (moveX !== 0) p.facing = moveX > 0 ? 1 : -1;
-    p.vx = moveX * PHYS.playerSpeed;
-    p.x = Math.max(p.w / 2, Math.min(this.layout.width - p.w / 2, p.x + p.vx * dt));
-
-    if (p.onGround && jump) {
-      p.vy = PHYS.jumpVel;
-      p.onGround = false;
-      p.surface = -2;
-    } else if (p.onGround && drop && p.surface >= 0) {
-      p.dropTimer = PHYS.dropTime;
-      p.onGround = false;
-      p.surface = -2;
-      p.vy = 0;
+    const len = Math.hypot(mx, my);
+    p.moving = len > 0.05;
+    if (!p.moving) return;
+    if (len > 1) {
+      mx /= len;
+      my /= len;
     }
-
-    // walked off a platform edge
-    if (p.onGround && p.surface >= 0) {
-      const pl = this.layout.platforms[p.surface];
-      if (p.x < pl.x1 || p.x > pl.x2) {
-        p.onGround = false;
-        p.surface = -2;
-      }
-    }
-
-    p.dropTimer = Math.max(0, p.dropTimer - dt);
-    if (!p.onGround) {
-      const prevY = p.y;
-      p.vy -= PHYS.gravity * dt;
-      p.y += p.vy * dt;
-      if (p.vy <= 0) {
-        let best: { y: number; i: number } | null = null;
-        if (p.dropTimer <= 0) {
-          this.layout.platforms.forEach((pl, i) => {
-            if (p.x >= pl.x1 && p.x <= pl.x2 && prevY >= pl.y - 0.01 && p.y <= pl.y) {
-              if (!best || pl.y > best.y) best = { y: pl.y, i };
-            }
-          });
-        }
-        const landed = best as { y: number; i: number } | null;
-        if (landed) {
-          p.y = landed.y;
-          p.surface = landed.i;
-          p.vy = 0;
-          p.onGround = true;
-        } else if (p.y <= 0) {
-          p.y = 0;
-          p.surface = -1;
-          p.vy = 0;
-          p.onGround = true;
-        }
-      }
-    }
+    // Facing follows movement unless the mouse is aiming
+    if (!(this.manualActive && this.input.aim)) p.angle = Math.atan2(my, mx);
+    const np = moveCircle(this.map, p.x, p.y, mx * PHYS.playerSpeed * dt, my * PHYS.playerSpeed * dt, p.r);
+    p.x = np.x;
+    p.y = np.y;
   }
 
-  /** Decides where the hero walks when AUTO is in control. */
-  private autoPilot(dt: number): { moveX: number; jump: boolean; drop: boolean } {
+  /** Where AUTO walks: dodge boss telegraphs first, then go fight the nearest monster. */
+  private autoPilot(dt: number): Vec {
     const p = this.player;
-    const idle = { moveX: 0, jump: false, drop: false };
+    const zero = { x: 0, y: 0 };
 
+    // 1. Dodge
+    for (const t of this.telegraphs) {
+      if (!t.boss || t.total - t.time < COMBAT.aiReaction) continue;
+      if (!this.inTelegraph(t, p, p.r + 10)) continue;
+      return this.escapeDir(t);
+    }
+
+    // 2. Pick a target
     if (this.target && (!this.mobs.includes(this.target) || (this.ignore.get(this.target.id) ?? 0) > this.time)) {
       this.target = null;
     }
     if (!this.target) {
       this.target = this.pickTarget();
       this.targetTime = 0;
+      this.path = null;
     }
     const t = this.target;
-    if (!t) return idle;
+    if (!t) return zero;
 
-    const dx = t.x - p.x;
-    const dy = t.y - p.y;
-    if (this.inReach(t, PHYS.attackRange)) {
+    const d = dist(p, t);
+    const reach = COMBAT.attackRange + t.r + p.r;
+    if (d <= reach - 12) {
       this.targetTime = 0;
-      p.facing = dx >= 0 ? 1 : -1;
-      return idle;
+      p.angle = angleTo(p, t);
+      return zero;
     }
-
     this.targetTime += dt;
-    if (this.targetTime > 6 && !t.boss) {
-      // can't reach it; try something else for a while
+    if (this.targetTime > 7 && !t.boss) {
       this.ignore.set(t.id, this.time + 8);
       this.target = null;
-      return idle;
+      return zero;
     }
 
-    const maxJump = (PHYS.jumpVel * PHYS.jumpVel) / (2 * PHYS.gravity);
-    if (dy > 40) {
-      const steps = this.layout.platforms
-        .map((pl, i) => ({ ...pl, i }))
-        .filter((pl) => pl.y > p.y + 20 && pl.y <= p.y + maxJump - 8);
-      if (!steps.length) return { moveX: sign(dx), jump: false, drop: false };
-      const distTo = (pl: { x1: number; x2: number }) =>
-        t.x < pl.x1 ? pl.x1 - t.x : t.x > pl.x2 ? t.x - pl.x2 : 0;
-      const step =
-        steps.find((pl) => pl.i === t.surface) ??
-        steps.sort((a, b) => distTo(a) + Math.abs(a.y - t.y) - (distTo(b) + Math.abs(b.y - t.y)))[0];
-      const aimX = Math.max(step.x1 + 30, Math.min(step.x2 - 30, t.x));
-      const under = p.x > step.x1 + 15 && p.x < step.x2 - 15;
-      if (p.onGround && under) return { moveX: sign(aimX - p.x), jump: true, drop: false };
-      return { moveX: Math.abs(aimX - p.x) > 8 ? sign(aimX - p.x) : 0, jump: false, drop: false };
+    // 3. Walk there (straight if clear, otherwise A*)
+    if (lineOfSight(this.map, p.x, p.y, t.x, t.y, p.r)) {
+      this.path = null;
+      return { x: (t.x - p.x) / d, y: (t.y - p.y) / d };
     }
-    if (dy < -40 && p.onGround && p.surface >= 0) {
-      return { moveX: sign(dx), jump: false, drop: true };
+    this.pathTimer -= dt;
+    if (!this.path || this.pathTimer <= 0 || !this.pathGoal || dist(this.pathGoal, t) > TILE) {
+      this.path = findPath(this.map, p.x, p.y, t.x, t.y, p.r);
+      this.pathGoal = { x: t.x, y: t.y };
+      this.pathTimer = 0.5;
+      if (!this.path) {
+        this.ignore.set(t.id, this.time + 8);
+        this.target = null;
+        return zero;
+      }
     }
-    return { moveX: Math.abs(dx) > 8 ? sign(dx) : 0, jump: false, drop: false };
+    while (this.path.length && dist(this.path[0], p) < 14) this.path.shift();
+    const wp = this.path[0];
+    if (!wp) return zero;
+    const wd = dist(p, wp) || 1;
+    return { x: (wp.x - p.x) / wd, y: (wp.y - p.y) / wd };
+  }
+
+  private escapeDir(t: Telegraph): Vec {
+    const p = this.player;
+    let ax: number;
+    let ay: number;
+    if (t.kind === 'circle') {
+      ax = p.x - t.x;
+      ay = p.y - t.y;
+    } else if (t.kind === 'ring') {
+      // ring: get inside the safe middle
+      ax = t.x - p.x;
+      ay = t.y - p.y;
+    } else {
+      // cone / line: step sideways off the axis
+      const side = Math.sign(angDiff(t.angle, angleTo(t, p))) || 1;
+      ax = Math.cos(t.angle + (Math.PI / 2) * side);
+      ay = Math.sin(t.angle + (Math.PI / 2) * side);
+    }
+    const l = Math.hypot(ax, ay) || 1;
+    ax /= l;
+    ay /= l;
+    // if that direction is blocked, try rotating it
+    for (const rot of [0, 0.7, -0.7, 1.4, -1.4, Math.PI]) {
+      const c = Math.cos(rot);
+      const s = Math.sin(rot);
+      const dx = ax * c - ay * s;
+      const dy = ax * s + ay * c;
+      if (fits(this.map, p.x + dx * 30, p.y + dy * 30, p.r)) return { x: dx, y: dy };
+    }
+    return { x: ax, y: ay };
   }
 
   private pickTarget(): Mob | null {
@@ -450,7 +529,9 @@ export class Game {
     let bestCost = Infinity;
     for (const m of this.mobs) {
       if ((this.ignore.get(m.id) ?? 0) > this.time) continue;
-      const cost = Math.abs(m.x - p.x) + Math.abs(m.y - p.y) * 3;
+      let cost = dist(p, m);
+      if (!lineOfSight(this.map, p.x, p.y, m.x, m.y)) cost *= 1.8;
+      if (m.boss) cost *= 0.2;
       if (cost < bestCost) {
         bestCost = cost;
         best = m;
@@ -459,86 +540,279 @@ export class Game {
     return best;
   }
 
-  /** Is mob m within `range` of the player's body (horizontally) and on about the same level? */
-  private inReach(m: Mob, range: number, frontOnly = false): boolean {
-    const p = this.player;
-    const dx = m.x - p.x;
-    if (frontOnly && sign(dx) !== p.facing && Math.abs(dx) > m.w / 2) return false;
-    const vTol = m.boss ? 140 : 60;
-    return Math.abs(dx) <= range + m.w / 2 + p.w / 2 && Math.abs(m.y - p.y) < vTol;
-  }
-
   // ---------------- Mobs ----------------
   private updateMobs(dt: number) {
     const p = this.player;
     for (const m of this.mobs) {
-      const surf = surfaceAt(this.layout, m.surface);
-      const dx = p.x - m.x;
-      const dy = p.y - m.y;
-      const reach = (m.w + p.w) / 2 + 4;
+      if (m.spawnAnim > 0.3) continue;
+      const d = dist(m, p);
+      const touch = m.r + p.r + COMBAT.mobReach;
       const speed = m.boss ? PHYS.bossSpeed : PHYS.mobSpeed;
+      m.moving = false;
+      if (m.boss) m.actionTimer -= dt;
 
-      if (m.boss || (Math.abs(dx) < PHYS.mobAggroRange && Math.abs(dy) < 60)) {
-        m.dir = Math.abs(dx) > reach - 6 ? sign(dx) : 0;
+      if (m.state === 'charge' && m.chargeTo) {
+        const step = 900 * dt;
+        const cd = dist(m, m.chargeTo);
+        const a = angleTo(m, m.chargeTo);
+        const np = moveCircle(this.map, m.x, m.y, Math.cos(a) * Math.min(step, cd), Math.sin(a) * Math.min(step, cd), m.r * 0.6);
+        const stuck = dist(np, m) < 1;
+        m.x = np.x;
+        m.y = np.y;
+        m.moving = true;
+        if (cd <= step || stuck) {
+          m.state = 'recover';
+          m.timer = 0.8;
+          m.chargeTo = null;
+        }
+        continue;
+      }
+
+      if (m.state === 'windup') {
+        m.timer -= dt;
+        if (m.timer <= 0) {
+          m.state = 'recover';
+          m.timer = COMBAT.mobRecover;
+        }
+        continue;
+      }
+      if (m.state === 'recover') {
+        m.timer -= dt;
+        if (m.timer <= 0) m.state = 'chase';
+        continue;
+      }
+
+      // Boss specials
+      if (m.boss) {
+        if (m.actionTimer <= 0 && !this.telegraphs.some((t) => t.ownerId === m.id && t.boss)) {
+          m.actionTimer = COMBAT.bossActionEvery + this.rand() * 0.8;
+          this.bossSpecial(m);
+          continue;
+        }
+      }
+
+      const aggro = m.boss || m.state === 'chase' || d < PHYS.mobAggroRange;
+      if (aggro && d < touch) {
+        // melee windup: a short cone telegraph the player can step out of
+        m.state = 'windup';
+        m.timer = COMBAT.mobWindup;
+        m.angle = angleTo(m, p);
+        this.telegraphs.push({
+          kind: 'cone', x: m.x, y: m.y, r: m.r + COMBAT.mobReach + p.r + 22, inner: 0, angle: m.angle,
+          width: 0.9, time: COMBAT.mobWindup, total: COMBAT.mobWindup, damage: m.atk, boss: false, ownerId: m.id,
+        });
+        continue;
+      }
+
+      let vx = 0;
+      let vy = 0;
+      if (aggro && d < PHYS.mobAggroRange * 1.8) {
+        m.state = 'chase';
+        if (lineOfSight(this.map, m.x, m.y, p.x, p.y, m.r * 0.8)) {
+          m.path = null;
+          vx = (p.x - m.x) / d;
+          vy = (p.y - m.y) / d;
+        } else {
+          m.pathTimer -= dt;
+          if (!m.path || m.pathTimer <= 0) {
+            m.path = findPath(this.map, m.x, m.y, p.x, p.y, m.r * 0.8);
+            m.pathTimer = 0.7 + this.rand() * 0.3;
+          }
+          while (m.path && m.path.length && dist(m.path[0], m) < 12) m.path.shift();
+          const wp = m.path?.[0];
+          if (wp) {
+            const wd = dist(m, wp) || 1;
+            vx = (wp.x - m.x) / wd;
+            vy = (wp.y - m.y) / wd;
+          }
+        }
       } else {
-        m.wanderTimer -= dt;
-        if (m.wanderTimer <= 0) {
-          m.wanderTimer = 1 + this.rand() * 2.5;
-          m.dir = [-1, 0, 1][Math.floor(this.rand() * 3)];
+        m.state = 'idle';
+        m.timer -= dt;
+        if (m.timer <= 0) {
+          m.timer = 1.5 + this.rand() * 2;
+          const home = Math.hypot(m.x - m.homeX, m.y - m.homeY) > 180;
+          if (home) {
+            const a = Math.atan2(m.homeY - m.y, m.homeX - m.x);
+            m.wander = { x: Math.cos(a), y: Math.sin(a) };
+          } else if (this.rand() < 0.35) m.wander = { x: 0, y: 0 };
+          else {
+            const a = this.rand() * Math.PI * 2;
+            m.wander = { x: Math.cos(a), y: Math.sin(a) };
+          }
         }
-      }
-      if (m.dir) m.facing = m.dir > 0 ? 1 : -1;
-      m.x += m.dir * speed * dt;
-      const minX = surf.x1 + m.w / 2;
-      const maxX = surf.x2 - m.w / 2;
-      if (m.x < minX) {
-        m.x = minX;
-        if (!m.boss) m.dir = 1;
-      } else if (m.x > maxX) {
-        m.x = maxX;
-        if (!m.boss) m.dir = -1;
+        vx = m.wander.x * 0.5;
+        vy = m.wander.y * 0.5;
       }
 
-      // contact attack
-      m.atkTimer -= dt;
-      const vTol = m.boss ? 140 : 50;
-      if (m.atkTimer <= 0 && Math.abs(dx) <= reach + (m.boss ? 30 : 0) && Math.abs(dy) < vTol) {
-        m.atkTimer = BALANCE.mobAttackInterval;
-        m.lunge = 1;
-        m.facing = dx >= 0 ? 1 : -1;
-        this.hp -= m.atk;
-        this.anim.playerHit = 1;
-        this.float(p.x, p.y + p.h + 10, '-' + fmtDmg(m.atk), '#ff6b6b', 14);
-        if (this.hp <= 0) {
-          this.playerDie();
-          return;
+      // keep mobs from stacking
+      for (const o of this.mobs) {
+        if (o === m) continue;
+        const od = dist(m, o);
+        const min = m.r + o.r;
+        if (od < min && od > 0.01) {
+          vx += ((m.x - o.x) / od) * 0.6;
+          vy += ((m.y - o.y) / od) * 0.6;
         }
+      }
+      if (vx || vy) {
+        m.angle = Math.atan2(vy, vx);
+        const np = moveCircle(this.map, m.x, m.y, vx * speed * dt, vy * speed * dt, m.r * 0.8);
+        m.moving = Math.abs(np.x - m.x) + Math.abs(np.y - m.y) > 0.1;
+        m.x = np.x;
+        m.y = np.y;
       }
     }
   }
 
-  // ---------------- Combat ----------------
-  private playerAttacks(dt: number) {
-    this.playerTimer -= dt;
-    if (this.playerTimer > 0) return;
-    const wantsAttack = this.input.attack || (this.auto && this.mobs.some((m) => this.inReach(m, PHYS.attackRange)));
-    if (!wantsAttack) return;
+  private bossSpecial(m: Mob) {
+    const p = this.player;
+    this.telegraphs = this.telegraphs.filter((t) => t.ownerId !== m.id);
+    const dmg = m.atk * COMBAT.telegraphDamageMult;
+    const roll = this.rand();
+    const base = { inner: 0, damage: dmg, boss: true, ownerId: m.id };
+    const loops = chapterOf(this.state.stage).loop;
+    if (roll < 0.33) {
+      // slam where the player stands
+      this.telegraphs.push({ ...base, kind: 'circle', x: p.x, y: p.y, r: 115, angle: 0, width: 0, time: 1.2, total: 1.2 });
+      if (loops > 0 || this.state.stage > 25) {
+        const a = this.rand() * 6.28;
+        this.telegraphs.push({ ...base, kind: 'circle', x: p.x + Math.cos(a) * 170, y: p.y + Math.sin(a) * 170, r: 100, angle: 0, width: 0, time: 1.5, total: 1.5 });
+      }
+    } else if (roll < 0.6) {
+      // breath cone
+      const a = angleTo(m, p);
+      m.angle = a;
+      this.telegraphs.push({ ...base, kind: 'cone', x: m.x, y: m.y, r: 300, angle: a, width: 0.55, time: 1.1, total: 1.1 });
+      m.state = 'windup';
+      m.timer = 1.1;
+    } else if (roll < 0.85) {
+      // charge across the arena
+      const a = angleTo(m, p);
+      const len = 420;
+      m.angle = a;
+      this.telegraphs.push({ ...base, kind: 'line', x: m.x, y: m.y, r: len, angle: a, width: 80, time: 1.0, total: 1.0 });
+      m.state = 'windup';
+      m.timer = 1.0;
+      m.chargeTo = { x: m.x + Math.cos(a) * len, y: m.y + Math.sin(a) * len };
+    } else {
+      // nova: everything around the boss except right next to it
+      this.telegraphs.push({ ...base, kind: 'ring', x: m.x, y: m.y, r: 260, inner: m.r + 35, angle: 0, width: 0, time: 1.4, total: 1.4 });
+      m.state = 'windup';
+      m.timer = 1.4;
+    }
+  }
 
-    this.playerTimer = BALANCE.playerAttackInterval;
-    this.anim.swing = 1;
-    // Manual attacks hit what you face; auto turns toward the nearest mob in reach.
-    let targets = this.mobs.filter((m) => this.inReach(m, PHYS.attackRange, true));
-    if (!targets.length && !this.input.attack) {
-      const near = this.mobs.filter((m) => this.inReach(m, PHYS.attackRange));
-      if (near.length) {
-        this.player.facing = near[0].x >= this.player.x ? 1 : -1;
-        targets = near;
+  /** Is point p (with radius pr) inside telegraph t? */
+  private inTelegraph(t: Telegraph, p: Vec, pr: number): boolean {
+    const d = dist(t, p);
+    if (t.kind === 'circle') return d <= t.r + pr;
+    if (t.kind === 'ring') return d <= t.r + pr && d >= t.inner - pr;
+    if (t.kind === 'cone') {
+      if (d > t.r + pr) return false;
+      if (d < pr) return true;
+      return Math.abs(angDiff(t.angle, angleTo(t, p))) <= t.width + Math.atan2(pr, d);
+    }
+    // line
+    const dx = p.x - t.x;
+    const dy = p.y - t.y;
+    const along = dx * Math.cos(t.angle) + dy * Math.sin(t.angle);
+    const across = -dx * Math.sin(t.angle) + dy * Math.cos(t.angle);
+    return along >= -pr && along <= t.r + pr && Math.abs(across) <= t.width / 2 + pr;
+  }
+
+  private updateTelegraphs(dt: number) {
+    const p = this.player;
+    const done: Telegraph[] = [];
+    for (const t of this.telegraphs) {
+      const owner = this.mobs.find((m) => m.id === t.ownerId);
+      if (!owner) {
+        done.push(t);
+        continue;
+      }
+      // mob swings track the mob's position
+      if (!t.boss) {
+        t.x = owner.x;
+        t.y = owner.y;
+      } else if (t.kind === 'cone' || t.kind === 'ring') {
+        t.x = owner.x;
+        t.y = owner.y;
+      }
+      t.time -= dt;
+      if (t.time > 0) continue;
+      done.push(t);
+      if (t.boss) this.effect(t.kind === 'line' ? 'dash' : 'blast', t.x, t.y, t.r, '#ff4d4d', 0.35, t.x + Math.cos(t.angle) * t.r, t.y + Math.sin(t.angle) * t.r);
+      if (t.kind === 'line' && owner.chargeTo) {
+        owner.state = 'charge';
+      }
+      if (this.inTelegraph(t, p, p.r * 0.7)) {
+        this.hurtPlayer(t.damage);
+        if (this.deadTimer > 0) return;
       }
     }
-    targets.sort((a, b) => Math.abs(a.x - this.player.x) - Math.abs(b.x - this.player.x));
+    if (done.length) this.telegraphs = this.telegraphs.filter((t) => !done.includes(t));
+  }
+
+  private hurtPlayer(amount: number) {
     const p = this.player;
-    this.effect('slash', p.x + p.facing * 40, p.y + p.h / 2, 46, '#ffffff', 0.18);
-    if (targets[0]) this.damage(targets[0], this.stats.atk);
+    this.hp -= amount;
+    this.anim.playerHit = 1;
+    this.float(p.x, p.y, 40, '-' + fmtDmg(amount), '#ff6b6b', 15);
+    if (this.hp <= 0) this.playerDie();
+  }
+
+  // ---------------- Player combat ----------------
+  /** Direction the player is aiming: mouse in manual, target in auto. */
+  private aimAngle(): number {
+    const p = this.player;
+    if (this.manualActive && this.input.aim) return angleTo(p, this.input.aim);
+    if (this.auto || !this.input.aim) {
+      // no mouse (touch / keyboard only): soft-lock onto whatever is closest
+      const t = this.target && this.mobs.includes(this.target) ? this.target : this.nearestMob(COMBAT.attackRange + 120);
+      if (t) return angleTo(p, t);
+    }
+    return p.angle;
+  }
+
+  private nearestMob(maxD = Infinity, from: Vec = this.player): Mob | null {
+    let best: Mob | null = null;
+    let bd = maxD;
+    for (const m of this.mobs) {
+      const d = dist(from, m) - m.r;
+      if (d < bd) {
+        bd = d;
+        best = m;
+      }
+    }
+    return best;
+  }
+
+  private mobsInCone(angle: number, range: number, half: number): Mob[] {
+    const p = this.player;
+    return this.mobs.filter((m) => {
+      const d = dist(p, m);
+      if (d > range + m.r + p.r) return false;
+      if (d < m.r + p.r) return true;
+      return Math.abs(angDiff(angle, angleTo(p, m))) <= half + Math.atan2(m.r, d);
+    });
+  }
+
+  private playerAttacks(dt: number) {
+    this.playerTimer -= dt;
+    if (this.playerTimer > 0 || this.player.dash) return;
+    const near = this.nearestMob(COMBAT.attackRange + this.player.r);
+    const wantsAttack = this.input.attack || (this.auto && !!near);
+    if (!wantsAttack) return;
+
+    let angle = this.aimAngle();
+    // AUTO turns to face whatever is in reach
+    if (this.auto && !this.input.attack && near) angle = angleTo(this.player, near);
+    this.player.angle = angle;
+    this.playerTimer = BALANCE.playerAttackInterval;
+    this.anim.swing = 1;
+    const p = this.player;
+    this.effect('slash', p.x + Math.cos(angle) * 40, p.y + Math.sin(angle) * 40, COMBAT.attackRange, '#ffffff', 0.2, undefined, undefined, angle);
+    for (const m of this.mobsInCone(angle, COMBAT.attackRange, COMBAT.attackHalfAngle)) this.damage(m, this.stats.atk);
   }
 
   private castSkills(dt: number) {
@@ -546,66 +820,119 @@ export class Game {
     SKILLS.forEach((sk, i) => {
       if (this.state.level < sk.unlock) return;
       this.skillCd[sk.id] -= dt;
-      if (this.skillCd[sk.id] > 0) return;
-      const range = PHYS.skillRange[sk.id] ?? 200;
-      const inRange = this.mobs.filter((m) => {
-        const r = Math.hypot(m.x - p.x, (m.y + m.h / 2 - (p.y + p.h / 2)) * 1.4);
-        return r <= range + m.w / 2;
-      });
+      if (this.skillCd[sk.id] > 0 || p.dash) return;
       const pressed = this.input.skills[i];
-      // With AUTO on, skills fire on their own whenever something is in range (even while you steer).
-      const autoCast = this.auto && inRange.length > 0;
-      if (!pressed && !autoCast) return;
+      const dmg = this.stats.atk * sk.mult;
 
-      this.skillCd[sk.id] = sk.cd;
-      this.anim.flash = 0.8;
-      this.anim.flashColor = sk.color;
-      const cy = p.y + p.h / 2;
       if (sk.id === 'strike') {
-        const t = inRange.sort((a, b) => Math.abs(a.x - p.x) - Math.abs(b.x - p.x))[0];
-        if (t) p.facing = t.x >= p.x ? 1 : -1;
-        this.effect('slash', p.x + p.facing * 70, cy, 90, sk.color, 0.35);
-        if (t) this.damage(t, this.stats.atk * sk.mult, sk.name);
-      } else if (sk.id === 'cyclone') {
-        this.effect('ring', p.x, cy, range, sk.color, 0.5);
-        for (const m of inRange) this.damage(m, this.stats.atk * sk.mult);
-      } else {
-        for (const m of inRange.slice(0, 12)) {
-          this.effect('star', m.x, m.y + m.h / 2, 40, sk.color, 0.6);
-          this.damage(m, this.stats.atk * sk.mult);
+        let angle = this.aimAngle();
+        let go = pressed;
+        if (!go && this.auto) {
+          const t = this.nearestMob(COMBAT.dashDistance + 20);
+          if (t && lineOfSight(this.map, p.x, p.y, t.x, t.y, p.r) && !this.standingInBossTelegraph()) {
+            angle = angleTo(p, t);
+            go = true;
+          }
         }
-        if (!inRange.length) this.effect('ring', p.x, cy, 120, sk.color, 0.5);
+        if (!go) return;
+        this.startSkill(sk.id, sk.cd, sk.color);
+        p.angle = angle;
+        const tx = p.x + Math.cos(angle) * COMBAT.dashDistance;
+        const ty = p.y + Math.sin(angle) * COMBAT.dashDistance;
+        p.dash = { tx, ty, t: 0.35 };
+        // damage everything along the dash line
+        for (const m of this.mobs) {
+          const dx = m.x - p.x;
+          const dy = m.y - p.y;
+          const along = dx * Math.cos(angle) + dy * Math.sin(angle);
+          const across = Math.abs(-dx * Math.sin(angle) + dy * Math.cos(angle));
+          if (along > -m.r && along < COMBAT.dashDistance + m.r && across < COMBAT.dashWidth + m.r) this.damage(m, dmg, sk.name);
+        }
+        this.effect('dash', p.x, p.y, COMBAT.dashWidth, sk.color, 0.35, tx, ty);
+      } else if (sk.id === 'cyclone') {
+        const hits = this.mobs.filter((m) => dist(p, m) <= COMBAT.cycloneRadius + m.r);
+        if (!pressed && !(this.auto && hits.length)) return;
+        this.startSkill(sk.id, sk.cd, sk.color);
+        this.effect('ring', p.x, p.y, COMBAT.cycloneRadius, sk.color, 0.5);
+        for (const m of hits) this.damage(m, dmg);
+      } else {
+        // Starfall: lands where you aim (mouse), or on the biggest group for AUTO
+        let spot: Vec | null = null;
+        if (pressed) {
+          const a = this.input.aim && this.manualActive ? this.input.aim : null;
+          spot = a ?? this.bestCluster() ?? { x: p.x + Math.cos(p.angle) * 150, y: p.y + Math.sin(p.angle) * 150 };
+          const d = dist(p, spot);
+          if (d > COMBAT.starfallRange) {
+            const k = COMBAT.starfallRange / d;
+            spot = { x: p.x + (spot.x - p.x) * k, y: p.y + (spot.y - p.y) * k };
+          }
+        } else if (this.auto) {
+          spot = this.bestCluster();
+        }
+        if (!spot) return;
+        this.startSkill(sk.id, sk.cd, sk.color);
+        this.blasts.push({ x: spot.x, y: spot.y, r: COMBAT.starfallRadius, time: COMBAT.starfallDelay, damage: dmg });
+        this.effect('star', spot.x, spot.y, COMBAT.starfallRadius, sk.color, COMBAT.starfallDelay + 0.3);
       }
     });
   }
 
+  private standingInBossTelegraph(): boolean {
+    return this.telegraphs.some((t) => t.boss && this.inTelegraph(t, this.player, this.player.r));
+  }
+
+  private startSkill(id: string, cd: number, color: string) {
+    this.skillCd[id] = cd;
+    this.anim.flash = 0.6;
+    this.anim.flashColor = color;
+  }
+
+  /** Point within Starfall range that would hit the most monsters. */
+  private bestCluster(): Vec | null {
+    let best: Vec | null = null;
+    let bestN = 0;
+    for (const m of this.mobs) {
+      if (dist(this.player, m) > COMBAT.starfallRange) continue;
+      const n = this.mobs.filter((o) => dist(o, m) <= COMBAT.starfallRadius).length + (m.boss ? 5 : 0);
+      if (n > bestN) {
+        bestN = n;
+        best = { x: m.x, y: m.y };
+      }
+    }
+    return best;
+  }
+
+  private updateBlasts(dt: number) {
+    for (const b of this.blasts) {
+      b.time -= dt;
+      if (b.time > 0) continue;
+      this.effect('blast', b.x, b.y, b.r, '#c77dff', 0.4);
+      for (const m of this.mobs.filter((m) => dist(b, m) <= b.r + m.r)) this.damage(m, b.damage, 'Starfall');
+    }
+    this.blasts = this.blasts.filter((b) => b.time > 0);
+  }
+
   private updateCompanions(dt: number) {
     const p = this.player;
+    const n = this.party.length;
     this.party.forEach((c, i) => {
-      // follow the player in a little trail
-      const tx = p.x - p.facing * (50 + i * 38);
-      const ty = p.y + 55 + (i % 2) * 30 + Math.sin(this.time * 3 + i) * 6;
+      // trail behind the hero in a little fan
+      const back = p.angle + Math.PI + (i - (n - 1) / 2) * 0.7;
+      const tx = p.x + Math.cos(back) * 60;
+      const ty = p.y + Math.sin(back) * 60;
       c.x += (tx - c.x) * Math.min(1, dt * 4);
       c.y += (ty - c.y) * Math.min(1, dt * 4);
 
       c.timer -= dt;
       if (c.timer > 0) return;
-      let best: Mob | null = null;
-      let bd = 420;
-      for (const m of this.mobs) {
-        const d = Math.hypot(m.x - c.x, m.y - c.y);
-        if (d < bd) {
-          bd = d;
-          best = m;
-        }
-      }
+      const best = this.nearestMob(380, c);
       if (!best) return;
       const o = this.state.companions[c.id];
       if (!o) return;
       c.timer = BALANCE.companionAttackInterval;
       c.hit = 1;
       const color = COMPANION[c.id].color;
-      this.effect('bolt', c.x, c.y, 6, color, 0.2, best.x, best.y + best.h / 2);
+      this.effect('bolt', c.x, c.y, 6, color, 0.2, best.x, best.y);
       this.damage(best, this.stats.atk * companionHitMult(c.id, o.level), undefined, color);
     });
   }
@@ -616,36 +943,38 @@ export class Game {
     const dmg = base * (crit ? this.stats.critDmg : 1) * (0.9 + this.rand() * 0.2);
     m.hp -= dmg;
     m.hitFlash = 1;
+    if (m.state === 'idle') m.state = 'chase';
     const text = (label ? label + ' ' : '') + fmtDmg(dmg) + (crit ? '!' : '');
-    this.float(
-      m.x + (this.rand() - 0.5) * 30, m.y + m.h + 14,
-      text, color ?? (crit ? '#ffb703' : '#ffffff'), crit ? 20 : label ? 18 : 15,
-    );
+    this.float(m.x + (this.rand() - 0.5) * 20, m.y, m.r * 2 + 16, text, color ?? (crit ? '#ffb703' : '#ffffff'), crit ? 19 : label ? 17 : 14);
     if (m.hp <= 0) this.killMob(m);
   }
 
-  private effect(kind: Effect['kind'], x: number, y: number, r: number, color: string, life: number, x2?: number, y2?: number) {
-    if (this.effects.length > 60) this.effects.shift();
-    this.effects.push({ kind, x, y, r, color, life, maxLife: life, x2, y2 });
+  private effect(
+    kind: Effect['kind'], x: number, y: number, r: number, color: string, life: number,
+    x2?: number, y2?: number, angle?: number,
+  ) {
+    if (this.effects.length > 70) this.effects.shift();
+    this.effects.push({ kind, x, y, r, color, life, maxLife: life, x2, y2, angle });
   }
 
-  private float(x: number, y: number, text: string, color: string, size: number) {
+  private float(x: number, y: number, z: number, text: string, color: string, size: number) {
     if (this.floats.length > 50) this.floats.shift();
-    this.floats.push({ x, y, text, color, life: 0.9, size });
+    this.floats.push({ x, y, z, text, color, life: 0.9, size });
   }
 
   private killMob(m: Mob) {
     const s = this.state;
     this.mobs = this.mobs.filter((x) => x !== m);
+    this.telegraphs = this.telegraphs.filter((t) => t.ownerId !== m.id);
     if (this.target === m) this.target = null;
-    this.effect('poof', m.x, m.y + m.h / 2, m.w * 0.6, m.color, 0.35);
+    this.effect('poof', m.x, m.y, m.r * 1.4, m.color, 0.4);
     s.gold += m.gold;
     this.addExp(m.exp);
     s.totals.kills++;
     this.hp = Math.min(this.stats.maxHp, this.hp + this.stats.maxHp * BALANCE.healOnKillPct);
     if (this.rand() < BALANCE.gemDropChance) {
       s.gems += 1;
-      this.float(m.x, m.y + m.h + 34, '+1 💎', '#7df9ff', 15);
+      this.float(m.x, m.y, 60, '+1 💎', '#7df9ff', 14);
     }
 
     if (m.boss) {
@@ -660,7 +989,8 @@ export class Game {
       s.kills = 0;
       s.bossFailed = false;
       this.hp = this.stats.maxHp;
-      this.syncLayout();
+      this.telegraphs = [];
+      this.syncMap();
     } else if (!s.bossFailed || s.kills < BALANCE.killsPerStage) {
       s.kills++;
     }
@@ -693,7 +1023,10 @@ export class Game {
     this.hp = 0;
     const wasBoss = this.inBossFight;
     this.mobs = [];
+    this.telegraphs = [];
+    this.blasts = [];
     this.target = null;
+    this.player.dash = null;
     if (wasBoss) {
       s.bossFailed = true;
       this.onToast('Defeated by the boss. Farming until you challenge again.', '#ff6b6b');
@@ -702,14 +1035,16 @@ export class Game {
       s.bossFailed = true;
       s.kills = 0;
       this.onToast('You were defeated and fell back a stage.', '#ff6b6b');
-      this.syncLayout();
+      this.syncMap();
     }
     this.dirty = true;
   }
 
   private failBoss(msg: string) {
     this.state.bossFailed = true;
+    const bossIds = this.mobs.filter((m) => m.boss).map((m) => m.id);
     this.mobs = this.mobs.filter((m) => !m.boss);
+    this.telegraphs = this.telegraphs.filter((t) => !bossIds.includes(t.ownerId));
     this.target = null;
     this.onToast(msg + ' Farming until you challenge again.', '#ff6b6b');
     this.dirty = true;

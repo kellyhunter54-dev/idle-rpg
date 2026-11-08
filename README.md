@@ -1,8 +1,10 @@
 # Idle RPG
 
-A browser idle RPG (auto-battle, growth upgrades, gear and companion summons, bosses, offline progress) built to later ship as a desktop client.
+An old-school isometric action RPG with idle progression: your hero fights on its own (AUTO), and you can take over any time. Long-term goal: a low-grind MMO.
 
-**Play:** https://kellyhunter54-dev.github.io/idle-rpg/
+The original side-scroller version is kept on the `side-scroller` branch and served at `/side/`.
+
+**Play:** https://kellyhunter54-dev.github.io/idle-rpg/ (side-scroller: https://kellyhunter54-dev.github.io/idle-rpg/side/)
 
 ## Run locally (Windows, Mac or Linux)
 
@@ -29,10 +31,10 @@ One-time setup: repo **Settings → Pages → Source: GitHub Actions**.
 | `src/state.ts` | Save data shape, new game defaults, migration for old saves. |
 | `src/save.ts` | Saving/loading. Swap the storage implementation here for the desktop build. |
 | `src/stats.ts` | Turns save data into combat stats (ATK, HP, crit). |
-| `src/world.ts` | Map layouts (platforms, widths) and physics constants. |
-| `src/game.ts` | Game logic: physics, mob AI, auto-pilot, combat, bosses, summoning, enhancing, offline rewards. No browser code, so it can be simulated. |
+| `src/map.ts` | Procedural tile maps per chapter, collision, A* pathfinding. |
+| `src/game.ts` | Game logic: movement, mob AI, AUTO pilot (pathing + dodging), action combat, boss telegraphs, summoning, enhancing, offline rewards. No browser code, so it can be simulated. |
 | `src/input.ts` | Keyboard and touch controls. |
-| `src/render.ts` | Canvas battle scene (placeholder shapes; replace when real art arrives). |
+| `src/render.ts` | Isometric canvas renderer (placeholder shapes; replace when real art arrives). |
 | `src/ui.ts` | Tabs, panels, modals, toasts. |
 | `src/main.ts` | Wires everything together, game loop, autosave. |
 | `tools/sim.ts` | Balance simulator. |
@@ -41,14 +43,15 @@ One-time setup: repo **Settings → Pages → Source: GitHub Actions**.
 
 The hero plays itself while AUTO is on. Any input takes over, and AUTO resumes 2 seconds after you stop.
 
-- A/D or arrows: move
-- W, Up or Space: jump
-- S + jump: drop through a platform
-- J or Z: attack
-- 1, 2, 3: skills
+- WASD or arrows: move
+- Mouse: aim
+- Left click (hold), Space or J: attack
+- 1, 2, 3: skills (Dash Strike, Cyclone, Starfall) toward the mouse
 - Q: toggle AUTO
 
-Phones get on-screen buttons.
+Phones: drag on the battlefield for a joystick, buttons for attack and skills.
+
+Bosses mark the ground in red before attacks (slam, breath cone, charge, nova). Step out to avoid them.
 
 ## Desktop client later
 

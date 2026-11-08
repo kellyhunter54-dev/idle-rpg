@@ -11,12 +11,15 @@ export interface SaveStorage {
   clear(): void;
 }
 
-const KEY = 'idle-rpg-save-v1';
+const KEY = 'idle-rpg-save-v2';
+// v1 was the side-scroller's save. The side-scroller (at /side/) keeps using it, and the
+// first time this version runs it copies that progress over.
+const LEGACY_KEY = 'idle-rpg-save-v1';
 
 export const localSaveStorage: SaveStorage = {
   read() {
     try {
-      return localStorage.getItem(KEY);
+      return localStorage.getItem(KEY) ?? localStorage.getItem(LEGACY_KEY);
     } catch {
       return null;
     }

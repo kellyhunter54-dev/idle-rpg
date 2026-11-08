@@ -19,12 +19,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # The classic side-scroller lives on its own branch and is served at /side/
+      - uses: actions/checkout@v4
+        with:
+          ref: side-scroller
+          path: side
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
       - run: npm ci
       - run: npm run build
+      - name: Build side-scroller into dist/side
+        run: |
+          cd side
+          npm ci
+          npm run build
+          mkdir -p ../dist/side
+          cp -r dist/* ../dist/side/
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
