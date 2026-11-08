@@ -1722,7 +1722,7 @@ export class Game {
     const p = this.player;
     for (let i = 0; i < 40; i++) {
       const a = this.rand() * Math.PI * 2;
-      const d = this.rand() * 520;
+      const d = Math.sqrt(this.rand()) * 520; // sqrt: even over the area, not bunched in the middle
       const q = { x: c.x + Math.cos(a) * d, y: c.y + Math.sin(a) * d };
       if (dist(q, p) < minFromPlayer || dist(q, m) < 120) continue;
       if (fits(this.map, q.x, q.y, m.r * 0.8 + 2, true)) return q;
@@ -1853,7 +1853,22 @@ export class Game {
       const a = this.rand() * Math.PI * 2;
       const d = this.rand() * 160;
       q = this.clampArena({ x: p.x + Math.cos(a) * d, y: p.y + Math.sin(a) * d });
-    } else q = this.roomSpot(m, 0);
+    } else {
+      // even spread: of a few random spots, take the one furthest from globs already falling
+      const falling = this.telegraphs.filter((t) => t.style === 'spout');
+      let best = this.roomSpot(m, 0);
+      let bestD = -1;
+      for (let i = 0; i < 8; i++) {
+        const c = i === 0 ? best : this.roomSpot(m, 0);
+        let near = Infinity;
+        for (const t of falling) near = Math.min(near, Math.hypot(t.x - c.x, t.y - c.y));
+        if (near > bestD) {
+          bestD = near;
+          best = c;
+        }
+      }
+      q = best;
+    }
     const time = w.spoutTime * (this.enraged ? 0.85 : 1);
     this.telegraphs.push({
       kind: 'circle', x: q.x, y: q.y, r: w.spoutRadius, inner: 0, angle: 0, width: 0, time, total: time,
