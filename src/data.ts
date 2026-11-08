@@ -449,10 +449,17 @@ export const SPLIT = {
   wild: {
     hopEvery: [0.15, 0.45] as [number, number],
     actionMult: 0.3, // specials over three times as often
-    kit: ['charge', 'charge', 'charge', 'rain'] as BossMove[],
+    kit: ['charge'] as BossMove[], // the minis only charge (no jumping) in the wild phase
     puddleMult: 1.35,
     chargeLen: 3000, // charges run wall to wall (they stop at the wall)
-    chargeSpeed: 1250,
+    chargeSpeed: 800,
+    /** The crowned slime's spout: globs rain onto red circles all over the room (no goo; each hit = Slimed). */
+    spoutEvery: [3.2, 4.2] as [number, number],
+    spoutCircles: 16,
+    spoutNearPlayer: 3,
+    spoutRadius: 70,
+    spoutTime: 1.3,
+    spoutPct: 0.2,
     globes: false, // the checkerboard globes (off: phase 3 is all about the minis)
   },
   gooMax: 280,

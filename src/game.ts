@@ -128,7 +128,7 @@ export interface Telegraph {
   /** Telegraphs from one volley share this id and hit you at most once. */
   volley?: number;
   /** Slime landings draw differently: 'landing' (split-offs) or 'wave' (crowned slime, rings follow). */
-  style?: 'landing' | 'wave';
+  style?: 'landing' | 'wave' | 'spout';
   /** AUTO only: seconds after it appears before AUTO reacts, and whether AUTO misses it entirely. */
   noticeAt?: number;
   unnoticed?: boolean;
@@ -1833,6 +1833,36 @@ export class Game {
       m.actionTimer = (SPLIT.globeEvery[0] + this.rand() * (SPLIT.globeEvery[1] - SPLIT.globeEvery[0])) * (this.enraged ? 0.75 : 1);
       this.globeRain(m);
     }
+    else if (m.actionTimer <= 0 && m.invuln <= 0 && !this.telegraphs.some((t) => t.ownerId === m.id)) {
+      const w = SPLIT.wild;
+      m.actionTimer = (w.spoutEvery[0] + this.rand() * (w.spoutEvery[1] - w.spoutEvery[0])) * (this.enraged ? 0.75 : 1);
+      this.spout(m);
+    }
+  }
+
+  /** Wild phase: a spout of slime from the crowned slime, globs raining onto circles all over the room. */
+  private spout(m: Mob) {
+    const w = SPLIT.wild;
+    const p = this.player;
+    const volley = this.nextVolley++;
+    const spots: Vec[] = [];
+    for (let i = 0; i < w.spoutNearPlayer; i++) {
+      const a = this.rand() * Math.PI * 2;
+      const d = i === 0 ? 0 : 90 + this.rand() * 120;
+      spots.push(this.clampArena({ x: p.x + Math.cos(a) * d, y: p.y + Math.sin(a) * d }));
+    }
+    for (let i = 0; i < w.spoutCircles; i++) spots.push(this.roomSpot(m, 0));
+    const dmg = m.atk * COMBAT.telegraphDamageMult * 0.6;
+    for (const q of spots) {
+      const time = w.spoutTime * (this.enraged ? 0.85 : 1);
+      this.telegraphs.push({
+        kind: 'circle', x: q.x, y: q.y, r: w.spoutRadius, inner: 0, angle: 0, width: 0, time, total: time,
+        damage: dmg, boss: true, ownerId: m.id, wait: this.rand() * 0.6, follow: false, volley, style: 'spout',
+        pct: w.spoutPct * (this.enraged ? BALANCE.bossEnrageDamage : 1),
+      });
+    }
+    this.effect('ring', m.x, m.y, 90, '#7bc950', 0.5);
+    this.float(m.x, m.y, m.r * 2 + 50, 'Slime spout!', '#7bc950', 18);
   }
 
   /**
@@ -1899,6 +1929,7 @@ export class Game {
     }
     // bumping into a slime on the ground sticks you
     if (dist(m, p) < m.r + p.r + 4 && this.deadTimer <= 0) this.rootPlayer(SPLIT.rootBump);
+    if (m.phase === 2) return; // wild phase: the minis only charge
     m.hopTimer -= dt;
     if (m.hopTimer > 0) return;
     // land near you, ahead of you, or somewhere random in the arena
@@ -2133,7 +2164,7 @@ export class Game {
       t.time -= dt;
       if (t.time > 0) continue;
       done.push(t);
-      if (t.kind === 'square') this.effect('poof', t.x, t.y, t.r * 0.8, '#7bc950', 0.35);
+      if (t.kind === 'square' || t.style === 'spout') this.effect('poof', t.x, t.y, t.r * 0.8, '#7bc950', 0.35);
       else if (t.boss && t.kind === 'line') {
         // a soft streak as wide as the charge (not as wide as it is long: that flashed the whole screen)
         this.effect('dash', t.x, t.y, t.width * 0.5, 'rgba(170,40,40,0.6)', 0.25, t.x + Math.cos(t.angle) * t.r, t.y + Math.sin(t.angle) * t.r);

@@ -352,7 +352,7 @@ export class Renderer {
     if (t.wait > 0) return;
     const ctx = this.ctx;
     const prog = 1 - t.time / t.total;
-    if (t.style) {
+    if (t.style === 'landing' || t.style === 'wave') {
       // a slime is in the air: faint outline, red filling in from the middle as it travels,
       // and a dotted line from the slime to where it lands
       const owner = g.mobs.find((m) => m.id === t.ownerId);
@@ -438,7 +438,7 @@ export class Renderer {
     const ctx = this.ctx;
     const k = this.k;
     for (const t of g.telegraphs) {
-      if (t.kind !== 'square' || t.wait > 0) continue;
+      if ((t.kind !== 'square' && t.style !== 'spout') || t.wait > 0) continue;
       const prog = 1 - t.time / t.total;
       if (prog < 0.45) continue;
       const fall = (prog - 0.45) / 0.55; // 0 high up .. 1 landed
