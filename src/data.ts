@@ -457,6 +457,8 @@ export const SPLIT = {
   waveGaps: 5,
   waveGapHalf: 0.24, // radians each side of a gap's centre
   wavePct: 0.32,
+  waveLethal: 5, // ring hits in one fight that kill you outright (Slimed stacks)
+  waveRest: 0.55, // the crowned slime won't jump again until its last ring is this far across (of waveMaxR)
   waveSlow: 0.5, // getting hit by a wave slows you to this speed...
   waveSlowTime: 2, // ...for this long
   /** Last phase: the main slime leaps to the middle and drops globes in a checkerboard (alternating each volley). */

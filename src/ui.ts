@@ -712,7 +712,7 @@ export class UI {
       </div>
       <button class="btn wide" style="background:#7f1d1d;margin-top:12px" data-action="reset">Reset this character to Lv 1</button>
       <p class="small" style="text-align:center;margin-top:16px"><a href="./side/">Play the classic side-scroller version</a></p>
-      <p class="muted small" style="text-align:center">v0.18.4</p>`;
+      <p class="muted small" style="text-align:center">v0.19.0</p>`;
   }
 
   // ---------------- Modals & toasts ----------------

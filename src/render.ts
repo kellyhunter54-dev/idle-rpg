@@ -1,4 +1,4 @@
-import { BALANCE, CHAPTERS, phaseAt, COMPANION, JOBS, JobDef, JobId, ZONES, levelColor } from './data';
+import { BALANCE, CHAPTERS, SPLIT, phaseAt, COMPANION, JOBS, JobDef, JobId, ZONES, levelColor } from './data';
 import { Game, Mob, Telegraph, Vec } from './game';
 import { TILE, Tile } from './map';
 
@@ -306,6 +306,15 @@ export class Renderer {
           ctx.fillStyle = '#ffd166';
           outlineText(ctx, 'STAGGERED', w / 2, 107 + o);
         }
+      }
+      if (g.slimeStacks > 0) {
+        // Slimed: ring hits this fight; the last pip kills you
+        ctx.font = 'bold 12px Georgia, serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.fillStyle = g.slimeStacks >= SPLIT.waveLethal - 1 ? '#ff4d4d' : '#9be36b';
+        const pips = '●'.repeat(g.slimeStacks) + '○'.repeat(Math.max(0, SPLIT.waveLethal - g.slimeStacks));
+        outlineText(ctx, `Slimed ${pips}  (${SPLIT.waveLethal} = death)`, w / 2, 122 + o);
       }
       const t = Math.max(0, g.bossTimer / BALANCE.bossTimeLimit);
       bar(ctx, x, 77 + o, bw, 5, g.enraged ? 1 : t, g.enraged ? '#ff0000' : t < 0.3 ? '#ef4444' : '#c9a227');

@@ -308,6 +308,8 @@ export class Game {
   evadeCd = 0;
   /** Slowed by a slime wave until this time. */
   slowUntil = 0;
+  /** Ring hits taken this fight; SPLIT.waveLethal of them kills you. */
+  slimeStacks = 0;
   get slowed(): boolean {
     return this.time < this.slowUntil;
   }
@@ -789,6 +791,7 @@ export class Game {
     this.goo = [];
     this.waves = [];
     this.slowUntil = 0;
+    this.slimeStacks = 0;
     this.rootedUntil = 0;
     if (this.deadeye) this.endDeadeye();
     this.telegraphs = [];
@@ -1612,6 +1615,8 @@ export class Game {
     }
     m.hopTimer -= dt;
     if (m.hopTimer > 0 || this.telegraphs.some((t) => t.ownerId === m.id)) return;
+    // rest until the last ring from the previous landing is well on its way out
+    if (this.waves.some((w) => w.ownerId === m.id && w.r < SPLIT.waveMaxR * SPLIT.waveRest)) return;
     // hop somewhere around the room (not onto you), so the rings come from all over
     const to = this.roomSpot(m, 220);
     const dur = SPLIT.mainHopTime * (this.enraged ? 0.8 : 1);
@@ -1657,7 +1662,13 @@ export class Game {
       this.hurtPlayer(w.damage, w.level, w.pct);
       if (!parried && this.deadTimer <= 0) {
         this.slowUntil = this.time + SPLIT.waveSlowTime;
-        this.float(p.x, p.y, 45, 'Slowed!', '#7bc950', 15);
+        this.slimeStacks++;
+        if (this.slimeStacks >= SPLIT.waveLethal) {
+          this.float(p.x, p.y, 60, 'Drowned in slime!', '#7bc950', 20);
+          this.playerDie();
+          return;
+        }
+        this.float(p.x, p.y, 45, `Slimed ${this.slimeStacks}/${SPLIT.waveLethal}`, '#7bc950', 16);
       }
     }
     this.waves = this.waves.filter((w) => w.r < SPLIT.waveMaxR && this.mobs.some((m) => m.id === w.ownerId));
@@ -2751,6 +2762,7 @@ export class Game {
       this.goo = [];
     this.waves = [];
     this.slowUntil = 0;
+    this.slimeStacks = 0;
       this.rootedUntil = 0;
     }
     this.dirty = true;
@@ -2803,6 +2815,7 @@ export class Game {
     this.goo = [];
     this.waves = [];
     this.slowUntil = 0;
+    this.slimeStacks = 0;
     this.rootedUntil = 0;
     const ids = this.mobs.filter((m) => m.boss).map((m) => m.id);
     this.mobs = this.mobs.filter((m) => !m.boss);
