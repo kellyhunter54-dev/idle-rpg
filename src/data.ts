@@ -452,6 +452,8 @@ export const SPLIT = {
   waveSpeed: 270,
   waveWidth: 34,
   waveMaxR: 950,
+  waveCount: [2, 3] as number[], // rings per landing in phase 1 / phase 2
+  waveSpacing: 300, // distance between rings (about 1.1 s apart)
   waveGaps: 5,
   waveGapHalf: 0.24, // radians each side of a gap's centre
   wavePct: 0.32,
