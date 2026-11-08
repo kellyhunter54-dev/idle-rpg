@@ -80,6 +80,18 @@ export interface Mob extends MobStats {
   group: number;
   gen: number;
   lastHitAt: number;
+  /** Split-off slimes: current hop through the air and time until the next one. */
+  hop: { fx: number; fy: number; tx: number; ty: number; t: number; dur: number } | null;
+  hopTimer: number;
+  gooDist: number;
+}
+
+/** A sticky puddle left by split slimes. */
+export interface Goo {
+  x: number;
+  y: number;
+  r: number;
+  life: number;
 }
 
 export interface Telegraph {
@@ -271,6 +283,13 @@ export class Game {
   private flaskRegen = 0;
   private flaskCd = 0;
   enraged = false;
+  /** Slime goo on the ground, and when the hero is rooted / immune to roots. */
+  goo: Goo[] = [];
+  rootedUntil = 0;
+  rootImmuneUntil = 0;
+  get rooted(): boolean {
+    return this.time < this.rootedUntil;
+  }
   /** Smoothed player velocity (world units/s), used by split slimes to lead their attacks. */
   pVel: Vec = { x: 0, y: 0 };
   private pPrev: Vec | null = null;
@@ -657,6 +676,8 @@ export class Game {
   }
 
   private resetTransient() {
+    this.goo = [];
+    this.rootedUntil = 0;
     if (this.deadeye) this.endDeadeye();
     this.telegraphs = [];
     this.blasts = [];
@@ -738,6 +759,7 @@ export class Game {
     } else this.checkLairExit();
     this.updateMobs(dt);
     this.updateTelegraphs(dt);
+    this.updateGoo(dt);
     if (this.deadTimer > 0) {
       inp.skills = inp.skills.map(() => false);
       return;
@@ -909,13 +931,18 @@ export class Game {
       state: 'idle', timer: 0, homeX: p.x, homeY: p.y, wander: { x: 0, y: 0 }, path: null, pathTimer: 0,
       hitFlash: 0, spawnAnim: 1, moving: false, actionTimer: 0, chargeTo: null, phase: 0, invuln: 0, camp: -1,
       bleeds: [], bleedTimer: 0, shred: 0, shredPct: 0, shredTimer: 0, stagger: 0, staggerUntil: 0, staggers: 0,
-      group: 0, gen: 0, lastHitAt: -1e9,
+      group: 0, gen: 0, lastHitAt: -1e9, hop: null, hopTimer: 1, gooDist: 0,
     };
   }
 
   // ---------------- Player movement ----------------
   private movePlayer(dt: number) {
     const p = this.player;
+    if (this.rooted) {
+      p.dash = null;
+      p.moving = false;
+      return;
+    }
 
     if (p.dash) {
       const step = COMBAT.dashSpeed * dt;
@@ -938,7 +965,7 @@ export class Game {
       mx = this.input.moveX;
       my = this.input.moveY;
     } else {
-      ({ x: mx, y: my } = this.autoPilot(dt));
+      ({ x: mx, y: my } = this.avoidGoo(this.autoPilot(dt)));
     }
     const len = Math.hypot(mx, my);
     p.moving = len > 0.05;
@@ -1113,7 +1140,7 @@ export class Game {
           blocked = true;
           break;
         }
-        const hits = threats.filter((th) => this.inTelegraph(th, { x, y }, p.r + 6)).length;
+        const hits = threats.filter((th) => this.inTelegraph(th, { x, y }, p.r + 6)).length + (this.sticky(x, y) ? 1 : 0);
         // being safe sooner is worth more
         score += hits === 0 ? (200 - step) / 10 : -hits * 6;
       }
@@ -1128,6 +1155,29 @@ export class Game {
       }
     }
     return best;
+  }
+
+  /** Is this spot sticky (goo, or right next to a split slime on the ground)? */
+  private sticky(x: number, y: number): boolean {
+    const r = this.player.r;
+    for (const g of this.goo) if (Math.hypot(g.x - x, g.y - y) < g.r + r * 0.4 + 6) return true;
+    for (const m of this.mobs) if (m.group && !m.hop && !this.isMainSlime(m) && Math.hypot(m.x - x, m.y - y) < m.r + r + 10) return true;
+    return false;
+  }
+
+  /** AUTO steers around goo: turns a little if the way ahead is sticky, stops if it's all sticky. */
+  private avoidGoo(v: Vec): Vec {
+    if (!this.goo.length && !this.mobs.some((m) => m.group && !this.isMainSlime(m))) return v;
+    const len = Math.hypot(v.x, v.y);
+    if (len < 0.05) return v;
+    const p = this.player;
+    const a = Math.atan2(v.y, v.x);
+    for (const rot of [0, 0.5, -0.5, 1, -1, 1.5, -1.5, 2.2, -2.2]) {
+      const nx = p.x + Math.cos(a + rot) * 40;
+      const ny = p.y + Math.sin(a + rot) * 40;
+      if (!this.sticky(nx, ny) && fits(this.map, nx, ny, p.r)) return { x: Math.cos(a + rot) * len, y: Math.sin(a + rot) * len };
+    }
+    return { x: 0, y: 0 };
   }
 
   /** Direction away from a monster, if there is room to move that way. */
@@ -1195,6 +1245,7 @@ export class Game {
         const a = angleTo(m, m.chargeTo);
         const np = moveCircle(this.map, m.x, m.y, Math.cos(a) * Math.min(step, cd), Math.sin(a) * Math.min(step, cd), m.r * 0.6, true);
         const stuck = dist(np, m) < 1;
+        if (m.group && !this.isMainSlime(m)) this.trailGoo(m, dist(np, m));
         m.x = np.x;
         m.y = np.y;
         m.moving = true;
@@ -1222,7 +1273,7 @@ export class Game {
 
       // Boss specials
       if (m.boss) {
-        if (m.actionTimer <= 0 && m.invuln <= 0 && !this.telegraphs.some((t) => t.ownerId === m.id && t.boss)) {
+        if (m.actionTimer <= 0 && m.invuln <= 0 && !m.hop && !this.telegraphs.some((t) => t.ownerId === m.id && t.boss)) {
           const slimes = m.group ? this.splitGroup(m).length : 1;
           m.actionTimer =
             (this.isMainSlime(m) ? 1 : 0.75 + this.rand() * 0.6) *
@@ -1231,6 +1282,12 @@ export class Game {
           this.bossSpecial(m);
           continue;
         }
+      }
+
+      // split-off slimes don't walk: they hop around you, leaving goo
+      if (m.boss && !this.isMainSlime(m)) {
+        this.updateHopper(m, dt);
+        continue;
       }
 
       // monsters can't follow you through a barrier, so they only care while you're in their zone
@@ -1324,17 +1381,109 @@ export class Game {
     if (this.rand() < 0.55) {
       const t = lead * (0.6 + this.rand() * 0.8);
       const d = 20 + this.rand() * 60;
-      return { x: p.x + this.pVel.x * t + Math.cos(a) * d, y: p.y + this.pVel.y * t + Math.sin(a) * d };
+      return this.clampArena({ x: p.x + this.pVel.x * t + Math.cos(a) * d, y: p.y + this.pVel.y * t + Math.sin(a) * d });
     }
     const d = 70 + this.rand() * 150;
-    return { x: p.x + Math.cos(a) * d, y: p.y + Math.sin(a) * d };
+    return this.clampArena({ x: p.x + Math.cos(a) * d, y: p.y + Math.sin(a) * d });
+  }
+
+  /** Pulls a point back toward the hero until it's on open floor, so attacks never land in walls. */
+  private clampArena(q: Vec, r = 24): Vec {
+    const p = this.player;
+    for (let i = 0; i <= 10; i++) {
+      const f = 1 - i / 10;
+      const x = p.x + (q.x - p.x) * f;
+      const y = p.y + (q.y - p.y) * f;
+      if (fits(this.map, x, y, r, true)) return { x, y };
+    }
+    return { x: p.x, y: p.y };
+  }
+
+  /** How far a charge can go from (x, y) along angle a before hitting a wall. */
+  private chargeLength(m: Mob, a: number, max: number): number {
+    let len = 0;
+    while (len + 16 <= max && fits(this.map, m.x + Math.cos(a) * (len + 16), m.y + Math.sin(a) * (len + 16), m.r * 0.6, true)) len += 16;
+    return Math.max(80, len);
+  }
+
+  /** Split-off slime: waits a moment, then leaps to a spot near (or ahead of) you. */
+  private updateHopper(m: Mob, dt: number) {
+    const p = this.player;
+    if (m.hop) {
+      const h = m.hop;
+      h.t += dt;
+      const f = Math.min(1, h.t / h.dur);
+      const nx = h.fx + (h.tx - h.fx) * f;
+      const ny = h.fy + (h.ty - h.fy) * f;
+      m.angle = Math.atan2(h.ty - h.fy, h.tx - h.fx);
+      if (Math.hypot(nx - m.x, ny - m.y) > 0) this.trailGoo(m, Math.hypot(nx - m.x, ny - m.y), true);
+      m.x = nx;
+      m.y = ny;
+      m.moving = true;
+      if (f >= 1) {
+        m.hop = null;
+        m.hopTimer = SPLIT.hopEvery[0] + this.rand() * (SPLIT.hopEvery[1] - SPLIT.hopEvery[0]);
+        this.addGoo(m.x, m.y, SPLIT.gooPuddle * SPLIT.attackSize[m.gen]);
+        this.effect('ring', m.x, m.y, SPLIT.hopRadius * SPLIT.attackSize[m.gen], '#7bc950', 0.35);
+      }
+      return;
+    }
+    // bumping into a slime on the ground sticks you
+    if (dist(m, p) < m.r + p.r + 4 && this.deadTimer <= 0) this.rootPlayer(SPLIT.rootBump);
+    m.hopTimer -= dt;
+    if (m.hopTimer > 0) return;
+    // land near you, ahead of you, or somewhere random in the arena
+    const to = this.rand() < 0.75 ? this.chaosPoint(SPLIT.hopTime) : this.clampArena({ x: p.x + (this.rand() - 0.5) * 700, y: p.y + (this.rand() - 0.5) * 700 });
+    const dur = SPLIT.hopTime * (this.enraged ? 0.8 : 1);
+    m.hop = { fx: m.x, fy: m.y, tx: to.x, ty: to.y, t: 0, dur };
+    this.telegraphs.push({
+      kind: 'circle', x: to.x, y: to.y, r: SPLIT.hopRadius * SPLIT.attackSize[m.gen], inner: 0, angle: 0, width: 0,
+      time: dur, total: dur, damage: m.atk * COMBAT.telegraphDamageMult * 0.5, boss: true, ownerId: m.id, wait: 0, follow: false,
+      pct: SPLIT.hopPct * (this.enraged ? BALANCE.bossEnrageDamage : 1),
+    });
+  }
+
+  /** Drops goo drops behind a moving split slime (every ~50 units). */
+  private trailGoo(m: Mob, moved: number, airborne = false) {
+    m.gooDist += moved;
+    if (m.gooDist < (airborne ? 70 : 45)) return;
+    m.gooDist = 0;
+    this.addGoo(m.x, m.y, SPLIT.gooDrop * SPLIT.attackSize[m.gen]);
+  }
+
+  private addGoo(x: number, y: number, r: number) {
+    if (this.goo.length > 160) this.goo.shift();
+    this.goo.push({ x, y, r, life: SPLIT.gooLife });
+  }
+
+  private updateGoo(dt: number) {
+    if (!this.goo.length) return;
+    for (const g of this.goo) g.life -= dt;
+    if (this.goo.some((g) => g.life <= 0)) this.goo = this.goo.filter((g) => g.life > 0);
+    const p = this.player;
+    if (this.deadTimer > 0 || p.dash) return;
+    for (const g of this.goo) {
+      if (Math.hypot(g.x - p.x, g.y - p.y) < g.r + p.r * 0.4) {
+        this.rootPlayer(SPLIT.rootGoo);
+        break;
+      }
+    }
+  }
+
+  /** Stuck to the ground: no walking or dashing for a moment. */
+  rootPlayer(dur: number) {
+    if (this.time < this.rootImmuneUntil || this.rooted) return;
+    this.rootedUntil = this.time + dur;
+    this.rootImmuneUntil = this.rootedUntil + SPLIT.rootImmune;
+    this.player.dash = null;
+    this.float(this.player.x, this.player.y, 60, 'Rooted!', '#7bc950', 16);
   }
 
   private bossSpecial(m: Mob) {
     const main = this.isMainSlime(m);
     const p: Vec = main ? this.player : this.chaosPoint(1.1);
     this.telegraphs = this.telegraphs.filter((t) => t.ownerId !== m.id);
-    const kit = ZONES[m.zone].bossKit[m.phase] ?? ZONES[m.zone].bossKit[0];
+    const kit = main ? ZONES[m.zone].bossKit[m.phase] ?? ZONES[m.zone].bossKit[0] : SPLIT.kit;
     const move = kit[Math.floor(this.rand() * kit.length)];
     const dmg = m.atk * COMBAT.telegraphDamageMult * (this.enraged ? BALANCE.bossEnrageDamage : 1);
     const speed = this.enraged ? 0.8 : m.phase === 2 ? 0.88 : 1; // later phases telegraph a bit faster
@@ -1375,7 +1524,7 @@ export class Game {
       }
       case 'charge': {
         const a = angleTo(m, p);
-        const len = 460;
+        const len = this.chargeLength(m, a, 460); // stops at walls instead of running off the map
         m.angle = a;
         tele({ kind: 'line', x: m.x, y: m.y, r: len, angle: a, width: 90, time: 1.0 }, move);
         busy(1.0);
@@ -1387,10 +1536,11 @@ export class Game {
         busy(1.4);
         break;
       case 'rain':
-        for (let i = 0; i < 6; i++) {
+        for (let i = 0, n = main ? 6 : 8; i < n; i++) {
           const a = this.rand() * Math.PI * 2;
           const d = i === 0 ? 0 : 60 + this.rand() * 220;
-          tele({ kind: 'circle', x: p.x + Math.cos(a) * d, y: p.y + Math.sin(a) * d, r: 85, time: 1.2, wait: i * 0.18 }, move);
+          const q = this.clampArena({ x: p.x + Math.cos(a) * d, y: p.y + Math.sin(a) * d });
+          tele({ kind: 'circle', x: q.x, y: q.y, r: 85, time: 1.2, wait: i * 0.18 }, move);
         }
         break;
       case 'cross': {
@@ -2106,7 +2256,9 @@ export class Game {
     b.gen = gen;
     b.r = PHYS.bossRadius * SPLIT.radius[gen];
     const a = this.rand() * Math.PI * 2;
-    const twin: Mob = { ...b, id: this.nextMobId++, bleeds: [], path: null, chargeTo: null, spawnAnim: 0.6, stagger: 0, staggers: 0 };
+    const twin: Mob = { ...b, id: this.nextMobId++, bleeds: [], path: null, chargeTo: null, spawnAnim: 0.6, stagger: 0, staggers: 0, hop: null, hopTimer: 0.8 + this.rand() * 0.8 };
+    b.hop = null;
+    b.hopTimer = 0.8 + this.rand() * 0.8;
     for (const [o, s] of [[b, 1], [twin, -1]] as const) {
       const nx = b.x + Math.cos(a) * 70 * s;
       const ny = b.y + Math.sin(a) * 70 * s;
@@ -2187,6 +2339,8 @@ export class Game {
       this.bossZone = -1;
       this.hp = this.stats.maxHp;
       this.telegraphs = [];
+      this.goo = [];
+      this.rootedUntil = 0;
     }
     this.dirty = true;
   }
@@ -2235,6 +2389,8 @@ export class Game {
 
   /** Removes the boss (lost or left the fight). It can be retried right away. */
   private endBoss() {
+    this.goo = [];
+    this.rootedUntil = 0;
     const ids = this.mobs.filter((m) => m.boss).map((m) => m.id);
     this.mobs = this.mobs.filter((m) => !m.boss);
     this.telegraphs = this.telegraphs.filter((t) => !ids.includes(t.ownerId));

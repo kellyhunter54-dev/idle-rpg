@@ -181,6 +181,7 @@ export class Renderer {
     // ---- ground layer: telegraphs, spell circles, shadows ----
     this.drawAltars(g, time);
     if (g.travelGoal) this.drawGoal(g.travelGoal, time);
+    this.drawGoo(g, time);
     for (const t of g.telegraphs) this.drawTelegraph(t);
     this.drawGroundEffects(g);
 
@@ -363,6 +364,30 @@ export class Renderer {
     path(prog);
     ctx.fillStyle = base + '0.35)';
     ctx.fill('evenodd');
+  }
+
+  /** Slime goo puddles (fade out near the end of their 7 seconds) and the hero stuck in it. */
+  private drawGoo(g: Game, time: number) {
+    const ctx = this.ctx;
+    for (const o of g.goo) {
+      const a = Math.min(1, o.life / 1.2) * 0.55;
+      ctx.fillStyle = `rgba(110,190,70,${a})`;
+      ctx.beginPath();
+      ctx.arc(o.x, o.y, o.r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = `rgba(200,255,160,${a * 0.5})`;
+      ctx.beginPath();
+      ctx.arc(o.x - o.r * 0.3, o.y - o.r * 0.25, o.r * 0.3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    if (g.rooted) {
+      const p = g.player;
+      ctx.strokeStyle = 'rgba(123,201,80,0.9)';
+      ctx.lineWidth = 6;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r * 1.3 + Math.sin(time * 10) * 2, 0, Math.PI * 2);
+      ctx.stroke();
+    }
   }
 
   private drawGroundEffects(g: Game) {
@@ -587,7 +612,9 @@ export class Renderer {
     const grow = 1 - m.spawnAnim;
     if (grow <= 0) return;
     const sx = this.px(m.x, m.y);
-    const sy = this.py(m.x, m.y);
+    // hopping slimes arc through the air (their shadow stays on the ground)
+    const lift = m.hop ? Math.sin(Math.PI * Math.min(1, m.hop.t / m.hop.dur)) * 110 * k : 0;
+    const sy = this.py(m.x, m.y) - lift;
     if (sx < -120 || sx > this.w + 120 || sy < -150 || sy > this.h + 150) return;
     const rw = m.r * 1.15 * k * grow;
     const rh = m.r * 1.1 * k * grow;

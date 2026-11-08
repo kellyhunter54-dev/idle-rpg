@@ -413,6 +413,19 @@ export const SPLIT = {
   actionSlowPerExtra: 0.4,
   /** Hitting several slimes at once: each hit counts 1/sqrt(slimes hit in the last 0.5 s). */
   multiHitWindow: 0.5,
+  /** Split-off slimes hop around instead of walking, and use this kit (lots of charges and circles). */
+  kit: ['charge', 'rain', 'charge', 'slam'] as BossMove[],
+  hopEvery: [0.9, 1.7] as [number, number], // seconds on the ground between hops
+  hopTime: 0.75, // seconds in the air (the landing circle shows for this long)
+  hopRadius: 80, // landing splash radius (scaled by attackSize)
+  hopPct: 0.05, // landing hit, % of max HP (bosses' scaling applies)
+  /** Slime goo: landing puddles and trails. Standing in it or bumping a split-off roots you. */
+  gooLife: 7,
+  gooPuddle: 62,
+  gooDrop: 24,
+  rootGoo: 0.5,
+  rootBump: 0.9,
+  rootImmune: 2.0, // after a root ends you can't be rooted again for this long
 };
 
 /**
