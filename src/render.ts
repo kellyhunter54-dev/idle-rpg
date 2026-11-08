@@ -29,9 +29,17 @@ export class Renderer {
   private fxSaved: CanvasRenderingContext2D | null = null;
   /** Pixel art: CSS px per game pixel (1 in classic mode). */
   private block = 1;
+  /** Pixel art: the world canvas is 1 game pixel bigger on every side and slid by the camera's
+   * leftover fraction of a pixel (smooth scrolling); margin and fraction in CSS px. */
+  private margin = 0;
+  private fracX = 0;
+  private fracY = 0;
+  private lastShift = '';
   private vignette: HTMLCanvasElement | null = null;
   private vignetteKey = '';
   private lastTime = 0;
+  /** Pixel hero facing, with hysteresis so tiny direction changes don't flip the sprite. */
+  private face = { back: false, flip: false };
   /** Phones and narrow screens use a stacked HUD layout. */
   private get compact(): boolean {
     return this.touch || this.w < 720;
@@ -52,7 +60,7 @@ export class Renderer {
     const oarc = this.octx.arc.bind(this.octx);
     this.octx.arc = (x, y, r, a0, a1, ccw) => oarc(x, y, Math.max(0, r), a0, a1, ccw);
     this.resize();
-    new ResizeObserver(() => this.resize()).observe(canvas);
+    new ResizeObserver(() => this.resize()).observe(canvas.parentElement ?? canvas);
     window.addEventListener('pixelmode', () => this.resize());
   }
 
@@ -66,7 +74,7 @@ export class Renderer {
   }
 
   private resize() {
-    const r = this.canvas.getBoundingClientRect();
+    const r = (this.canvas.parentElement ?? this.canvas).getBoundingClientRect();
     this.w = r.width;
     this.h = r.height;
     if (this.pixel) {
@@ -83,9 +91,26 @@ export class Renderer {
     this.odpr = window.devicePixelRatio || 1;
     this.overlay.width = Math.round(r.width * this.odpr);
     this.overlay.height = Math.round(r.height * this.odpr);
-    this.canvas.width = Math.max(1, Math.round(r.width * this.dpr));
-    this.canvas.height = Math.max(1, Math.round(r.height * this.dpr));
+    const st = this.canvas.style;
+    if (this.pixel) {
+      const M = this.block;
+      this.margin = M;
+      st.position = 'absolute';
+      st.left = `${-M}px`;
+      st.top = `${-M}px`;
+      st.width = `${r.width + 2 * M}px`;
+      st.height = `${r.height + 2 * M}px`;
+      this.canvas.width = Math.max(1, Math.round((r.width + 2 * M) * this.dpr));
+      this.canvas.height = Math.max(1, Math.round((r.height + 2 * M) * this.dpr));
+    } else {
+      this.margin = 0;
+      st.position = st.left = st.top = st.width = st.height = st.transform = '';
+      this.lastShift = '';
+      this.canvas.width = Math.max(1, Math.round(r.width * this.dpr));
+      this.canvas.height = Math.max(1, Math.round(r.height * this.dpr));
+    }
     this.ctx.imageSmoothingEnabled = !this.pixel;
+    this.octx.imageSmoothingEnabled = !this.pixel;
     this.touch = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches;
     this.vignetteKey = '';
   }
@@ -121,8 +146,8 @@ export class Renderer {
   }
   /** Screen (CSS px inside the canvas) to world ground point. */
   screenToWorld(sx: number, sy: number): Vec {
-    const X = sx - this.ox;
-    const Y = sy - this.oy;
+    const X = sx - this.ox - this.fracX;
+    const Y = sy - this.oy - this.fracY;
     return { x: (X + 2 * Y) / (2 * this.k), y: (2 * Y - X) / (2 * this.k) };
   }
   /** Converts a world direction to its on-screen direction (for facing / weapons). */
@@ -136,19 +161,32 @@ export class Renderer {
   }
   private groundTransform() {
     const k = this.k;
-    this.ctx.setTransform(k * this.dpr, (k / 2) * this.dpr, -k * this.dpr, (k / 2) * this.dpr, this.ox * this.dpr, this.oy * this.dpr);
+    const M = this.margin;
+    this.ctx.setTransform(k * this.dpr, (k / 2) * this.dpr, -k * this.dpr, (k / 2) * this.dpr, (this.ox + M) * this.dpr, (this.oy + M) * this.dpr);
   }
   private screenTransform() {
-    const d = this.ctx === this.octx ? this.odpr : this.dpr;
-    this.ctx.setTransform(d, 0, 0, d, 0, 0);
+    if (this.ctx === this.octx) {
+      // overlay: world-anchored things slide with the world (fraction of a pixel); the HUD doesn't
+      const d = this.odpr;
+      this.ctx.setTransform(d, 0, 0, d, this.overlayWorld ? this.fracX * d : 0, this.overlayWorld ? this.fracY * d : 0);
+    } else {
+      const d = this.dpr;
+      const M = this.margin;
+      this.ctx.setTransform(d, 0, 0, d, M * d, M * d);
+    }
   }
+  private overlayWorld = true;
   /** Run drawing code on the crisp overlay layer. */
-  private onOverlay(fn: () => void) {
+  private onOverlay(fn: () => void, world = true) {
     const saved = this.ctx;
+    const savedWorld = this.overlayWorld;
     this.ctx = this.octx;
+    this.overlayWorld = world;
     this.screenTransform();
     fn();
+    this.overlayWorld = savedWorld;
     this.ctx = saved;
+    if (saved !== this.octx) this.ctx = saved;
   }
   /** Start drawing vector shapes onto the scratch canvas (pixel art only). */
   private beginCrisp() {
@@ -184,10 +222,12 @@ export class Renderer {
     this.ctx = this.fxSaved;
     this.fxSaved = null;
     const d = this.dpr;
-    const x0 = Math.max(0, Math.floor(rx * d));
-    const y0 = Math.max(0, Math.floor(ry * d));
-    const x1 = Math.min(this.fx.width, Math.ceil((rx + rw) * d));
-    const y1 = Math.min(this.fx.height, Math.ceil((ry + rh) * d));
+    const M = this.margin;
+    const full = rx === 0 && ry === 0 && rw === this.w && rh === this.h;
+    const x0 = full ? 0 : Math.max(0, Math.floor((rx + M) * d));
+    const y0 = full ? 0 : Math.max(0, Math.floor((ry + M) * d));
+    const x1 = full ? this.fx.width : Math.min(this.fx.width, Math.ceil((rx + rw + M) * d));
+    const y1 = full ? this.fx.height : Math.min(this.fx.height, Math.ceil((ry + rh + M) * d));
     if (x1 <= x0 || y1 <= y0) return;
     const img = f.getImageData(x0, y0, x1 - x0, y1 - y0);
     const a = img.data;
@@ -216,8 +256,10 @@ export class Renderer {
   /** Draw a pixel sprite with its anchor (ax, ay in sprite pixels) at screen point (sx, sy), snapped to the pixel grid. */
   private blit(img: HTMLCanvasElement, sx: number, sy: number, ax: number, ay: number, flip = false, alpha = 1) {
     const B = this.block;
-    const gx = Math.round(sx / B) - (flip ? img.width - ax : ax);
-    const gy = Math.round(sy / B) - ay;
+    // on the overlay (the pixel hero) draw at the exact spot so it stays perfectly still on screen
+    const snap = this.ctx === this.octx ? (v: number) => v : Math.round;
+    const gx = snap(sx / B) - (flip ? img.width - ax : ax);
+    const gy = snap(sy / B) - ay;
     const ctx = this.ctx;
     if (alpha !== 1) ctx.globalAlpha = alpha;
     if (flip) {
@@ -256,21 +298,34 @@ export class Renderer {
     const centerY = this.touch ? h * 0.42 : h * 0.52;
     this.ox = w / 2 - (this.camX - this.camY) * this.k;
     this.oy = centerY - (this.camX + this.camY) * this.k * 0.5;
+    this.fracX = this.fracY = 0;
     if (this.pixel) {
-      // snap the camera to whole game pixels so sprites never shimmer
-      this.ox = Math.round(this.ox / this.block) * this.block;
-      this.oy = Math.round(this.oy / this.block) * this.block;
+      // draw the world on whole game pixels, then slide the canvas by the leftover fraction:
+      // smooth scrolling with crisp pixels (whole-pixel steps alone looked jerky)
+      const B = this.block;
+      const sxp = Math.round(this.ox / B) * B;
+      const syp = Math.round(this.oy / B) * B;
+      this.fracX = this.ox - sxp;
+      this.fracY = this.oy - syp;
+      this.ox = sxp;
+      this.oy = syp;
+      const shift = `translate(${this.fracX.toFixed(2)}px, ${this.fracY.toFixed(2)}px)`;
+      if (shift !== this.lastShift) {
+        this.canvas.style.transform = shift;
+        this.lastShift = shift;
+      }
     }
     this.octx.setTransform(1, 0, 0, 1, 0, 0);
     this.octx.clearRect(0, 0, this.overlay.width, this.overlay.height);
-    this.octx.setTransform(this.odpr, 0, 0, this.odpr, 0, 0);
+    this.octx.setTransform(this.odpr, 0, 0, this.odpr, this.fracX * this.odpr, this.fracY * this.odpr);
     textLayer = this.pixel ? this.octx : null;
     const pixel = this.pixel;
     const chIdx = (tx: number) => g.map.palette ?? ZONES[Math.min(ZONES.length - 1, Math.floor(tx / g.map.zoneW))].chapter;
 
-    this.screenTransform();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = '#0b0a08';
-    ctx.fillRect(0, 0, w, h);
+    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    this.screenTransform();
 
     // ---- visible tile range ----
     // x is smallest at the top-left corner and largest at the bottom-right; y is smallest top-right
@@ -353,7 +408,7 @@ export class Renderer {
       ctx.arc(x, y, r, 0, Math.PI * 2);
       ctx.fill();
     };
-    shadow(p.x, p.y, p.r * 1.1);
+    if (!this.pixel) shadow(p.x, p.y, p.r * 1.1);
     for (const m of g.mobs) shadow(m.x, m.y, m.r * 1.05 * (1 - m.spawnAnim));
     for (const m of g.mobs) {
       if (!m.group || m.id === m.group || m.phase !== 2 || m.hop) continue;
@@ -428,7 +483,7 @@ export class Renderer {
     for (const m of g.mobs) if (m.group && m.id !== m.group) splitMain.add(m.group);
     for (const m of g.mobs) list.push({ depth: m.x + m.y, draw: () => this.drawMob(m, time, g.state.level, splitMain.has(m.id)) });
     for (const c of g.party) list.push({ depth: c.x + c.y, draw: () => this.drawCompanion(g, c, time) });
-    list.push({ depth: p.x + p.y, draw: () => this.drawPlayer(g, time) });
+    if (!pixel) list.push({ depth: p.x + p.y, draw: () => this.drawPlayer(g, time) });
     list.sort((a, b) => a.depth - b.depth);
     for (const d of list) d.draw();
 
@@ -439,6 +494,8 @@ export class Renderer {
     this.drawFallingGlobes(g);
     this.endCrisp();
 
+    // ---- pixel hero: on the crisp layer at its exact spot (never jitters) ----
+    if (pixel) this.onOverlay(() => this.drawPlayer(g, time));
     // ---- floating text (crisp overlay) ----
     this.onOverlay(() => this.drawFloats(g));
     // ---- mood: vignette + skill flash ----
@@ -448,7 +505,7 @@ export class Renderer {
       ctx.fillStyle = hexA(g.anim.flashColor, g.anim.flash * 0.12);
       ctx.fillRect(0, 0, w, h);
     }
-    this.onOverlay(() => this.drawHud(g));
+    this.onOverlay(() => this.drawHud(g), false);
   }
 
   private drawFloats(g: Game) {
@@ -890,30 +947,36 @@ export class Renderer {
     const B = this.block;
     const p = g.player;
     const dir = this.screenDir(p.angle);
-    const back = dir.dy < -0.15;
-    const flip = dir.dx < 0;
+    if (dir.dy < -0.3) this.face.back = true;
+    else if (dir.dy > 0.1) this.face.back = false;
+    if (dir.dx < -0.25) this.face.flip = true;
+    else if (dir.dx > 0.25) this.face.flip = false;
+    const { back, flip } = this.face;
     const frame = p.moving ? [1, 0, 2, 0][Math.floor(time * 9) % 4] : 0;
     const img = PX.hero(g.job.id, back, frame, g.anim.playerHit > 0.5);
     const alpha = g.deadTimer > 0 ? 0.3 : 1;
     const wp = PX.weapon(g.job.id);
+    // exact positions on the overlay (no rounding), so the weapon stays glued to the hero
+    const R = (v: number) => v;
     const handY = sy - 9 * B;
+    this.blit(PX.shadowSprite(12), sx, sy + B, 6, 3);
     const drawWeapon = () => {
       ctx.save();
       ctx.globalAlpha = alpha;
       const a = Math.atan2(dir.dy, dir.dx);
       if (g.job.id === 'warrior') {
         const sw = (g.anim.swing - 0.5) * 2.2;
-        ctx.translate(Math.round(sx / B + dir.dx * 4) * B, Math.round(handY / B) * B);
+        ctx.translate(R(sx / B + dir.dx * 4) * B, R(handY / B) * B);
         ctx.rotate(a - sw * (flip ? -1 : 1));
         ctx.drawImage(wp, -2 * B, -(wp.height >> 1) * B, wp.width * B, wp.height * B);
       } else if (g.job.id === 'archer') {
-        ctx.translate(Math.round(sx / B + dir.dx * 6) * B, Math.round(handY / B) * B);
+        ctx.translate(R(sx / B + dir.dx * 6) * B, R(handY / B) * B);
         ctx.rotate(a);
         ctx.drawImage(wp, -2 * B, -(wp.height >> 1) * B, wp.width * B, wp.height * B);
       } else {
         const lift = Math.round(g.anim.swing * 2);
-        const x = Math.round(sx / B) + (flip ? -7 : 5);
-        ctx.drawImage(wp, x * B, (Math.round(sy / B) - wp.height - 4 - lift) * B, wp.width * B, wp.height * B);
+        const x = R(sx / B) + (flip ? -7 : 5);
+        ctx.drawImage(wp, x * B, (R(sy / B) - wp.height - 4 - lift) * B, wp.width * B, wp.height * B);
       }
       ctx.restore();
     };

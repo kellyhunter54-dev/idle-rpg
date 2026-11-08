@@ -57,7 +57,7 @@ export function setupInput(
 
   // Mouse aim + click to attack
   canvas.addEventListener('mousemove', (e) => {
-    const r = canvas.getBoundingClientRect();
+    const r = (canvas.parentElement ?? canvas).getBoundingClientRect();
     mouse = { x: e.clientX - r.left, y: e.clientY - r.top };
   });
   canvas.addEventListener('mouseleave', () => {
@@ -76,7 +76,7 @@ export function setupInput(
   canvas.addEventListener('touchstart', (e) => {
     if (joy) return;
     const t = e.changedTouches[0];
-    const r = canvas.getBoundingClientRect();
+    const r = (canvas.parentElement ?? canvas).getBoundingClientRect();
     joy = { id: t.identifier, ox: t.clientX, oy: t.clientY, dx: 0, dy: 0 };
     if (stick) {
       stick.style.left = `${t.clientX - r.left}px`;
