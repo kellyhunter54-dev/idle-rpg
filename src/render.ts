@@ -193,6 +193,15 @@ export class Renderer {
     };
     shadow(p.x, p.y, p.r * 1.1);
     for (const m of g.mobs) shadow(m.x, m.y, m.r * 1.05 * (1 - m.spawnAnim));
+    for (const m of g.mobs) {
+      if (!m.group || m.id !== m.group || !g.mobs.some((o) => o.group === m.group && o !== m)) continue;
+      ctx.strokeStyle = 'rgba(255,209,102,0.75)';
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.arc(m.x, m.y, m.r * 1.35 + Math.sin(time * 4) * 3, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    }
     for (const c of g.party) shadow(c.x, c.y, 10);
 
     // ---- standing layer, depth-sorted ----
@@ -231,7 +240,9 @@ export class Renderer {
       const ex = g.map.exit;
       list.push({ depth: ex.x + ex.y + 60, draw: () => this.drawExitPortal(ex, time) });
     }
-    for (const m of g.mobs) list.push({ depth: m.x + m.y, draw: () => this.drawMob(m, time, g.state.level) });
+    const splitMain = new Set<number>();
+    for (const m of g.mobs) if (m.group && m.id !== m.group) splitMain.add(m.group);
+    for (const m of g.mobs) list.push({ depth: m.x + m.y, draw: () => this.drawMob(m, time, g.state.level, splitMain.has(m.id)) });
     for (const c of g.party) list.push({ depth: c.x + c.y, draw: () => this.drawCompanion(g, c, time) });
     list.push({ depth: p.x + p.y, draw: () => this.drawPlayer(g, time) });
     list.sort((a, b) => a.depth - b.depth);
@@ -570,7 +581,7 @@ export class Renderer {
     void g;
   }
 
-  private drawMob(m: Mob, time: number, playerLevel: number) {
+  private drawMob(m: Mob, time: number, playerLevel: number, mainSlime = false) {
     const ctx = this.ctx;
     const k = this.k;
     const grow = 1 - m.spawnAnim;
@@ -614,6 +625,25 @@ export class Renderer {
         ctx.lineTo(sx + s * rw * 0.2, cy - rh * 0.9);
         ctx.closePath();
         ctx.fill();
+      }
+      if (mainSlime) {
+        // the main slime wears a crown: it's the one whose attacks land right on you
+        const cw = rw * 0.55;
+        const top = cy - rh * 1.05;
+        ctx.fillStyle = '#ffd166';
+        ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(sx - cw, top);
+        ctx.lineTo(sx - cw, top - cw * 0.55);
+        ctx.lineTo(sx - cw * 0.5, top - cw * 0.25);
+        ctx.lineTo(sx, top - cw * 0.75);
+        ctx.lineTo(sx + cw * 0.5, top - cw * 0.25);
+        ctx.lineTo(sx + cw, top - cw * 0.55);
+        ctx.lineTo(sx + cw, top);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
       }
     } else {
       if (m.hp < m.maxHp) bar(ctx, sx - rw, cy - rh - 12, rw * 2, 5, m.hp / m.maxHp, '#b91c1c');

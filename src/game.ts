@@ -271,6 +271,9 @@ export class Game {
   private flaskRegen = 0;
   private flaskCd = 0;
   enraged = false;
+  /** Smoothed player velocity (world units/s), used by split slimes to lead their attacks. */
+  pVel: Vec = { x: 0, y: 0 };
+  private pPrev: Vec | null = null;
   /** Mage mana and Arcane Charges. */
   mana = 0;
   charges = 0;
@@ -712,6 +715,20 @@ export class Game {
     for (let z = 0; z < this.bossCooldown.length; z++) this.bossCooldown[z] -= dt;
     if (this.inLair < 0) this.updateSpawning(dt);
     this.movePlayer(dt);
+    {
+      const p = this.player;
+      if (this.pPrev && dt > 0) {
+        const k = Math.min(1, dt * 6);
+        const vx = (p.x - this.pPrev.x) / dt;
+        const vy = (p.y - this.pPrev.y) / dt;
+        // teleports (lair doors, respawn) shouldn't look like huge speed
+        if (Math.hypot(vx, vy) < 2000) {
+          this.pVel.x += (vx - this.pVel.x) * k;
+          this.pVel.y += (vy - this.pVel.y) * k;
+        }
+      }
+      this.pPrev = { x: p.x, y: p.y };
+    }
     if (this.inCave) {
       if (this.map.exit && dist(this.map.exit, this.player) < 40) this.exitCave();
     } else if (this.inLair < 0) {
@@ -1208,6 +1225,7 @@ export class Game {
         if (m.actionTimer <= 0 && m.invuln <= 0 && !this.telegraphs.some((t) => t.ownerId === m.id && t.boss)) {
           const slimes = m.group ? this.splitGroup(m).length : 1;
           m.actionTimer =
+            (this.isMainSlime(m) ? 1 : 0.75 + this.rand() * 0.6) *
             ((this.enraged ? BALANCE.bossEnragedEvery : BALANCE.bossActionEvery[m.phase]) + this.rand() * 0.6) *
             (1 + SPLIT.actionSlowPerExtra * (slimes - 1));
           this.bossSpecial(m);
@@ -1291,8 +1309,30 @@ export class Game {
     }
   }
 
-  private bossSpecial(m: Mob) {
+  /** The main slime (the original) aims straight at you; its split-offs are chaotic. */
+  isMainSlime(m: Mob): boolean {
+    return !m.group || m.id === m.group;
+  }
+
+  /**
+   * Where a split-off slime aims: sometimes where you're about to be (leading your movement),
+   * sometimes a random spot near you, so their attacks spread out instead of stacking.
+   */
+  private chaosPoint(lead: number): Vec {
     const p = this.player;
+    const a = this.rand() * Math.PI * 2;
+    if (this.rand() < 0.55) {
+      const t = lead * (0.6 + this.rand() * 0.8);
+      const d = 20 + this.rand() * 60;
+      return { x: p.x + this.pVel.x * t + Math.cos(a) * d, y: p.y + this.pVel.y * t + Math.sin(a) * d };
+    }
+    const d = 70 + this.rand() * 150;
+    return { x: p.x + Math.cos(a) * d, y: p.y + Math.sin(a) * d };
+  }
+
+  private bossSpecial(m: Mob) {
+    const main = this.isMainSlime(m);
+    const p: Vec = main ? this.player : this.chaosPoint(1.1);
     this.telegraphs = this.telegraphs.filter((t) => t.ownerId !== m.id);
     const kit = ZONES[m.zone].bossKit[m.phase] ?? ZONES[m.zone].bossKit[0];
     const move = kit[Math.floor(this.rand() * kit.length)];
@@ -1320,7 +1360,11 @@ export class Game {
         break;
       case 'chase':
         // three slams, each landing where you are when it appears
-        for (let i = 0; i < 3; i++) tele({ kind: 'circle', x: p.x, y: p.y, r: 100, time: 0.95, wait: i * 0.65, follow: true }, move);
+        for (let i = 0; i < 3; i++) {
+          // split-offs lay their slams ahead of / around you instead of on top of you
+          const q = main ? p : this.chaosPoint(0.95 + i * 0.65);
+          tele({ kind: 'circle', x: q.x, y: q.y, r: 100, time: 0.95, wait: i * 0.65, follow: main }, move);
+        }
         break;
       case 'cone': {
         const a = angleTo(m, p);
