@@ -1,3 +1,5 @@
+import '@fontsource/pixelify-sans/400.css';
+import '@fontsource/pixelify-sans/600.css';
 import { showCharacterSelect } from './charselect';
 import { BALANCE } from './data';
 import { Game } from './game';

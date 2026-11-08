@@ -515,7 +515,7 @@ export class Renderer {
     for (const f of g.floats) {
       ctx.globalAlpha = Math.min(1, f.life * 2);
       ctx.fillStyle = f.color;
-      ctx.font = `bold ${f.size}px Georgia, serif`;
+      ctx.font = `bold ${f.size}px "Pixelify Sans", Georgia, serif`;
       outlineText(ctx, f.text, this.px(f.x, f.y), this.py(f.x, f.y, f.z));
     }
     ctx.globalAlpha = 1;
@@ -540,7 +540,7 @@ export class Renderer {
       const bw = Math.min(420, w * 0.6);
       const x = (w - bw) / 2;
       ctx.fillStyle = '#e8d7a9';
-      ctx.font = 'bold 14px Georgia, serif';
+      ctx.font = 'bold 14px "Pixelify Sans", Georgia, serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'bottom';
       const slimes = boss.group ? g.splitGroup(boss).length : 1;
@@ -553,7 +553,7 @@ export class Renderer {
         const staggered = boss.staggerUntil > g.time;
         bar(ctx, x + bw * 0.25, 100 + o, bw * 0.5, 5, staggered ? 1 : boss.stagger / 100, staggered ? '#ffffff' : '#ffd166');
         if (staggered) {
-          ctx.font = 'bold 11px Georgia, serif';
+          ctx.font = 'bold 11px "Pixelify Sans", Georgia, serif';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'top';
           ctx.fillStyle = '#ffd166';
@@ -562,7 +562,7 @@ export class Renderer {
       }
       if (g.slimeStacks > 0) {
         // Slimed: ring hits this fight; the last pip kills you
-        ctx.font = 'bold 12px Georgia, serif';
+        ctx.font = 'bold 12px "Pixelify Sans", Georgia, serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'top';
         ctx.fillStyle = g.slimeStacks >= SPLIT.waveLethal - 1 ? '#ff4d4d' : '#9be36b';
@@ -571,7 +571,7 @@ export class Renderer {
       }
       const t = Math.max(0, g.bossTimer / BALANCE.bossTimeLimit);
       bar(ctx, x, 77 + o, bw, 5, g.enraged ? 1 : t, g.enraged ? '#ff0000' : t < 0.3 ? '#ef4444' : '#c9a227');
-      ctx.font = '11px Georgia, serif';
+      ctx.font = '11px "Pixelify Sans", Georgia, serif';
       ctx.textBaseline = 'top';
       ctx.fillStyle = g.enraged ? '#ff4d4d' : '#e8d7a9';
       const phaseTxt = ['', 'Phase 2', 'Phase 3'][boss.phase];
@@ -585,7 +585,7 @@ export class Renderer {
       ctx.fillStyle = 'rgba(0,0,0,0.5)';
       ctx.fillRect(0, 0, w, h);
       ctx.fillStyle = '#c9a227';
-      ctx.font = 'bold 26px Georgia, serif';
+      ctx.font = 'bold 26px "Pixelify Sans", Georgia, serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       outlineText(ctx, 'You have fallen...', w / 2, h / 2);
@@ -1144,7 +1144,7 @@ export class Renderer {
         ctx.fillStyle = '#e5383b';
         for (let i = 0; i < m.bleeds.length; i++) circle(ctx, sx - rw + 3 + i * 6, cy - rh - 19, 2.2);
       }
-      ctx.font = 'bold 11px Georgia, serif';
+      ctx.font = 'bold 11px "Pixelify Sans", Georgia, serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'bottom';
       ctx.fillStyle = levelColor(m.level, playerLevel);
@@ -1196,7 +1196,7 @@ export class Renderer {
           ctx.fillStyle = '#e5383b';
           for (let i = 0; i < m.bleeds.length; i++) circle(ctx, sx - rw + 3 + i * 6, top - 19, 2.2);
         }
-        ctx.font = 'bold 11px Georgia, serif';
+        ctx.font = 'bold 11px "Pixelify Sans", Georgia, serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'bottom';
         ctx.fillStyle = levelColor(m.level, playerLevel);
@@ -1333,7 +1333,7 @@ export class Renderer {
       ctx.stroke();
     }
     // name plate
-    ctx.font = 'bold 12px Georgia, serif';
+    ctx.font = 'bold 12px "Pixelify Sans", Georgia, serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'bottom';
     ctx.fillStyle = st === 'locked' ? '#9a9a9a' : '#e8d7a9';
@@ -1371,12 +1371,12 @@ export class Renderer {
     ctx.quadraticCurveTo(sx + 46 * k, sy - 80 * k, sx + 46 * k, sy + 4 * k);
     ctx.closePath();
     ctx.fill();
-    ctx.font = 'bold 12px Georgia, serif';
+    ctx.font = 'bold 12px "Pixelify Sans", Georgia, serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'bottom';
     ctx.fillStyle = '#d8c3ff';
     outlineText(ctx, 'Echoing Hollow', sx, sy - 160 * k);
-    ctx.font = '11px Georgia, serif';
+    ctx.font = '11px "Pixelify Sans", Georgia, serif';
     ctx.fillStyle = '#ffb38a';
     outlineText(ctx, 'manual only · bonus EXP', sx, sy - 160 * k + 14);
   }
@@ -1394,7 +1394,7 @@ export class Renderer {
     ctx.beginPath();
     ctx.ellipse(sx, sy - 50 * k, 34 * k, 60 * k, 0, 0, Math.PI * 2);
     ctx.fill();
-    ctx.font = 'bold 11px Georgia, serif';
+    ctx.font = 'bold 11px "Pixelify Sans", Georgia, serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'bottom';
     ctx.fillStyle = '#bcd4ff';
@@ -1661,6 +1661,34 @@ export function drawHeroPortrait(canvas: HTMLCanvasElement, job: JobId, time: nu
   ctx.beginPath();
   ctx.ellipse(w / 2, h * 0.82, w * 0.2, w * 0.06, 0, 0, Math.PI * 2);
   ctx.fill();
+  let pixelArt = true;
+  try {
+    pixelArt = localStorage.getItem('idle-rpg-pixel') !== '0';
+  } catch {
+    /* keep pixel art */
+  }
+  if (pixelArt) {
+    // the pixel hero, scaled up crisply, walking in place and turning now and then
+    ctx.imageSmoothingEnabled = false;
+    const phase = Math.floor(time / 2.5) % 4; // front-right, front-left, back-left, back-right
+    const back = phase >= 2;
+    const flip = phase === 1 || phase === 2;
+    const img = PX.hero(job, back, [1, 0, 2, 0][Math.floor(time * 5) % 4]);
+    const wp = PX.weapon(job);
+    const S = Math.max(2, Math.floor(Math.min(w / 17, h / 25)));
+    const x = Math.round(w / 2 - (img.width * S) / 2);
+    const y = Math.round(h * 0.84 - img.height * S);
+    ctx.save();
+    if (flip) {
+      ctx.translate(x + img.width * S, y);
+      ctx.scale(-1, 1);
+    } else ctx.translate(x, y);
+    if (back) ctx.drawImage(wp, (job === 'mage' ? 11 : 9) * S, (job === 'mage' ? -2 : 10) * S - (job === 'mage' ? 0 : (wp.height * S) / 2), wp.width * S, wp.height * S);
+    ctx.drawImage(img, 0, 0, img.width * S, img.height * S);
+    if (!back) ctx.drawImage(wp, (job === 'mage' ? 11 : 9) * S, (job === 'mage' ? -2 : 10) * S - (job === 'mage' ? 0 : (wp.height * S) / 2), wp.width * S, wp.height * S);
+    ctx.restore();
+    return;
+  }
   const a = Math.sin(time * 0.6) * 0.9 + 0.4;
   const dir = { dx: Math.cos(a), dy: Math.sin(a) * 0.5 + 0.3 };
   const l = Math.hypot(dir.dx, dir.dy);
