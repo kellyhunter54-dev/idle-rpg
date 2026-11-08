@@ -171,9 +171,9 @@ function renderCards(r: Run) {
   setText('choicetitle', r.choiceTitle);
   r.choices!.forEach((c, i) => {
     const el = document.createElement('button');
-    el.className = `card r-${c.rarity.id}${c.kind === 'advance' ? ' adv' : ''}`;
+    el.className = `card r-${c.rarity.id}${c.kind === 'advance' || c.kind === 'talent' ? ' adv' : ''}`;
     el.style.setProperty('--rc', c.rarity.color);
-    const tag = c.kind === 'advance' ? c.rarity.name.toUpperCase() : c.kind === 'newWeapon' ? 'NEW ABILITY' : c.kind === 'newPassive' ? 'NEW PASSIVE' : c.kind === 'passive' ? `Lv ${c.level} / ${PASSIVE[c.id].max}` : c.level ? `Lv ${c.level}` : c.kind === 'boon' ? 'BOON' : '';
+    const tag = c.kind === 'talent' ? 'PICK ONE' : c.kind === 'advance' ? c.rarity.name.toUpperCase() : c.kind === 'newWeapon' ? 'NEW ABILITY' : c.kind === 'newPassive' ? 'NEW PASSIVE' : c.kind === 'passive' ? `Lv ${c.level} / ${PASSIVE[c.id].max}` : c.level ? `Lv ${c.level}` : c.kind === 'boon' ? 'BOON' : '';
     el.innerHTML = `
       <div class="card-top"><span class="card-rar">${c.kind === 'advance' ? '' : c.rarity.name}</span><span class="card-tag">${tag}</span></div>
       <div class="card-icon">${c.icon}</div>
@@ -186,7 +186,7 @@ function renderCards(r: Run) {
   const reroll = $('rerollbtn') as HTMLButtonElement;
   reroll.textContent = `Reroll (${r.rerolls})`;
   reroll.disabled = r.rerolls <= 0 || r.choiceTitle !== 'Level up!';
-  reroll.classList.toggle('hidden', r.choiceTitle === 'Job advancement');
+  reroll.classList.toggle('hidden', r.choiceTitle !== 'Level up!' && r.choiceTitle !== 'Shrine boon');
   $('skipbtn').classList.toggle('hidden', r.choiceTitle !== 'Level up!');
 }
 
@@ -248,7 +248,7 @@ function updateHud(r: Run) {
   setHtml('wslots', ws.join(''));
   const ts = r.passives.map((p) => {
     const d = PASSIVE[p.id];
-    return slotHtml(d.icon, p.level, `${d.name}: ${r.passiveTotal(p)}`);
+    return d.desc ? slotHtml(d.icon, '★', `Talent. ${d.name}: ${d.desc}`, '#b388ff') : slotHtml(d.icon, p.level, `${d.name}: ${r.passiveTotal(p)}`);
   });
   setHtml('tslots', ts.join(''));
   // items: grouped with counts
@@ -314,11 +314,12 @@ function showEnd(r: Run) {
   const record = saveBest(r.job, { time: r.t, win, level: r.level, kills: r.kills });
   setText('endtitle', win ? 'The tide breaks!' : 'Swept away');
   const all = [...r.weapons, ...r.retired.filter((w) => w.total > 0)];
-  const tot = all.reduce((a, w) => a + w.total, 0) || 1;
+  const tot = all.reduce((a, w) => a + w.total, 0) + r.bleedTotal || 1;
   const rows = all
     .sort((a, b) => b.total - a.total)
     .map((w) => `<div class="dmg-row"><span>${w.def.icon} ${w.def.name} <i>Lv ${w.level}</i></span><div class="dmg-bar"><div style="width:${(w.total / tot) * 100}%"></div></div><b>${fmtBig(w.total)}</b></div>`)
-    .join('');
+    .join('') +
+    (r.bleedTotal > 0 ? `<div class="dmg-row"><span>🩸 Bleed</span><div class="dmg-bar"><div style="width:${(r.bleedTotal / tot) * 100}%"></div></div><b>${fmtBig(r.bleedTotal)}</b></div>` : '');
   $('endstats').innerHTML = `
     <div class="end-sum">
       <div><b>${fmtTime(r.t)}</b><span>time</span></div>

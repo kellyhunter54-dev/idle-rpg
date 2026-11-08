@@ -5,7 +5,7 @@ import { GameMap, TILE, Tile, fits, moveCircle } from '../map';
 import { JELLY, JellyFight } from './jelly';
 import {
   BossDef, ELITE, ENEMIES, EnemyDef, FINAL_BOSS, HEROES, HeroDef, ITEM, ITEMS, ItemDef, PStat, RUN, RUN_RARITIES,
-  ABILITY_LEVELS, ADVANCE_LEVELS, BRANCHES, BranchDef, CLASS_CORE, CORE_MAX, CORE_RATE, CoreDef, PASSIVE, PASSIVES, PSpecial, PassiveDef, RunRarity, SHRINE_BOONS, SHRINE_RADIUS, SHRINE_TIME, STAT_LABEL, WEAPON, WSTAT_NAME, WSTAT_STEP, WStat,
+  ABILITY_LEVELS, ADVANCE_LEVELS, BRANCHES, BRANCH_TALENTS, CLASS_TALENTS, TALENT_LEVELS, BranchDef, CLASS_CORE, CORE_MAX, CORE_RATE, CoreDef, PASSIVE, PASSIVES, PSpecial, PassiveDef, RunRarity, SHRINE_BOONS, SHRINE_RADIUS, SHRINE_TIME, STAT_LABEL, WEAPON, WSTAT_NAME, WSTAT_STEP, WStat,
   WeaponDef, enemyHpScale, fmtStat, rollRarity, spawnRate, xpToNext,
 } from './data';
 
@@ -34,6 +34,10 @@ export interface Enemy {
   /** Ignite */
   burnDps: number;
   burnUntil: number;
+  /** bleed: stacks (max 5), damage per stack per second */
+  bleedStacks: number;
+  bleedPer: number;
+  bleedUntil: number;
   hitFlash: number;
   /** ranged shot / boss move timer */
   cd: number;
@@ -202,7 +206,7 @@ export interface OwnedPassive {
 }
 
 export interface Choice {
-  kind: 'weapon' | 'newWeapon' | 'passive' | 'newPassive' | 'boon' | 'gold' | 'advance';
+  kind: 'weapon' | 'newWeapon' | 'passive' | 'newPassive' | 'boon' | 'gold' | 'advance' | 'talent';
   id: string;
   name: string;
   icon: string;
@@ -364,6 +368,10 @@ export class Run {
   private coreTick = 0;
   /** extra wolves from Call of the Pack */
   private coreWolves = 0;
+  /** talent choices made (levels in TALENT_LEVELS) */
+  talentsTaken = 0;
+  /** total bleed damage (end screen) */
+  bleedTotal = 0;
   private lastCrit = false;
   private rampageUntil = 0;
   private combustDepth = 0;
@@ -473,8 +481,10 @@ export class Run {
       const d = PASSIVE[p.id];
       for (const [k, v] of Object.entries(d.stats ?? {})) add(k as PStat, v! * p.mult);
       if (d.special) sp[d.special] = (sp[d.special] ?? 0) + d.step! * p.mult;
+      for (const [k, v] of d.extra ?? []) sp[k] = (sp[k] ?? 0) + v * p.mult;
     }
     this.special = sp;
+    if (!this.coreActive) this.coreWolves = sp.eternalPack ?? 0;
     for (const it of this.items) for (const [k, v] of Object.entries(it.stats ?? {})) add(k as PStat, v!);
     for (const b of this.boons) add(b.stat, b.amount);
     s.armor = Math.min(0.7, s.armor);
@@ -544,6 +554,25 @@ export class Run {
   /** Current job title. */
   get title(): string {
     return this.branch && this.tier > 0 ? this.branch.tiers[this.tier - 1].title : this.hero.name;
+  }
+
+  /** Level 7 / 13 / 20 / 30 / 40: pick one of two talents (13+ need a job). */
+  private checkTalent(): boolean {
+    const k = this.talentsTaken;
+    if (k >= TALENT_LEVELS.length || this.level < TALENT_LEVELS[k]) return false;
+    const pair = k === 0 ? CLASS_TALENTS[this.job] : this.branch ? BRANCH_TALENTS[this.branch.id]?.[k - 1] : undefined;
+    if (!pair) return false;
+    this.choiceTitle = k === TALENT_LEVELS.length - 1 ? 'Keystone talent' : 'Talent';
+    this.choices = pair.map((d) => ({
+      kind: 'talent', id: d.id, name: d.name, icon: d.icon, rarity: { ...RUN_RARITIES[3], name: `Lv ${TALENT_LEVELS[k]} talent`, color: this.branch?.color ?? '#b388ff' }, level: 0,
+      lines: [d.desc ?? ''],
+      apply: () => {
+        this.talentsTaken++;
+        this.passives.push({ id: d.id, level: 1, mult: 1 });
+        this.recalc();
+      },
+    }));
+    return true;
   }
 
   /** Base abilities unlock on their own at ABILITY_LEVELS. */
@@ -616,6 +645,7 @@ export class Run {
 
   /** Card text for one pick of a passive at a rarity multiplier. */
   passiveLines(d: PassiveDef, mult: number): string[] {
+    if (d.desc) return [d.desc];
     const out = Object.entries(d.stats ?? {}).map(([k, v]) => `${fmtStat(k as PStat, v! * mult)} ${STAT_LABEL[k as PStat]}`);
     if (d.special && d.text) out.push(d.text(d.step! * mult));
     return out;
@@ -699,7 +729,7 @@ export class Run {
     c.apply();
     this.choices = null;
     this.checkUnlocks();
-    if (!this.checkAdvance() && this.pendingLevels > 0) this.openLevelUp();
+    if (!this.checkAdvance() && !this.checkTalent() && this.pendingLevels > 0) this.openLevelUp();
   }
   reroll(): boolean {
     if (!this.choices || this.rerolls <= 0 || this.choiceTitle !== 'Level up!') return false;
@@ -744,7 +774,7 @@ export class Run {
     this.input.interact = false;
     if (this.hp <= 0) this.die();
     this.checkUnlocks();
-    if (!this.choices && !this.checkAdvance() && this.pendingLevels > 0) this.openLevelUp();
+    if (!this.choices && !this.checkAdvance() && !this.checkTalent() && this.pendingLevels > 0) this.openLevelUp();
   }
 
   notice(text: string, color = '#ffd166', icon?: string) {
@@ -883,7 +913,7 @@ export class Run {
       id: this.nextId++, def, x, y, r, hp, maxHp: hp, speed: def.speed * (elite ? 0.9 : 1) * (0.92 + this.rand() * 0.16),
       dmg: def.dmg * (1 + this.runT / 600) * (elite ? ELITE.dmgMult : 1), xp: def.xp * (elite ? ELITE.xpMult : 1),
       color: elite ? ELITE.color : def.color, elite, boss: 0, name: '', slowUntil: 0, hitFlash: 0, cd: 1 + this.rand() * 2,
-      kx: 0, ky: 0, dead: false, angle: 0, moving: true, touchCd: 0, move: '', moveT: 0, dirX: 0, dirY: 0, spawnT: 0.35, z: 0, marked: false, burnDps: 0, burnUntil: 0,
+      kx: 0, ky: 0, dead: false, angle: 0, moving: true, touchCd: 0, move: '', moveT: 0, dirX: 0, dirY: 0, spawnT: 0.35, z: 0, marked: false, burnDps: 0, burnUntil: 0, bleedStacks: 0, bleedPer: 0, bleedUntil: 0,
     };
   }
 
@@ -950,7 +980,7 @@ export class Run {
     const e: Enemy = {
       id: this.nextId++, def: null, x: p.x, y: p.y, r: def.r, hp, maxHp: hp, speed: def.speed, dmg: def.dmg, xp: tier === 1 ? 120 : 400,
       color: def.color, elite: false, boss: tier, name: def.name, slowUntil: 0, hitFlash: 0, cd: 2.5, kx: 0, ky: 0, dead: false,
-      angle: 0, moving: true, touchCd: 0, move: '', moveT: 0, dirX: 0, dirY: 0, spawnT: 0.6, z: 0, marked: false, burnDps: 0, burnUntil: 0,
+      angle: 0, moving: true, touchCd: 0, move: '', moveT: 0, dirX: 0, dirY: 0, spawnT: 0.6, z: 0, marked: false, burnDps: 0, burnUntil: 0, bleedStacks: 0, bleedPer: 0, bleedUntil: 0,
     };
     this.enemies.push(e);
     this.boss = e;
@@ -1019,11 +1049,33 @@ export class Run {
 
   // ---------------------------------------------------------------- enemies
   private updateEnemies(dt: number) {
+    let bleeding = 0;
+    this.updateEnemiesInner(dt, () => bleeding++);
+    // Second Wind / Bloodscent: bleeding foes near you heal you (up to 10 of them)
+    const bh = this.sp('bleedHeal');
+    if (bh && bleeding) this.heal(bh * Math.min(10, bleeding) * dt);
+  }
+  private updateEnemiesInner(dt: number, onBleed: () => void) {
     for (const e of this.enemies) {
       if (e.dead) continue;
       e.hitFlash -= dt;
       e.touchCd -= dt;
-      if (e.burnUntil > this.t && !e.dead) {
+      if (e.bleedUntil > this.t && e.bleedStacks > 0 && !e.dead) {
+        const b = e.bleedPer * e.bleedStacks * dt;
+        this.bleedTotal += b;
+        if (dist2(e.x, e.y, this.x, this.y) < 600 * 600) onBleed();
+        if (e.boss === 3 && this.jelly) this.jelly.damage(b);
+        else {
+          e.hp -= b;
+          if (e.hp <= 0) {
+            this.kill(e);
+            continue;
+          }
+        }
+      }
+      if (e.burnUntil > this.t && !e.dead && e.boss === 3 && this.jelly) {
+        this.jelly.damage(e.burnDps * dt);
+      } else if (e.burnUntil > this.t && !e.dead) {
         const b = e.burnDps * dt;
         e.hp -= b;
         const wi = this.weapons.findIndex((x) => x.def.id === 'ember');
@@ -1198,6 +1250,10 @@ export class Run {
       if (e.marked) dmg *= 1 + mark;
       e.marked = true;
     }
+    const bAmp = this.sp('bleedAmp');
+    if (bAmp && e.bleedStacks > 0 && e.bleedUntil > this.t) dmg *= 1 + bAmp;
+    const fAmp = this.sp('burnAmp');
+    if (fAmp && e.burnUntil > this.t) dmg *= 1 + fAmp;
     const fb = this.sp('frostbite');
     if (fb && e.slowUntil > this.t) dmg *= 1 + fb;
     const def = w >= 0 ? this.weapons[w]?.def : undefined;
@@ -1214,6 +1270,7 @@ export class Run {
       dmg *= 1.2 + this.stats.critDmg;
     }
     this.lastCrit = crit;
+    if (w >= 0) this.applyBleed(e, dmg, crit);
     if (e.boss === 3 && this.jelly) {
       // King Jelly: every slime shares one HP pool
       if (this.jelly.done) return false;
@@ -1564,6 +1621,33 @@ export class Run {
     }
   }
 
+  /** Bleed talents: each hit adds a stack (crits 2 with Lethal Wounds), max 5, 4 s; Rupture bursts a full wound. */
+  private applyBleed(e: Enemy, dmg: number, crit: boolean) {
+    const share = this.sp('bleed');
+    if (!share || e.dead) return;
+    const per = (dmg * share) / 4;
+    if (e.bleedUntil < this.t) {
+      e.bleedStacks = 0;
+      e.bleedPer = 0;
+    }
+    e.bleedPer = Math.max(e.bleedPer, per);
+    e.bleedUntil = this.t + 4;
+    e.bleedStacks = Math.min(5, e.bleedStacks + (crit && this.sp('critBleed') ? 2 : 1));
+    if (e.bleedStacks >= 5 && this.sp('rupture')) {
+      const burst = e.bleedPer * 5 * Math.max(0, e.bleedUntil - this.t);
+      e.bleedStacks = 0;
+      e.bleedUntil = 0;
+      this.fx.push({ kind: 'boom', x: e.x, y: e.y, t: 0, dur: 0.3, r: e.r + 30, color: '#d9383b' });
+      this.fx.push({ kind: 'text', x: e.x, y: e.y, t: 0, dur: 0.7, r: 0, color: '#ff5c5c', text: String(Math.round(burst)), crit: true });
+      this.bleedTotal += burst;
+      if (e.boss === 3 && this.jelly) this.jelly.damage(burst);
+      else {
+        e.hp -= burst;
+        if (e.hp <= 0) this.kill(e);
+      }
+    }
+  }
+
   /** The foe with the most HP within range (Snipe). */
   private toughest(range: number): Enemy | null {
     let best: Enemy | null = null;
@@ -1846,7 +1930,7 @@ export class Run {
     const e: Enemy = {
       id: this.nextId++, def: null, x, y, r, hp: 1, maxHp: 1, speed: 0, dmg: 0, xp: 0, color: JELLY.color, elite: false, boss: 3, name,
       slowUntil: 0, hitFlash: 0, cd: 0, kx: 0, ky: 0, dead: false, angle: 0, moving: false, touchCd: 0, move: '', moveT: 0, dirX: 0, dirY: 0,
-      spawnT: 0.4, z: 0, marked: false, burnDps: 0, burnUntil: 0,
+      spawnT: 0.4, z: 0, marked: false, burnDps: 0, burnUntil: 0, bleedStacks: 0, bleedPer: 0, bleedUntil: 0,
     };
     this.enemies.push(e);
     return e;
@@ -1979,13 +2063,13 @@ export class Run {
     this.fx.push({ kind: 'nova', x: this.x, y: this.y, t: 0, dur: 0.5, r: 160, color: c.color });
     this.fx.push({ kind: 'text', x: this.x, y: this.y, t: 0, dur: 1, r: 0, color: c.color, text: c.name.toUpperCase(), crit: true });
     if (c.id === 'arcanesurge') for (const w of this.weapons) w.timer = 0;
-    if (c.id === 'packfrenzy') this.coreWolves = 2 + Math.round(this.sp('corePower') * 4);
+    if (c.id === 'packfrenzy') this.coreWolves = this.sp('eternalPack') + 2 + Math.round(this.sp('corePower') * 4);
     return true;
   }
   private endCore() {
     this.coreActive = false;
     this.coreMeter = 0;
-    this.coreWolves = 0;
+    this.coreWolves = this.sp('eternalPack');
     const extra = new Map<number, number>();
     // send the borrowed wolves home
     this.allies = this.allies.filter((a) => {
@@ -2135,7 +2219,7 @@ export class Run {
   autoPick() {
     if (!this.choices) return;
     const score = (c: Choice) =>
-      (c.kind === 'advance' ? 20 + this.rand() : c.kind === 'newWeapon' ? 5 : c.kind === 'weapon' ? 4 : c.kind === 'newPassive' ? 3.5 : 3) + RUN_RARITIES.indexOf(c.rarity) * 0.8 + (c.id === 'glass' ? -2 : 0);
+      (c.kind === 'advance' || c.kind === 'talent' ? 20 + this.rand() : c.kind === 'newWeapon' ? 5 : c.kind === 'weapon' ? 4 : c.kind === 'newPassive' ? 3.5 : 3) + RUN_RARITIES.indexOf(c.rarity) * 0.8 + (c.id === 'glass' ? -2 : 0);
     let best = 0;
     this.choices.forEach((c, i) => {
       if (score(c) > score(this.choices![best])) best = i;

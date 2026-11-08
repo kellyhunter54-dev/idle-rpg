@@ -167,7 +167,9 @@ export type PSpecial =
   | 'shield' | 'ignite' | 'frostbite' | 'echo' | 'chain'
   | 'leech' | 'rampage' | 'block' | 'pack' | 'headshot' | 'steady' | 'combust' | 'static'
   // ultimate (core) modifiers
-  | 'coreGain' | 'coreDur' | 'corePower' | 'split' | 'secondNature' | 'trueshot';
+  | 'coreGain' | 'coreDur' | 'corePower' | 'split' | 'secondNature' | 'trueshot'
+  // bleed (talents)
+  | 'bleed' | 'bleedAmp' | 'bleedHeal' | 'rupture' | 'critBleed' | 'eternalPack' | 'burnAmp';
 
 export interface PassiveDef {
   id: string;
@@ -182,6 +184,9 @@ export interface PassiveDef {
   text?: (v: number) => string;
   flat?: boolean;
   max: number;
+  /** talents: more specials on the same pick, and a fixed description for the card */
+  extra?: [PSpecial, number][];
+  desc?: string;
 }
 const pct = (v: number) => `${Math.round(v * 100)}%`;
 export const PASSIVES: Record<JobId, PassiveDef[]> = {
@@ -419,8 +424,71 @@ export const BRANCHES: Record<JobId, BranchDef[]> = {
 };
 export const BRANCH: Record<string, BranchDef> = Object.fromEntries(Object.values(BRANCHES).flat().map((b) => [b.id, b]));
 
+// ---------------------------------------------------------------- talent choices
+/** Every few levels you pick one of two talents that shape how your job plays (rank 1, permanent). */
+export const TALENT_LEVELS = [7, 13, 20, 30, 40];
+export type TalentPair = [PassiveDef, PassiveDef];
+type TalentSpec = { stats?: Partial<Record<PStat, number>>; sp?: [PSpecial, number][] };
+const T = (id: string, name: string, icon: string, desc: string, spec: TalentSpec): PassiveDef => ({
+  id, name, icon, desc, stats: spec.stats, special: spec.sp?.[0]?.[0], step: spec.sp?.[0]?.[1], extra: spec.sp?.slice(1), flat: true, max: 1,
+});
+const BLEED = (id: string, name: string, icon: string, what: string, share: number) =>
+  T(id, name, icon, `${what} make foes bleed for ${pct(share)} of the hit over 4s (stacks 5 times).`, { sp: [['bleed', share]] });
+const RUPTURE = (id: string) =>
+  T(id, 'Rupture', '💥', 'KEYSTONE. A 5th bleed stack tears the wound open: all the bleed left lands at once.', { sp: [['rupture', 1]] });
+/** Level 7: one class choice before your job. */
+export const CLASS_TALENTS: Record<JobId, TalentPair> = {
+  warrior: [BLEED('w_rend', 'Rending Strikes', '🩸', 'Your hits', 0.15), T('w_iron', 'Iron Hide', '🛡️', '+30 max HP and 10% less damage taken.', { stats: { maxHp: 30, armor: 0.1 } })],
+  archer: [BLEED('a_barbed', 'Barbed Arrows', '🩸', 'Your hits', 0.18), T('a_rapid', 'Rapid Fire', '💨', '+20% attack speed.', { stats: { cd: 0.2 } })],
+  mage: [T('m_ignite', 'Ignition', '🔥', 'Fire abilities burn for 40% of the hit over 3s.', { sp: [['ignite', 0.4]] }), T('m_focus', 'Focused Mind', '🧠', 'Mana builds 50% faster and +5% crit chance.', { stats: { crit: 0.05 }, sp: [['coreGain', 0.5]] })],
+};
+/** Levels 13 / 20 / 30 / 40: choices inside your job. */
+export const BRANCH_TALENTS: Record<string, TalentPair[]> = {
+  berserker: [
+    [BLEED('b_rend', 'Rending Strikes', '🩸', 'Your hits', 0.2), T('b_reckless', 'Reckless', '😤', '+20% damage, but 5% more damage taken.', { stats: { dmg: 0.2, armor: -0.05 } })],
+    [T('b_wind', 'Second Wind', '❤️', 'Every bleeding foe near you heals you 0.4 HP a second (up to 10 foes).', { sp: [['bleedHeal', 0.4]] }), T('b_bath', 'Bloodbath', '🌊', 'Each kill: +1.5% damage for 3s (stacks 30).', { sp: [['rampage', 0.015]] })],
+    [T('b_hemo', 'Hemorrhage', '💉', 'Bleeding foes take 25% more damage.', { sp: [['bleedAmp', 0.25]] }), T('b_unstop', 'Unstoppable', '🦬', 'Bloodrage is 50% stronger.', { sp: [['corePower', 0.5]] })],
+    [RUPTURE('b_rupture'), T('b_endless', 'Endless Rage', '♾️', 'KEYSTONE. Bloodrage lasts 6s longer and Rage builds 50% faster.', { sp: [['coreDur', 6], ['coreGain', 0.5]] })],
+  ],
+  guardian: [
+    [T('g_avenger', 'Holy Avenger', '⚔️', 'Getting hit releases a shockwave for 200% damage.', { sp: [['retaliate', 1]] }), T('g_stalwart', 'Stalwart', '🛡️', '10% chance to block a hit completely.', { sp: [['block', 0.1]] })],
+    [T('g_wall', 'Shield Wall', '🧱', '10% less damage taken and +25 max HP.', { stats: { armor: 0.1, maxHp: 25 } }), T('g_smite', 'Smite', '⚡', '+20% damage.', { stats: { dmg: 0.2 } })],
+    [T('g_light', 'Bastion of Light', '🔆', "Divine Shield's holy light is 50% stronger.", { sp: [['corePower', 0.5]] }), T('g_zeal', 'Zealotry', '🙏', '+20% attack speed.', { stats: { cd: 0.2 } })],
+    [T('g_unbreak', 'Unbreakable', '💎', 'KEYSTONE. Divine Shield lasts 3s longer and Resolve builds 50% faster.', { sp: [['coreDur', 3], ['coreGain', 0.5]] }), T('g_wrath', 'Wrath', '😠', 'KEYSTONE. Shockwaves when hit deal 400% damage, +10% block chance.', { sp: [['retaliate', 2], ['block', 0.1]] })],
+  ],
+  ranger: [
+    [BLEED('r_fangs', 'Serrated Fangs', '🐺', 'Your hits (wolf bites too)', 0.2), T('r_tactics', 'Pack Tactics', '🐾', '+1 wolf and +15% damage.', { stats: { dmg: 0.15 }, sp: [['pack', 1]] })],
+    [T('r_thorned', 'Thorned Earth', '🌵', 'Bleeding foes take 20% more damage.', { sp: [['bleedAmp', 0.2]] }), T('r_growth', 'Wild Growth', '🌱', '+25% size and +20% duration.', { stats: { area: 0.25, duration: 0.2 } })],
+    [T('r_scent', 'Bloodscent', '👃', 'Every bleeding foe near you heals you 0.3 HP a second (up to 10 foes).', { sp: [['bleedHeal', 0.3]] }), T('r_alpha', "Alpha's Call", '📯', 'Call of the Pack is 50% stronger (more wolves).', { sp: [['corePower', 0.5]] })],
+    [RUPTURE('r_rupture'), T('r_eternal', 'Eternal Pack', '🌕', 'KEYSTONE. Two of the Call of the Pack wolves stay with you for good.', { sp: [['eternalPack', 2]] })],
+  ],
+  marksman: [
+    [BLEED('k_barbed', 'Barbed Shots', '🩸', 'Your hits', 0.2), T('k_precise', 'Precision', '🎯', '+10% crit chance and +30% crit damage.', { stats: { crit: 0.1, critDmg: 0.3 } })],
+    [T('k_hemo', 'Hemorrhage', '💉', 'Bleeding foes take 25% more damage.', { sp: [['bleedAmp', 0.25]] }), T('k_long', 'Long Shot', '🔭', '+30% damage to foes far away.', { sp: [['sharpshot', 0.3]] })],
+    [T('k_lethal', 'Lethal Wounds', '🗡️', 'Crits add 2 bleed stacks instead of 1.', { sp: [['critBleed', 1]] }), T('k_steady', 'Steady Aim', '🧘', '+30% damage while standing still.', { sp: [['steady', 0.3]] })],
+    [RUPTURE('k_rupture'), T('k_rapid', 'Rapid Deadeye', '⏱️', 'KEYSTONE. Deadeye lasts 4s longer and Focus builds 50% faster.', { sp: [['coreDur', 4], ['coreGain', 0.5]] })],
+  ],
+  pyro: [
+    [T('p_sear', 'Searing', '🔥', 'Fire abilities burn for +50% of the hit.', { sp: [['ignite', 0.5]] }), T('p_bomb', 'Living Bomb', '💣', 'Burning foes explode on death (20% of their max HP).', { sp: [['combust', 0.2]] })],
+    [T('p_scorch', 'Scorched Earth', '🌋', '+30% duration and +10% size.', { stats: { duration: 0.3, area: 0.1 } }), T('p_flash', 'Flashpoint', '✴️', '+10% crit chance and +30% crit damage.', { stats: { crit: 0.1, critDmg: 0.3 } })],
+    [T('p_storm', 'Raging Firestorm', '☄️', 'Firestorm is 50% stronger (more meteors).', { sp: [['corePower', 0.5]] }), T('p_kindle', 'Kindling', '🪵', 'Heat builds 50% faster.', { sp: [['coreGain', 0.5]] })],
+    [T('p_heart', 'Inferno Heart', '❤️‍🔥', 'KEYSTONE. Burning foes take 30% more damage.', { sp: [['burnAmp', 0.3]] }), T('p_ever', 'Everburning', '♾️', 'KEYSTONE. Firestorm lasts 6s longer.', { sp: [['coreDur', 6]] })],
+  ],
+  storm: [
+    [T('s_overload', 'Overload', '🌩️', 'Lightning strikes jump to 2 more foes.', { sp: [['chain', 2]] }), T('s_field', 'Static Field', '🔌', 'Hits have 15% chance to zap a nearby foe.', { sp: [['static', 0.15]] })],
+    [T('s_struck', 'Thunderstruck', '⚡', '+10% crit chance and +30% crit damage.', { stats: { crit: 0.1, critDmg: 0.3 } }), T('s_quick', 'Quickening', '⏩', '+20% attack speed.', { stats: { cd: 0.2 } })],
+    [T('s_eye', 'Eye of the Storm', '🌀', 'Storm Avatar is 50% stronger (more strikes).', { sp: [['corePower', 0.5]] }), T('s_wire', 'Live Wire', '🔋', 'Charge builds 50% faster.', { sp: [['coreGain', 0.5]] })],
+    [T('s_endless', 'Endless Storm', '♾️', 'KEYSTONE. Storm Avatar lasts 6s longer.', { sp: [['coreDur', 6]] }), T('s_super', 'Superconductor', '🔱', 'KEYSTONE. Lightning jumps to 2 more foes and hits zap 10% of the time.', { sp: [['chain', 2], ['static', 0.1]] })],
+  ],
+};
+
 export const PASSIVE: Record<string, PassiveDef> = Object.fromEntries(
-  [...Object.values(PASSIVES).flat(), ...Object.values(BRANCHES).flat().flatMap((b) => b.tiers.flatMap((t) => t.passives))].map((p) => [p.id, p]),
+  [
+    ...Object.values(PASSIVES).flat(),
+    ...Object.values(BRANCHES).flat().flatMap((b) => b.tiers.flatMap((t) => t.passives)),
+    ...Object.values(CLASS_TALENTS).flat(),
+    ...Object.values(BRANCH_TALENTS).flat(2),
+  ].map((p) => [p.id, p]),
 );
 
 // ---------------------------------------------------------------- items (from chests, unlimited)

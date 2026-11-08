@@ -13,7 +13,7 @@ export const JELLY = {
   color: '#6ccf5a',
   radius: 70,
   /** pool HP = base * growth^level at the moment you enter (tuned for a ~3 minute fight) */
-  hpBase: 4000,
+  hpBase: 5000,
   hpGrowth: 1.18,
   /** rings are walls of slime: jumping doesn't clear them, find a gap (set true to allow jumping) */
   jumpRings: false,

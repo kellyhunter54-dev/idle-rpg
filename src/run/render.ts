@@ -627,7 +627,7 @@ export class RunRenderer {
           this.blit(ctx, PX.shadowSprite(24), sx, sy + 2 * B, 12, 4, false, alpha);
           this.blit(ctx, img, sx, sy + 3 * B, img.width >> 1, img.height - 1, (v & 8) !== 0, alpha);
         }
-      } else if (it.t === 1) this.drawEnemy(run.enemies[it.i], time);
+      } else if (it.t === 1) this.drawEnemy(run.enemies[it.i], time, run.t);
       else if (it.t === 2) {
         const c = run.chests[it.i];
         const sx = this.px(c.x, c.y);
@@ -869,7 +869,7 @@ export class RunRenderer {
     return false;
   }
 
-  private drawEnemy(e: Enemy, time: number) {
+  private drawEnemy(e: Enemy, time: number, now = 0) {
     const ctx = this.ctx;
     const B = this.block;
     const grow = e.spawnT > 0 ? 1 - e.spawnT / 0.6 : 1;
@@ -893,6 +893,15 @@ export class RunRenderer {
       const eh = r > 8 ? 2 : 1;
       ctx.fillRect((ex - gap) * B, ey * B, B, eh * B);
       ctx.fillRect((ex + gap) * B, ey * B, B, eh * B);
+    }
+    // bleeding: drops of blood falling off the slime (more with more stacks)
+    if (e.bleedStacks > 0 && e.bleedUntil > now) {
+      ctx.fillStyle = '#c4161c';
+      for (let k = 0; k < Math.min(3, e.bleedStacks); k++) {
+        const ph = (time * 1.6 + k * 0.33 + e.id * 0.17) % 1;
+        const dx = Math.round(((k * 7 + e.id) % 5) - 2 + (k - 1) * r * 0.5);
+        ctx.fillRect(Math.round(sx / B + dx) * B, Math.round(top / B + 2 + ph * img.height * 0.8) * B, B, 2 * B);
+      }
     }
     if (e.boss === 3) {
       if (e.name === JELLY.name) {
