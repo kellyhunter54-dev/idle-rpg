@@ -24,6 +24,11 @@ jobs:
         with:
           ref: side-scroller
           path: side
+      # The survivors-style run mode lives on the bonk branch and is served at /bonk/
+      - uses: actions/checkout@v4
+        with:
+          ref: bonk
+          path: bonk
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -37,6 +42,13 @@ jobs:
           npm run build
           mkdir -p ../dist/side
           cp -r dist/* ../dist/side/
+      - name: Build bonk into dist/bonk
+        run: |
+          cd bonk
+          npm ci
+          npm run build
+          mkdir -p ../dist/bonk
+          cp -r dist/* ../dist/bonk/
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
