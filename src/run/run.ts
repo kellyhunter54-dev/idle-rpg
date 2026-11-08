@@ -1183,7 +1183,8 @@ export class Run {
     }
     const s = this.stats;
     const xpv = e.xp * (1 + s.xp) * (1 + s.curse);
-    this.dropXp(e.x, e.y, xpv);
+    if (RUN.xpOnKill) this.gainXp(xpv);
+    else this.dropXp(e.x, e.y, xpv);
     if (this.rand() < (e.elite ? 1 : 0.22)) this.pickups.push({ kind: 'gold', x: e.x + 10, y: e.y, value: (e.elite ? 15 : 1) * (1 + s.gold) * (1 + s.curse), pull: false, v: 0 });
     if (this.rand() < 0.008) this.pickups.push({ kind: 'heal', x: e.x, y: e.y + 10, value: 30, pull: false, v: 0 });
     if (e.elite) {

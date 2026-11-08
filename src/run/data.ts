@@ -19,6 +19,8 @@ export const RUN = {
   jumpRest: 0.4,
   contactIframes: 0.45,
   rerolls: 3,
+  /** true: EXP goes straight to you on kill. false: foes drop gems you have to pick up. */
+  xpOnKill: true,
   /** Overtime: if the final boss is still alive, every enemy gets this much tougher per second. */
   overtimeHp: 0.01,
 };
