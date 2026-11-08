@@ -1,7 +1,7 @@
 /* Gloomtide (run mode) HUD and screens. Builds on the pixel theme in style.css. */
 body.runmode { overflow: hidden; }
 .runmode #canvas { position: absolute; }
-#bossbar:not(.hidden) ~ #notices { top: 132px; }
+#bossbar:not(.hidden) ~ #notices { top: 150px; }
 
 /* ---------- title ---------- */
 .screen { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; padding: 16px;
@@ -166,3 +166,5 @@ body.runmode { overflow: hidden; }
 @media (pointer: coarse) {
   #corebtn { left: auto; right: 16px; bottom: 100px; transform: none; }
 }
+
+#slimed { margin-top: 4px; font-size: 14px; color: #9be38a; text-shadow: 2px 2px 0 #0b0806; }

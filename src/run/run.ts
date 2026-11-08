@@ -2,8 +2,9 @@
 // headless balance sim (tools/runsim.ts) can drive it.
 import { JobId } from '../data';
 import { GameMap, TILE, Tile, fits, moveCircle } from '../map';
+import { JELLY, JellyFight } from './jelly';
 import {
-  BossDef, ELITE, ENEMIES, EnemyDef, FINAL_BOSS, HEROES, HeroDef, ITEM, ITEMS, ItemDef, MINI_BOSS, PStat, RUN, RUN_RARITIES,
+  BossDef, ELITE, ENEMIES, EnemyDef, FINAL_BOSS, HEROES, HeroDef, ITEM, ITEMS, ItemDef, PStat, RUN, RUN_RARITIES,
   ABILITY_LEVELS, ADVANCE_LEVELS, BRANCHES, BranchDef, CLASS_CORE, CORE_MAX, CORE_RATE, CoreDef, PASSIVE, PASSIVES, PSpecial, PassiveDef, RunRarity, SHRINE_BOONS, SHRINE_RADIUS, SHRINE_TIME, STAT_LABEL, WEAPON, WSTAT_NAME, WSTAT_STEP, WStat,
   WeaponDef, enemyHpScale, fmtStat, rollRarity, spawnRate, xpToNext,
 } from './data';
@@ -22,7 +23,10 @@ export interface Enemy {
   color: string;
   elite: boolean;
   /** 0 normal, 1 mini boss, 2 final boss */
-  boss: 0 | 1 | 2;
+  /** 0 normal, 1 mini boss, 2 final boss, 3 King Jelly (lair) */
+  boss: 0 | 1 | 2 | 3;
+  /** height off the ground (hopping slimes) */
+  z: number;
   name: string;
   slowUntil: number;
   /** Hunter's Mark */
@@ -120,6 +124,12 @@ export interface Telegraph {
   dmg: number;
   /** charge lane: a line from (x, y) along (dx, dy) */
   line?: { dx: number; dy: number; len: number };
+  /** King Jelly telegraphs: how they look, % max HP they hit for, Slimed, goo left behind */
+  style?: 'wave' | 'landing' | 'spout';
+  pct?: number;
+  slimed?: boolean;
+  goo?: number;
+  from?: { x: number; y: number };
 }
 
 export interface Fx {
@@ -330,6 +340,19 @@ export class Run {
   private leechLeft = 0;
   private leechT = 0;
   rampage = 0;
+  // ---- the lair (King Jelly): the door is on the map from the start; go in whenever you're ready
+  lairDoor = { x: 0, y: 0 };
+  lairCleared = false;
+  inLair = false;
+  jelly: JellyFight | null = null;
+  /** seconds spent in the lair: the run clock is paused in there */
+  lairSpent = 0;
+  private world: {
+    map: GameMap; enemies: Enemy[]; pickups: Pickup[]; chests: Chest[]; shrines: ShrineSpot[]; boss: Enemy | null; x: number; y: number;
+  } | null = null;
+  /** hero status from the jelly: rooted (can't move) and slowed */
+  rootUntil = 0;
+  slowedUntil = 0;
   /** class resource (Rage / Focus / Mana ...) and the ultimate it powers (F) */
   coreMeter = 0;
   coreActive = false;
@@ -407,6 +430,8 @@ export class Run {
 
   private placeObjects() {
     const taken: { x: number; y: number }[] = [];
+    this.lairDoor = this.openSpot(900, taken, 0);
+    taken.push(this.lairDoor);
     for (let i = 0; i < RUN.shrines; i++) {
       const p = this.openSpot(500, taken, 900);
       taken.push(p);
@@ -422,11 +447,15 @@ export class Run {
   get chestCost(): number {
     return Math.round(RUN.chestCost * Math.pow(RUN.chestCostGrowth, this.chestsOpened));
   }
+  /** run clock: time outside the lair */
+  get runT(): number {
+    return this.t - this.lairSpent;
+  }
   get timeLeft(): number {
-    return Math.max(0, RUN.length - this.t);
+    return Math.max(0, RUN.length - this.runT);
   }
   get overtime(): number {
-    return Math.max(0, this.t - RUN.length);
+    return Math.max(0, this.runT - RUN.length);
   }
 
   // ---------------------------------------------------------------- stats
@@ -456,7 +485,14 @@ export class Run {
   }
 
   get moveSpeed(): number {
-    return this.hero.speed * (1 + this.stats.speed);
+    return this.hero.speed * (1 + this.stats.speed) * (this.slowedUntil > this.t ? 0.5 : 1);
+  }
+  rootFor(s: number) {
+    if (this.air > 0) return;
+    this.rootUntil = Math.max(this.rootUntil, this.t + s);
+  }
+  slowFor(s: number) {
+    this.slowedUntil = Math.max(this.slowedUntil, this.t + s);
   }
   get pickupRange(): number {
     return 110 * (1 + this.stats.pickup);
@@ -689,9 +725,11 @@ export class Run {
     this.t += dt;
     if (this.auto) this.autoSteer();
     this.updateHero(dt);
-    this.spawn(dt);
+    if (this.inLair) this.lairSpent += dt;
+    else this.spawn(dt);
     this.rebuildGrid();
     this.updateEnemies(dt);
+    if (this.inLair && this.jelly && !this.jelly.done) this.jelly.update(dt);
     this.updateWeapons(dt);
     this.updateShots(dt);
     this.updatePools(dt);
@@ -709,7 +747,7 @@ export class Run {
     if (!this.choices && !this.checkAdvance() && this.pendingLevels > 0) this.openLevelUp();
   }
 
-  private notice(text: string, color = '#ffd166', icon?: string) {
+  notice(text: string, color = '#ffd166', icon?: string) {
     this.notices.push({ text, color, icon });
   }
 
@@ -746,9 +784,12 @@ export class Run {
     this.vx = mx * sp;
     this.vy = my * sp;
     if (this.moving) this.angle = Math.atan2(my, mx);
-    const p = moveCircle(this.map, this.x, this.y, this.vx * dt, this.vy * dt, this.r);
-    this.x = p.x;
-    this.y = p.y;
+    const rooted = this.rootUntil > this.t;
+    if (!rooted) {
+      const p = moveCircle(this.map, this.x, this.y, this.vx * dt, this.vy * dt, this.r);
+      this.x = p.x;
+      this.y = p.y;
+    } else this.moving = false;
     // jump
     this.jumpCd -= dt;
     if (this.air > 0) {
@@ -758,7 +799,7 @@ export class Run {
         this.jumpCd = RUN.jumpRest;
         this.fx.push({ kind: 'land', x: this.x, y: this.y, t: 0, dur: 0.3, r: 30, color: '#e8d7a9' });
       }
-    } else if (inp.jump && this.jumpCd <= 0) {
+    } else if (inp.jump && this.jumpCd <= 0 && !rooted) {
       this.airDur = RUN.jumpTime * (1 + this.stats.jump);
       this.air = this.airDur;
     }
@@ -779,11 +820,12 @@ export class Run {
 
   /** damage taken by source (sim / end screen) */
   taken = { contact: 0, shot: 0, slam: 0 };
-  hurt(dmg: number, from?: Enemy, src: 'contact' | 'shot' | 'slam' = 'contact') {
-    if (this.iframes > 0 || this.ended) return;
+  /** Returns true if the hit landed (not dodged, blocked or shielded away). */
+  hurt(dmg: number, from?: Enemy, src: 'contact' | 'shot' | 'slam' = 'contact'): boolean {
+    if (this.iframes > 0 || this.ended) return false;
     if (this.coreActive && this.core.id === 'divine') {
       this.iframes = RUN.contactIframes;
-      return;
+      return false;
     }
     const cg = this.core.gain;
     if (cg.hurt) this.addCore(cg.hurt * Math.max(1, (dmg / this.stats.maxHp) * 20), true);
@@ -791,7 +833,7 @@ export class Run {
     if (block && this.rand() < Math.min(0.6, block)) {
       this.iframes = RUN.contactIframes;
       this.fx.push({ kind: 'text', x: this.x, y: this.y, t: 0, dur: 0.6, r: 0, color: '#9fb4d0', text: 'Block' });
-      return;
+      return false;
     }
     let d = dmg * (1 - this.stats.armor);
     this.lastHurt = this.t;
@@ -813,6 +855,7 @@ export class Run {
       this.fx.push({ kind: 'nova', x: this.x, y: this.y, t: 0, dur: 0.35, r: R, color: '#ff8a5c' });
       this.forEnemiesIn(this.x, this.y, R, (e) => this.hitEnemy(e, rd, -2, true, 420));
     }
+    return d > 0;
   }
 
   // ---------------------------------------------------------------- spawning
@@ -833,19 +876,19 @@ export class Run {
 
   private makeEnemy(def: EnemyDef, x: number, y: number, elite = false): Enemy {
     const curse = this.stats.curse;
-    const hpScale = enemyHpScale(this.t) * (1 + curse * 0.6) * (1 + this.overtime * RUN.overtimeHp);
+    const hpScale = enemyHpScale(this.runT) * (1 + curse * 0.6) * (1 + this.overtime * RUN.overtimeHp);
     const r = elite ? def.r * ELITE.rMult : def.r;
     const hp = def.hp * hpScale * (elite ? ELITE.hpMult : 1);
     return {
       id: this.nextId++, def, x, y, r, hp, maxHp: hp, speed: def.speed * (elite ? 0.9 : 1) * (0.92 + this.rand() * 0.16),
-      dmg: def.dmg * (1 + this.t / 600) * (elite ? ELITE.dmgMult : 1), xp: def.xp * (elite ? ELITE.xpMult : 1),
+      dmg: def.dmg * (1 + this.runT / 600) * (elite ? ELITE.dmgMult : 1), xp: def.xp * (elite ? ELITE.xpMult : 1),
       color: elite ? ELITE.color : def.color, elite, boss: 0, name: '', slowUntil: 0, hitFlash: 0, cd: 1 + this.rand() * 2,
-      kx: 0, ky: 0, dead: false, angle: 0, moving: true, touchCd: 0, move: '', moveT: 0, dirX: 0, dirY: 0, spawnT: 0.35, marked: false, burnDps: 0, burnUntil: 0,
+      kx: 0, ky: 0, dead: false, angle: 0, moving: true, touchCd: 0, move: '', moveT: 0, dirX: 0, dirY: 0, spawnT: 0.35, z: 0, marked: false, burnDps: 0, burnUntil: 0,
     };
   }
 
   private pickEnemyDef(): EnemyDef {
-    const m = this.t / 60;
+    const m = this.runT / 60;
     const pool = ENEMIES.filter((e) => e.from <= m);
     let tot = pool.reduce((a, e) => a + e.weight, 0) * this.rand();
     for (const e of pool) {
@@ -857,7 +900,7 @@ export class Run {
 
   private spawn(dt: number) {
     const bossAlive = !!this.boss && !this.boss.dead;
-    this.spawnAcc += spawnRate(Math.min(this.t, RUN.length)) * (1 + this.stats.curse) * (bossAlive ? 0.55 : 1) * (1 + this.overtime / 60) * dt;
+    this.spawnAcc += spawnRate(Math.min(this.runT, RUN.length)) * (1 + this.stats.curse) * (bossAlive ? 0.55 : 1) * (1 + this.overtime / 60) * dt;
     while (this.spawnAcc >= 1) {
       this.spawnAcc--;
       if (this.enemies.length >= RUN.maxEnemies) continue;
@@ -877,7 +920,7 @@ export class Run {
     }
     // swarms: a ring of slimes closing in every two minutes
     this.swarmT -= dt;
-    if (this.swarmT <= 0 && this.t < RUN.length) {
+    if (this.swarmT <= 0 && this.runT < RUN.length) {
       this.swarmT = 120;
       const n = 36 + Math.floor(this.t / 60) * 4;
       for (let i = 0; i < n; i++) {
@@ -889,11 +932,11 @@ export class Run {
       }
       this.notice('A swarm closes in! Jump over them (Space).', '#ff8c42', '🌊');
     }
-    if (!this.bossSpawned[0] && this.t >= RUN.miniBossAt) {
+    if (!this.bossSpawned[0] && this.runT >= RUN.miniBossAt) {
       this.bossSpawned[0] = true;
-      this.spawnBoss(MINI_BOSS, 1);
+      if (!this.lairCleared) this.notice('King Jelly grows restless. Its lair is marked on your map.', '#6ccf5a', '👑');
     }
-    if (!this.bossSpawned[1] && this.t >= RUN.length) {
+    if (!this.bossSpawned[1] && this.runT >= RUN.length) {
       this.bossSpawned[1] = true;
       this.spawnBoss(FINAL_BOSS, 2);
     }
@@ -907,7 +950,7 @@ export class Run {
     const e: Enemy = {
       id: this.nextId++, def: null, x: p.x, y: p.y, r: def.r, hp, maxHp: hp, speed: def.speed, dmg: def.dmg, xp: tier === 1 ? 120 : 400,
       color: def.color, elite: false, boss: tier, name: def.name, slowUntil: 0, hitFlash: 0, cd: 2.5, kx: 0, ky: 0, dead: false,
-      angle: 0, moving: true, touchCd: 0, move: '', moveT: 0, dirX: 0, dirY: 0, spawnT: 0.6, marked: false, burnDps: 0, burnUntil: 0,
+      angle: 0, moving: true, touchCd: 0, move: '', moveT: 0, dirX: 0, dirY: 0, spawnT: 0.6, z: 0, marked: false, burnDps: 0, burnUntil: 0,
     };
     this.enemies.push(e);
     this.boss = e;
@@ -994,6 +1037,7 @@ export class Run {
         e.spawnT -= dt;
         continue;
       }
+      if (e.boss === 3) continue; // King Jelly's slimes move in jelly.ts
       if (e.boss) {
         this.updateBoss(e, dt);
         continue;
@@ -1170,6 +1214,17 @@ export class Run {
       dmg *= 1.2 + this.stats.critDmg;
     }
     this.lastCrit = crit;
+    if (e.boss === 3 && this.jelly) {
+      // King Jelly: every slime shares one HP pool
+      if (this.jelly.done) return false;
+      if (w >= 0 && this.weapons[w]) this.weapons[w].total += dmg;
+      if (w >= 0 && def && !this.coreActive && this.coreTagMatch(def)) this.addCore(this.core.gain.hit + (crit ? this.core.gain.crit ?? 0 : 0));
+      if (e.hitFlash < -0.25) e.hitFlash = 0.07;
+      if (this.fx.length < 220 && (crit || this.rand() < 0.5))
+        this.fx.push({ kind: 'text', x: e.x + (this.rand() - 0.5) * 20, y: e.y, t: 0, dur: 0.6, r: 0, color: crit ? '#ffd166' : '#ffffff', text: String(Math.round(dmg)), crit });
+      this.jelly.damage(dmg);
+      return false;
+    }
     // the class resource builds from the right kind of hits
     if (w >= 0 && def && !this.coreActive) {
       const g = this.core.gain;
@@ -1229,6 +1284,7 @@ export class Run {
   }
 
   private kill(e: Enemy) {
+    if (e.boss === 3) return;
     e.dead = true;
     this.kills++;
     if (this.core.gain.kill && !this.coreActive) this.addCore(this.core.gain.kill);
@@ -1260,7 +1316,7 @@ export class Run {
     }
     if (this.hasProc('lifesteal')) this.heal(1);
     if (this.hasProc('bomb') && this.rand() < 0.1) {
-      const dmg = 25 * (1 + s.dmg) * (1 + this.t / 120);
+      const dmg = 25 * (1 + s.dmg) * (1 + this.runT / 120);
       this.fx.push({ kind: 'boom', x: e.x, y: e.y, t: 0, dur: 0.35, r: 90, color: '#ff8c42' });
       this.forEnemiesIn(e.x, e.y, 90, (o) => o !== e && this.hitEnemy(o, dmg, -2, false));
     }
@@ -1368,7 +1424,7 @@ export class Run {
       this.stormT -= dt;
       if (this.stormT <= 0) {
         this.stormT = 4;
-        const dmg = 30 * (1 + this.stats.dmg) * (1 + this.t / 100);
+        const dmg = 30 * (1 + this.stats.dmg) * (1 + this.runT / 100);
         for (let k = 0; k < 4; k++) {
           const e = this.randomNear(this.x, this.y, 600);
           if (!e) break;
@@ -1655,7 +1711,11 @@ export class Run {
   private updateTelegraphs(dt: number) {
     for (const tg of this.telegraphs) {
       tg.t += dt;
-      if (tg.t >= tg.dur && tg.dmg > 0) {
+      if (tg.t >= tg.dur && tg.pct !== undefined) {
+        // King Jelly landings and globs
+        this.fx.push({ kind: 'boom', x: tg.x, y: tg.y, t: 0, dur: 0.3, r: tg.r, color: tg.slimed ? '#6ccf5a' : '#9be38a' });
+        this.jelly?.landed(tg);
+      } else if (tg.t >= tg.dur && tg.dmg > 0) {
         this.fx.push({ kind: 'boom', x: tg.x, y: tg.y, t: 0, dur: 0.35, r: tg.r, color: '#ff5c5c' });
         // jumping does not save you from a slam: get out of the circle
         if (dist2(tg.x, tg.y, this.x, this.y) < (tg.r + this.r * 0.5) ** 2) {
@@ -1710,6 +1770,12 @@ export class Run {
   }
 
   private updateObjects(dt: number) {
+    // the lair: E at the door to go in, E at the exit portal once King Jelly is down
+    if (!this.inLair && !this.lairCleared && dist2(this.lairDoor.x, this.lairDoor.y, this.x, this.y) < 90 * 90) {
+      if (this.input.interact) this.enterLair();
+    } else if (this.inLair && this.jelly?.done && dist2(this.jelly.exit.x, this.jelly.exit.y, this.x, this.y) < 90 * 90) {
+      if (this.input.interact || this.auto) this.exitLair();
+    }
     // chests: walk up and press E (free ones from elites and bosses open on touch)
     for (const c of this.chests) {
       if (c.opened) continue;
@@ -1743,7 +1809,7 @@ export class Run {
     let pool: ItemDef[] = [];
     while (idx >= 0 && !pool.length) {
       const want = RUN_RARITIES[idx--].id;
-      pool = ITEMS.filter((i) => i.rarity === want);
+      pool = ITEMS.filter((i) => i.rarity === want && !i.bossOnly);
     }
     // procs that don't stack: prefer something new
     const fresh = pool.filter((i) => !i.proc || !this.hasProc(i.proc));
@@ -1775,6 +1841,99 @@ export class Run {
   }
 
   // ---------------------------------------------------------------- AUTO (sim bot)
+  // ---------------------------------------------------------------- the lair
+  spawnJellySlime(x: number, y: number, r: number, name: string): Enemy {
+    const e: Enemy = {
+      id: this.nextId++, def: null, x, y, r, hp: 1, maxHp: 1, speed: 0, dmg: 0, xp: 0, color: JELLY.color, elite: false, boss: 3, name,
+      slowUntil: 0, hitFlash: 0, cd: 0, kx: 0, ky: 0, dead: false, angle: 0, moving: false, touchCd: 0, move: '', moveT: 0, dirX: 0, dirY: 0,
+      spawnT: 0.4, z: 0, marked: false, burnDps: 0, burnUntil: 0,
+    };
+    this.enemies.push(e);
+    return e;
+  }
+  enterLair() {
+    if (this.inLair || this.lairCleared) return;
+    this.world = { map: this.map, enemies: this.enemies, pickups: this.pickups, chests: this.chests, shrines: this.shrines, boss: this.boss, x: this.x, y: this.y };
+    this.enemies = [];
+    this.pickups = [];
+    this.chests = [];
+    this.shrines = [];
+    this.inLair = true;
+    this.startJelly();
+    this.notice('The lair of King Jelly. Slip through the gaps in its rings. 10 Slimed and you are done.', '#6ccf5a', '👑');
+  }
+  private startJelly() {
+    this.enemies = [];
+    this.shots = [];
+    this.pools = [];
+    this.falling = [];
+    this.telegraphs = [];
+    this.jelly = new JellyFight(this, this.level);
+    this.map = this.jelly.map;
+    this.x = this.jelly.entrance.x;
+    this.y = this.jelly.entrance.y;
+    this.rootUntil = 0;
+    this.slowedUntil = 0;
+    for (const a of this.allies) {
+      a.x = this.x;
+      a.y = this.y;
+    }
+    this.boss = this.jelly.main ?? null;
+  }
+  /** Testing: start the fight over (full HP, fresh King Jelly). */
+  restartLair() {
+    if (!this.inLair) return;
+    this.hp = this.stats.maxHp;
+    this.startJelly();
+  }
+  jellyDefeated() {
+    const j = this.jelly!;
+    const at = this.main0(j);
+    for (const s of j.slimes) s.dead = true;
+    j.rings = [];
+    j.goo = [];
+    this.telegraphs = [];
+    this.boss = null;
+    this.kills++;
+    this.gainXp(xpToNext(this.level) * 2);
+    this.heal(this.stats.maxHp);
+    this.coreMeter = CORE_MAX;
+    this.items.push(ITEM.royaljelly);
+    this.recalc();
+    for (let i = 0; i < 3; i++) this.chests.push({ x: at.x + (i - 1) * 80, y: at.y + 60, cost: 0, opened: false, free: true });
+    this.notice('King Jelly is defeated! Royal Jelly: +40 max HP, +1 HP regen. The portal home is open.', '#ffd166', '👑');
+  }
+  private main0(j: JellyFight) {
+    const m = j.main ?? j.slimes[0];
+    return m ? { x: m.x, y: m.y } : j.centre;
+  }
+  exitLair() {
+    if (!this.inLair || !this.world) return;
+    const w = this.world;
+    this.map = w.map;
+    this.enemies = w.enemies;
+    this.pickups = w.pickups;
+    this.chests = w.chests;
+    this.shrines = w.shrines;
+    this.boss = w.boss;
+    this.x = w.x;
+    this.y = w.y + 120;
+    this.shots = [];
+    this.pools = [];
+    this.falling = [];
+    this.telegraphs = [];
+    this.inLair = false;
+    this.lairCleared = true;
+    this.jelly = null;
+    this.world = null;
+    this.rootUntil = 0;
+    this.slowedUntil = 0;
+    for (const a of this.allies) {
+      a.x = this.x;
+      a.y = this.y;
+    }
+  }
+
   // ---------------------------------------------------------------- class resource + ultimate
   get core(): CoreDef {
     return this.branch?.core ?? CLASS_CORE[this.job];
@@ -1941,6 +2100,8 @@ export class Run {
             if (along > -tg.r && along < tg.line.len + tg.r && side < tg.r + this.r + 20) score -= 6;
           } else if (dist2(px, py, tg.x, tg.y) < (tg.r + this.r + 15) ** 2) score -= 6;
         }
+        if (this.jelly) for (const g of this.jelly.goo) if (dist2(px, py, g.x, g.y) < (g.r + this.r + 10) ** 2) score -= 5;
+        if (this.jelly?.ringDanger(px, py, 0.4 * k)) score -= 7;
         for (const s of this.shots) {
           if (!s.enemy || s.life <= 0) continue;
           const sx = s.x + s.vx * 0.4 * k;
@@ -1958,6 +2119,7 @@ export class Run {
     if (bx || by) this.autoDir = { x: bx, y: by };
     this.input.moveX = bx;
     this.input.moveY = by;
+    if (this.jelly?.ringThreat() && JELLY.jumpRings) this.input.jump = true;
     // hop over anything about to touch you
     for (const e of near) {
       if (e.spawnT > 0) continue;

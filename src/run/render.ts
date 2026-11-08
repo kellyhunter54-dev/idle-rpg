@@ -4,6 +4,7 @@ import { TILE, Tile } from '../map';
 import * as PX from '../pixel';
 import { RUN, RUN_RARITIES, SHRINE_RADIUS, SHRINE_TIME } from './data';
 import { Enemy, Run } from './run';
+import { JELLY } from './jelly';
 import * as SP from './sprites';
 
 const FONT = '"Pixelify Sans", Georgia, serif';
@@ -186,6 +187,7 @@ export class RunRenderer {
     const minTy = Math.max(0, Math.floor(tr.y / TILE) - 1);
     const maxTy = Math.min(map.h - 1, Math.ceil(bl.y / TILE) + 1);
 
+    const lair = map.kind === 'lair';
     // ---- floor ----
     for (let ty = minTy; ty <= maxTy; ty++)
       for (let tx = minTx; tx <= maxTx; tx++) {
@@ -193,7 +195,10 @@ export class RunRenderer {
         const cx = (tx + 0.5) * TILE;
         const cy = (ty + 0.5) * TILE;
         const v = (map.variant[i] * 3 + tx * 7 + ty * 13) & 15;
-        this.blit(ctx, PX.groundTile(0, v, tx, ty), this.px(cx, cy), this.py(cx, cy), PX.TILE_W / 2, PX.TILE_H / 2);
+        if (lair) {
+          if (map.tiles[i] === Tile.Rock) continue;
+          this.blit(ctx, PX.stoneTile(LAIR_ROCK, v & 3), this.px(cx, cy), this.py(cx, cy), PX.TILE_W / 2, PX.TILE_H / 2);
+        } else this.blit(ctx, PX.groundTile(0, v, tx, ty), this.px(cx, cy), this.py(cx, cy), PX.TILE_W / 2, PX.TILE_H / 2);
       }
 
     // ---- ground layer (crisp vector shapes) ----
@@ -291,10 +296,118 @@ export class RunRenderer {
       f.stroke();
       f.setLineDash([]);
     }
+    // King Jelly: goo, rings with gaps
+    if (run.jelly) {
+      const j = run.jelly;
+      for (const g of j.goo) {
+        const left = Math.min(1, (g.until - run.t) * 1.5);
+        f.globalAlpha = 0.75 * left;
+        f.fillStyle = '#4fa83a';
+        f.beginPath();
+        f.arc(g.x, g.y, g.r, 0, Math.PI * 2);
+        f.fill();
+        f.globalAlpha = 0.9 * left;
+        f.fillStyle = '#9be38a';
+        f.beginPath();
+        f.arc(g.x - g.r * 0.3, g.y - g.r * 0.3, g.r * 0.3, 0, Math.PI * 2);
+        f.fill();
+      }
+      // rings stop at the walls
+      f.save();
+      f.beginPath();
+      f.arc(j.centre.x, j.centre.y, 10 * TILE, 0, Math.PI * 2);
+      f.clip();
+      for (const ring of j.rings) {
+        if (ring.r <= 0) continue;
+        f.globalAlpha = ring.hit ? 0.35 : 0.85;
+        f.strokeStyle = '#6ccf5a';
+        f.lineWidth = JELLY.waveWidth;
+        const gapHalf = JELLY.waveGapHalf;
+        const gs = [...ring.gaps].map((g) => ((g % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2)).sort((a, b) => a - b);
+        for (let gi = 0; gi < gs.length; gi++) {
+          const a0 = gs[gi] + gapHalf;
+          const a1 = (gi + 1 < gs.length ? gs[gi + 1] : gs[0] + Math.PI * 2) - gapHalf;
+          if (a1 <= a0) continue;
+          f.beginPath();
+          f.arc(ring.x, ring.y, ring.r, a0, a1);
+          f.stroke();
+        }
+        f.globalAlpha = ring.hit ? 0.2 : 0.6;
+        f.strokeStyle = '#d6ff9e';
+        f.lineWidth = 6;
+        for (let gi = 0; gi < gs.length; gi++) {
+          const a0 = gs[gi] + gapHalf;
+          const a1 = (gi + 1 < gs.length ? gs[gi + 1] : gs[0] + Math.PI * 2) - gapHalf;
+          if (a1 <= a0) continue;
+          f.beginPath();
+          f.arc(ring.x, ring.y, ring.r + JELLY.waveWidth * 0.35, a0, a1);
+          f.stroke();
+        }
+      }
+      f.restore();
+    }
+    // the lair door on the world map: a swirling dark pool
+    if (!lair && !run.lairCleared) {
+      const d = run.lairDoor;
+      f.globalAlpha = 0.9;
+      f.fillStyle = '#1b2a14';
+      f.beginPath();
+      f.arc(d.x, d.y, 80, 0, Math.PI * 2);
+      f.fill();
+      f.strokeStyle = '#6ccf5a';
+      f.lineWidth = 8;
+      for (let k = 0; k < 3; k++) {
+        f.globalAlpha = 0.7 - k * 0.2;
+        f.beginPath();
+        f.arc(d.x, d.y, 30 + ((time * 25 + k * 18) % 54), 0, Math.PI * 2);
+        f.stroke();
+      }
+    }
+    if (lair && run.jelly?.done) {
+      const ex = run.jelly.exit;
+      f.globalAlpha = 0.85;
+      f.fillStyle = '#ffd166';
+      f.beginPath();
+      f.arc(ex.x, ex.y, 50 + Math.sin(time * 4) * 6, 0, Math.PI * 2);
+      f.fill();
+    }
     // boss telegraphs: faint outline, the fill grows until it lands
     for (const tg of run.telegraphs) {
       const p = Math.max(0, tg.t / tg.dur);
       if (tg.t < 0) continue;
+      if (tg.style) {
+        // jelly landings: faint outline, the fill grows with the jump's travel time
+        const col = tg.style === 'spout' ? '#6ccf5a' : tg.slimed ? '#ff5c5c' : '#ff8a5c';
+        f.globalAlpha = 0.6;
+        f.strokeStyle = col;
+        f.lineWidth = 4;
+        f.beginPath();
+        f.arc(tg.x, tg.y, tg.r, 0, Math.PI * 2);
+        f.stroke();
+        if (tg.style === 'wave') {
+          f.globalAlpha = 0.4;
+          f.beginPath();
+          f.arc(tg.x, tg.y, tg.r + 16, 0, Math.PI * 2);
+          f.stroke();
+        }
+        f.globalAlpha = 0.12 + 0.4 * p;
+        f.fillStyle = col;
+        f.beginPath();
+        f.arc(tg.x, tg.y, tg.r * p, 0, Math.PI * 2);
+        f.fill();
+        if (tg.from && tg.style !== 'spout') {
+          // dotted line from where the slime jumped
+          f.globalAlpha = 0.45;
+          f.setLineDash([10, 14]);
+          f.lineWidth = 3;
+          f.beginPath();
+          f.moveTo(tg.from.x, tg.from.y);
+          f.lineTo(tg.x, tg.y);
+          f.stroke();
+          f.setLineDash([]);
+        }
+        continue;
+      }
       if (tg.line) {
         const L = tg.line;
         const nx = -L.dy;
@@ -439,7 +552,7 @@ export class RunRenderer {
     for (let ty = minTy; ty <= maxTy; ty++)
       for (let tx = minTx; tx <= maxTx; tx++) {
         const tile = map.tiles[ty * map.w + tx];
-        if (tile === Tile.Tree || tile === Tile.Rock) push((tx + ty + 1) * TILE, 0, ty * map.w + tx);
+        if (tile === Tile.Tree || tile === Tile.Pillar || (tile === Tile.Rock && (!lair || this.touchesFloor(run, tx, ty)))) push((tx + ty + 1) * TILE, 0, ty * map.w + tx);
       }
     run.enemies.forEach((e, i) => {
       if (e.dead) return;
@@ -466,7 +579,15 @@ export class RunRenderer {
         // trees in front of the hero fade so you never lose yourself
         const front = x + y > run.x + run.y && Math.abs(sx - w / 2) < 40 && sy - h * 0.54 < 90 && sy > h * 0.5;
         const alpha = front ? 0.45 : 1;
-        if (map.tiles[it.i] === Tile.Tree) {
+        if (lair) {
+          if (map.tiles[it.i] === Tile.Pillar) {
+            const img = PX.brazier(LAIR_ROCK, Math.floor(time * 8 + tx * 3) % 3);
+            this.blit(ctx, img, sx, sy, img.width >> 1, img.height - 1);
+          } else {
+            const img = PX.wallBlock(LAIR_ROCK, v & 3);
+            this.blit(ctx, img, sx, sy, img.width >> 1, PX.TILE_H / 2, false, alpha);
+          }
+        } else if (map.tiles[it.i] === Tile.Tree) {
           const img = v % 4 === 3 ? PX.pineTree(0, v % 4) : PX.leafyTree(0, v % 4);
           this.blit(ctx, PX.shadowSprite(22), sx, sy, 11, 4, false, alpha);
           this.blit(ctx, img, sx, sy + 4 * B, img.width >> 1, img.height - 1, (v & 4) !== 0, alpha);
@@ -694,18 +815,32 @@ export class RunRenderer {
     this.drawMinimap(run);
   }
 
+  private touchesFloor(run: Run, tx: number, ty: number): boolean {
+    const m = run.map;
+    for (let dy = -1; dy <= 1; dy++)
+      for (let dx = -1; dx <= 1; dx++) {
+        const x = tx + dx;
+        const y = ty + dy;
+        if (x < 0 || y < 0 || x >= m.w || y >= m.h) continue;
+        const t = m.tiles[y * m.w + x];
+        if (t === Tile.Floor || t === Tile.Altar) return true;
+      }
+    return false;
+  }
+
   private drawEnemy(e: Enemy, time: number) {
     const ctx = this.ctx;
     const B = this.block;
     const grow = e.spawnT > 0 ? 1 - e.spawnT / 0.6 : 1;
     if (grow <= 0.05) return;
     const sx = this.px(e.x, e.y);
-    const sy = this.py(e.x, e.y);
+    const sy0 = this.py(e.x, e.y);
+    const sy = this.py(e.x, e.y, e.z);
     const r = Math.max(3, Math.round(e.r * 0.27 * grow));
     const frame = Math.round(Math.sin(time * (e.def ? 9 : 5) + e.id));
     const charging = e.move === 'charge' && e.moveT >= 0.55;
     const img = PX.slime(e.color, r, frame, e.hitFlash > 0 ? 'hit' : charging ? 'wind' : '');
-    this.blit(ctx, PX.shadowSprite(Math.max(8, r * 2)), sx, sy + B, Math.max(8, r * 2) >> 1, 3);
+    this.blit(ctx, PX.shadowSprite(Math.max(8, r * 2)), sx, sy0 + B, Math.max(8, r * 2) >> 1, 3);
     this.blit(ctx, img, sx, sy + B, img.width >> 1, img.height - 1);
     const top = sy - (img.height - 2) * B;
     const d = this.screenDir(e.angle);
@@ -718,7 +853,12 @@ export class RunRenderer {
       ctx.fillRect((ex - gap) * B, ey * B, B, eh * B);
       ctx.fillRect((ex + gap) * B, ey * B, B, eh * B);
     }
-    if (e.boss) {
+    if (e.boss === 3) {
+      if (e.name === JELLY.name) {
+        const c = PX.crown();
+        this.blit(ctx, c, sx, top - B, c.width >> 1, c.height);
+      }
+    } else if (e.boss) {
       const hl = PX.horn(false);
       const hr = PX.horn(true);
       this.blit(ctx, hl, sx - r * 0.55 * B, top + 2 * B, hl.width, hl.height);
@@ -812,7 +952,7 @@ export class RunRenderer {
     o.fillRect(x0 - 1, y0 - 1, size + 2, size + 2);
     o.imageSmoothingEnabled = false;
     o.drawImage(this.mini, x0, y0, size, size);
-    const s = size / run.arenaSize;
+    const s = size / (run.map.w * TILE);
     const dot = (wx: number, wy: number, c: string, r: number) => {
       o.fillStyle = '#0b0806';
       o.fillRect(Math.round(x0 + wx * s - r - 1), Math.round(y0 + wy * s - r - 1), r * 2 + 2, r * 2 + 2);
@@ -820,11 +960,14 @@ export class RunRenderer {
       o.fillRect(Math.round(x0 + wx * s - r), Math.round(y0 + wy * s - r), r * 2, r * 2);
     };
     for (const sh of run.shrines) if (!sh.used) dot(sh.x, sh.y, '#8fd3ff', 2);
+    if (!run.inLair && !run.lairCleared) dot(run.lairDoor.x, run.lairDoor.y, '#6ccf5a', 3);
     for (const c of run.chests) if (!c.opened) dot(c.x, c.y, c.free ? '#fff1a8' : '#e0b84a', 1.5);
     for (const e of run.enemies) if (!e.dead && (e.elite || e.boss)) dot(e.x, e.y, e.boss ? '#ff3b3b' : '#e0b84a', e.boss ? 3 : 2);
     dot(run.x, run.y, '#ffffff', 2);
   }
 }
+
+const LAIR_ROCK = '#6b6b5e';
 
 function text(c: CanvasRenderingContext2D, s: string, x: number, y: number) {
   c.lineWidth = 3;

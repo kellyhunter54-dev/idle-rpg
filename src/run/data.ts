@@ -433,6 +433,8 @@ export interface ItemDef {
   stats?: Partial<Record<PStat, number>>;
   /** special effects handled in run.ts */
   proc?: 'lifesteal' | 'thorns' | 'bomb' | 'revive' | 'storm' | 'frenzy';
+  /** only from King Jelly, never from chests */
+  bossOnly?: boolean;
 }
 export const ITEMS: ItemDef[] = [
   { id: 'coin', name: 'Lucky Coin', icon: '🪙', rarity: 'common', desc: '+10 luck', stats: { luck: 10 } },
@@ -450,6 +452,7 @@ export const ITEMS: ItemDef[] = [
   { id: 'hilt', name: 'Heavy Hilt', icon: '🗡️', rarity: 'rare', desc: '+20% damage', stats: { dmg: 0.2 } },
   { id: 'bottle', name: 'Storm Bottle', icon: '🫙', rarity: 'epic', desc: 'Every 4s lightning hits 4 foes', proc: 'storm' },
   { id: 'drum', name: 'War Drum', icon: '🥁', rarity: 'epic', desc: 'Under 50% HP: +40% attack speed', proc: 'frenzy' },
+  { id: 'royaljelly', name: 'Royal Jelly', icon: '👑', rarity: 'legendary', desc: 'From King Jelly: +40 max HP, +1 HP regen', stats: { maxHp: 40, regen: 1 }, bossOnly: true },
   { id: 'phoenix', name: 'Phoenix Plume', icon: '🔆', rarity: 'legendary', desc: 'Revive once at full HP', proc: 'revive' },
 ];
 export const ITEM: Record<string, ItemDef> = Object.fromEntries(ITEMS.map((i) => [i.id, i]));
@@ -516,7 +519,7 @@ export interface BossDef {
   dmg: number;
 }
 export const MINI_BOSS: BossDef = { name: 'Bog Warden', color: '#4f9d69', r: 70, hp: 24000, speed: 95, dmg: 20 };
-export const FINAL_BOSS: BossDef = { name: 'The Gloom Tide', color: '#7a3fb5', r: 95, hp: 260000, speed: 105, dmg: 28 };
+export const FINAL_BOSS: BossDef = { name: 'The Gloom Tide', color: '#7a3fb5', r: 95, hp: 420000, speed: 105, dmg: 28 };
 
 // ---------------------------------------------------------------- levels
 export function xpToNext(level: number): number {

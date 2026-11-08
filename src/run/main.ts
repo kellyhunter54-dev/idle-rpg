@@ -4,6 +4,7 @@ import { JobId } from '../data';
 import * as PX from '../pixel';
 import { ABILITY_LEVELS, ADVANCE_LEVELS, CLASS_CORE, CORE_MAX, BRANCHES, HEROES, ITEM, PASSIVE, PASSIVES, RUN, RUN_RARITIES, WEAPON } from './data';
 import { setupRunInput } from './input';
+import { JELLY } from './jelly';
 import { RunRenderer } from './render';
 import { Run } from './run';
 
@@ -228,14 +229,15 @@ function updateHud(r: Run) {
   $('rhud').classList.toggle('low', r.hp < s.maxHp * 0.3);
   setWidth('xpfill', r.xp / r.xpNeed);
   setText('xptext', `Lv ${r.level}`);
-  if (r.t < RUN.length) {
+  if (r.runT < RUN.length) {
     setText('timer', fmtTime(r.timeLeft));
-    setText('clocksub', r.t < RUN.miniBossAt ? `${r.boss ? '' : 'warden in ' + fmtTime(RUN.miniBossAt - r.t)}` : 'until the tide');
+    setText('clocksub', r.inLair ? 'paused in the lair' : r.lairCleared ? 'until the tide' : 'King Jelly\'s lair is open');
   } else {
     setText('timer', r.boss ? 'TIDE' : `+${fmtTime(r.overtime)}`);
     setText('clocksub', 'beat the Gloom Tide');
   }
-  $('clock').classList.toggle('danger', r.t >= RUN.length || r.timeLeft < 30);
+  $('clock').classList.toggle('hidden', r.inLair);
+  $('clock').classList.toggle('danger', !r.inLair && (r.runT >= RUN.length || r.timeLeft < 30));
   // auto attack + the 4 abilities (locked ones dimmed with their unlock level)
   const ws = [0, 1, 2, 3, 4].map((k) => {
     const w = r.weapons[k];
@@ -273,6 +275,13 @@ function updateHud(r: Run) {
   if (near) hint = r.gold >= r.chestCost ? `E: open chest (${r.chestCost} gold)` : `Chest: needs ${r.chestCost} gold`;
   const sh = r.shrines.find((x) => !x.used && x.charge > 0);
   if (!hint && sh) hint = 'Stay in the shrine...';
+  if (!hint && !r.inLair && !r.lairCleared && Math.hypot(r.lairDoor.x - r.x, r.lairDoor.y - r.y) < 90) hint = "E: enter King Jelly's lair (the run clock pauses inside)";
+  if (!hint && r.inLair && r.jelly?.done) hint = Math.hypot(r.jelly.exit.x - r.x, r.jelly.exit.y - r.y) < 90 ? 'E: leave the lair' : 'Grab the chests, then walk to the golden portal';
+  // Slimed stacks under the boss bar
+  const sl = r.inLair && r.jelly && !r.jelly.done ? r.jelly.slimed : -1;
+  $('slimed').classList.toggle('hidden', sl < 0);
+  if (sl >= 0) setText('slimed', `Slimed ${sl} / ${JELLY.lethal}`);
+  $('restartbtn').classList.toggle('hidden', !r.inLair);
   $('hint').classList.toggle('hidden', !hint);
   if (hint) setText('hint', hint);
   // notices
@@ -328,6 +337,11 @@ function fmtBig(n: number) {
   return String(Math.round(n));
 }
 
+$('restartbtn').addEventListener('click', () => {
+  if (!run) return;
+  run.restartLair();
+  togglePause();
+});
 $('corebtn').addEventListener('click', () => run?.activateCore());
 $('autocore').addEventListener('change', (e) => {
   const on = (e.target as HTMLInputElement).checked;
