@@ -53,6 +53,15 @@ One connected world split into zones (`ZONES` in `src/data.ts`): Sprout Meadow (
 
 Level is the main source of power (`LEVEL_POWER` in `src/data.ts`): base ATK and HP grow about as fast as monsters do (25% / 22% per level). Growth upgrades are +3% ATK / HP multipliers on top, and gear multiplies again.
 
+## Talents
+
+Each job has one tree (`TALENT_TREES` in `src/data.ts`): Warrior **Blademaster** (attack speed, off-hand strikes, bleeds, armor shred, Blade Dance keystone), Archer **Marksman** (crit, long range, boss stagger, ricochet, Killshot keystone), Mage **Arcane** (mana, Arcane Charges, cooldown reduction, Frost Ward, Mana Shield keystone).
+
+- 1 point per level from Lv 2; unspent points are derived from level (`talentsAvailable`), so changing level never breaks them.
+- Rows unlock every 5 points spent in the tree; the keystone needs 25.
+- Passive numbers are summed in `talentStats` (stats.ts); procs live in `Game.damage`, `Game.playerAttacks`, `Game.tickDots`, `Game.startSkill` and `Game.hurtPlayer`.
+- Respec is free for now; Auto-assign spends points top to bottom.
+
 ## Echoing Hollow (manual-only cave)
 
 A cave mouth in Sprout Meadow leads to a separate cave map (`generateCave`). AUTO is forced off inside. Monsters match your level (up to +2 deeper in) and give 2.5x EXP and 1.5x gold (`caveExpMult`, `caveGoldMult`, `caveLevelBonus` in `BALANCE`).

@@ -20,7 +20,7 @@ export const BALANCE = {
   flaskCharges: 3,
   flaskHeal: 0.45,
   flaskRegen: 45, // seconds per charge while out in the world
-  bossHpMult: [80, 110, 170] as number[], // per zone
+  bossHpMult: [80, 200, 500] as number[], // per zone (later bosses expect more talent points)
   bossRespawn: 30, // seconds before a beaten boss can be fought again
   bossLeash: 900, // boss resets if you run this far from its altar
   bossAtkMult: 1.6,
@@ -232,6 +232,7 @@ export interface SkillDef {
   range?: number; // how far it can be aimed or travel
   delay?: number; // groundAoe delay
   count?: number; // fan projectiles
+  mana?: number; // mana cost (mages)
 }
 
 export interface BasicAttack {
@@ -286,9 +287,9 @@ export const JOBS: Record<JobId, JobDef> = {
     basic: { kind: 'bolt', range: 390, interval: 1.1, mult: 1.2, speed: 650, splash: 55 },
     atkMult: 0.9, hpMult: 0.8, critBonus: 0, damageTaken: 1,
     skills: [
-      { id: 'fireball', name: 'Fireball', type: 'fireball', unlock: 1, cd: 4, mult: 3.5, color: '#f3722c', icon: '🔥', radius: 110, range: 460 },
-      { id: 'nova', name: 'Frost Nova', type: 'spin', unlock: 8, cd: 10, mult: 8, color: '#90e0ef', icon: '❄️', radius: 185 },
-      { id: 'meteor', name: 'Meteor', type: 'groundAoe', unlock: 20, cd: 25, mult: 27, color: '#c77dff', icon: '☄️', radius: 155, range: 460, delay: 0.6 },
+      { id: 'fireball', name: 'Fireball', type: 'fireball', unlock: 1, cd: 4, mana: 15, mult: 3.5, color: '#f3722c', icon: '🔥', radius: 110, range: 460 },
+      { id: 'nova', name: 'Frost Nova', type: 'spin', unlock: 8, cd: 10, mana: 30, mult: 8, color: '#90e0ef', icon: '❄️', radius: 185 },
+      { id: 'meteor', name: 'Meteor', type: 'groundAoe', unlock: 20, cd: 25, mana: 50, mult: 27, color: '#c77dff', icon: '☄️', radius: 155, range: 460, delay: 0.6 },
     ],
   },
 };
@@ -503,3 +504,155 @@ export function levelColor(mobLevel: number, playerLevel: number): string {
   if (d >= -6) return '#7bd389';
   return '#8a8a8a';
 }
+
+// ---------- Talents ----------
+/** Passive numbers a talent can add (per rank). stats.ts sums them into TalentStats. */
+export type TalentStat =
+  | 'atkPct' // +% ATK
+  | 'atkSpeed' // +% attack speed
+  | 'critRate'
+  | 'critDmg'
+  | 'offhandChance' // chance a melee basic attack strikes again with the off-hand
+  | 'offhandRatio' // extra off-hand damage (base 50% of the main hand)
+  | 'bleed' // basic hits bleed for this share of the hit over 4s
+  | 'shred' // each shred stack: target takes +this% damage (max 5 stacks)
+  | 'critShred' // like shred, but only applied by crits
+  | 'bloodlust' // +% attack speed per bleeding enemy nearby (max 5)
+  | 'whirlBonus' // Whirlwind damage, and it applies bleed
+  | 'bleedHeal' // bleed ticks heal this share of max HP
+  | 'longShot' // +% damage to targets more than 250 away
+  | 'pierceBonus' // Piercing Arrow damage
+  | 'stagger' // boss stagger build rate
+  | 'staggerBonus' // +% damage to staggered enemies
+  | 'quickdraw' // seconds off Piercing Arrow per crit
+  | 'ricochet' // chance a crit bounces to another enemy
+  | 'bossDmg' // +% damage to bosses
+  | 'manaRegen' // +% mana regen
+  | 'cdr' // skill cooldown reduction
+  | 'charges' // Arcane Charges: max charges = 2 + this
+  | 'chargeBonus' // extra damage per charge consumed
+  | 'manaTap' // mana restored per bolt hit
+  | 'flux' // seconds off all skill cooldowns per crit
+  | 'surge' // mana refund when casting at max charges
+  | 'frostWard' // Frost Nova damage reduction
+  | 'chargeCrit' // crit chance per charge held
+  | 'hemorrhage' | 'bladeDance' | 'killshot' | 'manaShield'; // keystones / flags
+
+export interface TalentNode {
+  id: string;
+  name: string;
+  icon: string;
+  tier: number; // 0-5 (row)
+  col: number; // 0 or 1 (2 = centre, for keystones)
+  maxRank: number;
+  reqPoints: number; // points spent in this tree before it unlocks
+  keystone?: boolean;
+  perRank: Partial<Record<TalentStat, number>>;
+  /** Description at a given rank (1..maxRank). */
+  desc: (rank: number) => string;
+}
+
+export interface TalentTree {
+  job: JobId;
+  name: string;
+  theme: string;
+  nodes: TalentNode[];
+}
+
+const pct = (x: number) => `${Math.round(x * 1000) / 10}%`;
+
+export const TALENT_TREES: Record<JobId, TalentTree> = {
+  warrior: {
+    job: 'warrior', name: 'Blademaster', theme: 'Dual wield, attack speed and bleeds',
+    nodes: [
+      { id: 'bm_honed', name: 'Honed Edge', icon: '⚔️', tier: 0, col: 0, maxRank: 5, reqPoints: 0, perRank: { atkPct: 0.04 },
+        desc: (r) => `+${pct(0.04 * r)} Attack.` },
+      { id: 'bm_quick', name: 'Quick Hands', icon: '💨', tier: 0, col: 1, maxRank: 5, reqPoints: 0, perRank: { atkSpeed: 0.05 },
+        desc: (r) => `+${pct(0.05 * r)} attack speed.` },
+      { id: 'bm_offhand', name: 'Off-hand Training', icon: '🗡️', tier: 1, col: 0, maxRank: 3, reqPoints: 5, perRank: { offhandChance: 0.12 },
+        desc: (r) => `Basic attacks have a ${pct(0.12 * r)} chance to strike again with your off-hand (50% damage).` },
+      { id: 'bm_serrated', name: 'Serrated Blades', icon: '🩸', tier: 1, col: 1, maxRank: 3, reqPoints: 5, perRank: { bleed: 0.25 },
+        desc: (r) => `Basic hits make enemies bleed for ${pct(0.25 * r)} of the hit over 4s. Stacks up to 5 times.` },
+      { id: 'bm_ambi', name: 'Ambidexterity', icon: '🤺', tier: 2, col: 0, maxRank: 3, reqPoints: 10, perRank: { offhandRatio: 0.15 },
+        desc: (r) => `Off-hand strikes deal +${pct(0.15 * r)} more damage.` },
+      { id: 'bm_rend', name: 'Rending Strikes', icon: '🪓', tier: 2, col: 1, maxRank: 3, reqPoints: 10, perRank: { shred: 0.03 },
+        desc: (r) => `Hits shred armor. Each stack makes the target take +${pct(0.03 * r)} damage (max 5 stacks, 4s).` },
+      { id: 'bm_bloodlust', name: 'Bloodlust', icon: '🔥', tier: 3, col: 0, maxRank: 2, reqPoints: 15, perRank: { bloodlust: 0.04 },
+        desc: (r) => `+${pct(0.04 * r)} attack speed for each bleeding enemy near you (max 5).` },
+      { id: 'bm_whirl', name: 'Whirling Steel', icon: '🌀', tier: 3, col: 1, maxRank: 2, reqPoints: 15, perRank: { whirlBonus: 0.3 },
+        desc: (r) => `Whirlwind deals +${pct(0.3 * r)} damage and makes everything it hits bleed.` },
+      { id: 'bm_hemo', name: 'Hemorrhage', icon: '💉', tier: 4, col: 0, maxRank: 1, reqPoints: 20, perRank: { hemorrhage: 1 },
+        desc: () => 'Bleeds tick 30% faster and can critically hit.' },
+      { id: 'bm_wind', name: 'Second Wind', icon: '❤️', tier: 4, col: 1, maxRank: 3, reqPoints: 20, perRank: { bleedHeal: 0.003 },
+        desc: (r) => `Each bleed tick heals you for ${pct(0.003 * r)} of your max HP.` },
+      { id: 'bm_dance', name: 'Blade Dance', icon: '✴️', tier: 5, col: 2, maxRank: 1, reqPoints: 25, keystone: true, perRank: { bladeDance: 1 },
+        desc: () => 'KEYSTONE. Every 4th basic attack becomes a spinning double strike that hits everything around you twice for 120% and applies 3 bleed stacks.' },
+    ],
+  },
+  archer: {
+    job: 'archer', name: 'Marksman', theme: 'Precision, crits and boss stagger',
+    nodes: [
+      { id: 'mk_steady', name: 'Steady Aim', icon: '🎯', tier: 0, col: 0, maxRank: 5, reqPoints: 0, perRank: { critRate: 0.03 },
+        desc: (r) => `+${pct(0.03 * r)} crit chance.` },
+      { id: 'mk_keen', name: 'Keen Eye', icon: '👁️', tier: 0, col: 1, maxRank: 5, reqPoints: 0, perRank: { critDmg: 0.12 },
+        desc: (r) => `+${pct(0.12 * r)} crit damage.` },
+      { id: 'mk_long', name: 'Long Shot', icon: '🏹', tier: 1, col: 0, maxRank: 3, reqPoints: 5, perRank: { longShot: 0.08 },
+        desc: (r) => `+${pct(0.08 * r)} damage to enemies more than 250 away. Stay back!` },
+      { id: 'mk_called', name: 'Called Shot', icon: '➶', tier: 1, col: 1, maxRank: 3, reqPoints: 5, perRank: { pierceBonus: 0.35 },
+        desc: (r) => `Piercing Arrow deals +${pct(0.35 * r)} damage.` },
+      { id: 'mk_concuss', name: 'Concussive Shots', icon: '💫', tier: 2, col: 0, maxRank: 3, reqPoints: 10, perRank: { stagger: 1 },
+        desc: (r) => `Your hits build stagger on bosses (${['', 'slowly', 'steadily', 'quickly'][r]}). A full meter stuns the boss for 2.5s.` },
+      { id: 'mk_weak', name: 'Weak Spot', icon: '🩻', tier: 2, col: 1, maxRank: 3, reqPoints: 10, perRank: { critShred: 0.04 },
+        desc: (r) => `Crits expose a weak spot: each stack makes the target take +${pct(0.04 * r)} damage (max 5 stacks, 4s).` },
+      { id: 'mk_exploit', name: 'Exploit Weakness', icon: '⚡', tier: 3, col: 0, maxRank: 3, reqPoints: 15, perRank: { staggerBonus: 0.15 },
+        desc: (r) => `Staggered enemies take +${pct(0.15 * r)} damage from you.` },
+      { id: 'mk_quick', name: 'Quickdraw', icon: '⏱️', tier: 3, col: 1, maxRank: 2, reqPoints: 15, perRank: { quickdraw: 0.4 },
+        desc: (r) => `Crits take ${(0.4 * r).toFixed(1)}s off Piercing Arrow's cooldown.` },
+      { id: 'mk_rico', name: 'Ricochet', icon: '↩️', tier: 4, col: 0, maxRank: 2, reqPoints: 20, perRank: { ricochet: 0.2 },
+        desc: (r) => `Crits have a ${pct(0.2 * r)} chance to bounce to another enemy nearby.` },
+      { id: 'mk_hunter', name: "Hunter's Focus", icon: '🦅', tier: 4, col: 1, maxRank: 3, reqPoints: 20, perRank: { bossDmg: 0.1 },
+        desc: (r) => `+${pct(0.1 * r)} damage to bosses.` },
+      { id: 'mk_kill', name: 'Killshot', icon: '☠️', tier: 5, col: 2, maxRank: 1, reqPoints: 25, keystone: true, perRank: { killshot: 1 },
+        desc: () => 'KEYSTONE. Crits against enemies below 30% HP deal triple damage. Stagger lasts twice as long.' },
+    ],
+  },
+  mage: {
+    job: 'mage', name: 'Arcane', theme: 'Mana, charge cycling and cooldowns',
+    nodes: [
+      { id: 'ar_potency', name: 'Arcane Potency', icon: '🔮', tier: 0, col: 0, maxRank: 5, reqPoints: 0, perRank: { atkPct: 0.04 },
+        desc: (r) => `+${pct(0.04 * r)} spell damage.` },
+      { id: 'ar_clarity', name: 'Clear Thoughts', icon: '💧', tier: 0, col: 1, maxRank: 5, reqPoints: 0, perRank: { manaRegen: 0.1 },
+        desc: (r) => `+${pct(0.1 * r)} mana regeneration.` },
+      { id: 'ar_charges', name: 'Arcane Charges', icon: '🔷', tier: 1, col: 0, maxRank: 3, reqPoints: 5, perRank: { charges: 1 },
+        desc: (r) => `Basic bolts build Arcane Charges (max ${2 + r}). Your next skill spends them all for +8% damage each.` },
+      { id: 'ar_quicken', name: 'Quickening', icon: '⏳', tier: 1, col: 1, maxRank: 3, reqPoints: 5, perRank: { cdr: 0.05 },
+        desc: (r) => `Skills cool down ${pct(0.05 * r)} faster.` },
+      { id: 'ar_release', name: 'Charge Release', icon: '💥', tier: 2, col: 0, maxRank: 3, reqPoints: 10, perRank: { chargeBonus: 0.06 },
+        desc: (r) => `Each Arcane Charge spent adds another +${pct(0.06 * r)} damage.` },
+      { id: 'ar_tap', name: 'Mana Tap', icon: '🌊', tier: 2, col: 1, maxRank: 3, reqPoints: 10, perRank: { manaTap: 2 },
+        desc: (r) => `Basic bolts restore ${2 * r} mana when they hit.` },
+      { id: 'ar_flux', name: 'Temporal Flux', icon: '🌀', tier: 3, col: 0, maxRank: 2, reqPoints: 15, perRank: { flux: 0.3 },
+        desc: (r) => `Crits take ${(0.3 * r).toFixed(1)}s off all your skill cooldowns.` },
+      { id: 'ar_surge', name: 'Arcane Surge', icon: '✨', tier: 3, col: 1, maxRank: 2, reqPoints: 15, perRank: { surge: 0.3 },
+        desc: (r) => `Casting a skill at max charges refunds ${pct(0.3 * r)} of its mana.` },
+      { id: 'ar_ward', name: 'Frost Ward', icon: '🛡️', tier: 4, col: 0, maxRank: 2, reqPoints: 20, perRank: { frostWard: 0.12 },
+        desc: (r) => `Frost Nova wraps you in ice: take ${pct(0.12 * r)} less damage for 4s.` },
+      { id: 'ar_focus', name: 'Arcane Focus', icon: '🎓', tier: 4, col: 1, maxRank: 2, reqPoints: 20, perRank: { chargeCrit: 0.025 },
+        desc: (r) => `+${pct(0.025 * r)} crit chance for each Arcane Charge you hold.` },
+      { id: 'ar_shield', name: 'Mana Shield', icon: '🔵', tier: 5, col: 2, maxRank: 1, reqPoints: 25, keystone: true, perRank: { manaShield: 1 },
+        desc: () => 'KEYSTONE. 40% of the damage you take drains mana instead of HP (each 1% of max HP costs 1.5 mana). Skills cost 20% more mana.' },
+    ],
+  },
+};
+
+export const TALENT_NODE: Record<string, TalentNode> = Object.fromEntries(
+  Object.values(TALENT_TREES).flatMap((t) => t.nodes.map((n) => [n.id, n])),
+);
+
+/** One talent point per level from level 2. */
+export function talentPointsForLevel(level: number): number {
+  return Math.max(0, level - 1);
+}
+
+/** Mage mana (the other jobs have none). */
+export const MANA = { base: 100, regen: 10, shieldShare: 0.4, shieldCost: 1.5, keystoneCostMult: 1.2 };

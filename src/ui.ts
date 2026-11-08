@@ -1,13 +1,14 @@
 import {
   BALANCE, COMPANION, COMPANIONS, GROWTH, GrowthKey, RARITIES, RARITY, SLOTS, SLOT_INFO, Slot,
   companionHitMult, companionOwnedAtk, enhanceCopies, expToNext, gearEffect, gearName, parseGear,
-  ZONES, CAVE, bossName, expLevelMult, mobForZone, rarityIndex,
+  TALENT_TREES, ZONES, CAVE, bossName, expLevelMult, mobForZone, rarityIndex,
 } from './data';
 import { fmt, fmtPct, fmtTime } from './format';
 import { Game, OfflineRewards, SummonResult } from './game';
 import { exportSave, importSave, saveGame } from './save';
+import { talentBlocked, talentsAvailable, talentsSpent } from './stats';
 
-type Tab = 'growth' | 'world' | 'gear' | 'companions' | 'summon' | 'info';
+type Tab = 'growth' | 'world' | 'talents' | 'gear' | 'companions' | 'summon' | 'info';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const esc = (t: string) => t.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
@@ -177,6 +178,22 @@ export class UI {
         g.goToCave();
         this.toast(`Walking to the ${CAVE.name}...`, '#c9a227');
         break;
+      case 'talent': {
+        const why = g.allocateTalent(arg);
+        if (why) this.toast(why, '#ff8c3b');
+        break;
+      }
+      case 'talentReset':
+        if (window.confirm('Refund all talent points? (Free for now.)')) {
+          g.resetTalents();
+          this.toast('Talents reset.', '#c9a227');
+        }
+        break;
+      case 'talentAuto': {
+        const n = g.autoAssignTalents();
+        this.toast(n ? `Spent ${n} talent point${n === 1 ? '' : 's'}.` : 'No points to spend.', '#c9a227');
+        break;
+      }
       case 'switch':
         this.onSwitchCharacter();
         return;
@@ -259,6 +276,8 @@ export class UI {
     $('leavebtn').classList.toggle('hidden', !inLair && !g.inCave);
     $('leavebtn').textContent = g.inCave ? 'Leave cave' : 'Leave lair';
 
+    $('talentdot').classList.toggle('hidden', talentsAvailable(s) <= 0);
+
     // Battle HUD
     const ab = $('autobtn');
     ab.classList.toggle('on', g.auto);
@@ -296,6 +315,7 @@ export class UI {
       case 'summon': html = this.summonHtml(); break;
       case 'info': html = this.infoHtml(); break;
       case 'world': html = this.worldHtml(); break;
+      case 'talents': html = this.talentHtml(); break;
     }
     if (!force && html === this.lastPanelHtml) return;
     // keep text typed in the save box
@@ -475,6 +495,48 @@ export class UI {
       <p class="muted small">Earn 💎 from monster drops (${fmtPct(BALANCE.gemDropChance)} per kill) and first-time boss clears (+${BALANCE.bossFirstClearGems}).</p>`;
   }
 
+  private talentHtml(): string {
+    const g = this.game;
+    const s = g.state;
+    const tree = TALENT_TREES[g.job.id];
+    const avail = talentsAvailable(s);
+    const spent = talentsSpent(s);
+    let h = `<div class="tal-head">
+      <div>
+        <h3 style="border:none;margin:0">${g.job.icon} ${tree.name}</h3>
+        <div class="muted small">${tree.theme}</div>
+      </div>
+      <div class="tal-points"><b>${avail}</b><span>point${avail === 1 ? '' : 's'} to spend</span></div>
+    </div>
+    <div class="toolbar">
+      <button class="btn ${avail > 0 ? '' : 'disabled'}" data-action="talentAuto">Auto-assign</button>
+      <button class="btn alt ${spent > 0 ? '' : 'disabled'}" data-action="talentReset">Reset talents (free)</button>
+    </div>
+    <p class="muted small">You earn 1 point per level. Each row unlocks after spending 5 more points in this tree. Tap a talent to rank it up.</p>`;
+    for (let tier = 0; tier <= 5; tier++) {
+      const nodes = tree.nodes.filter((n) => n.tier === tier).sort((a, b) => a.col - b.col);
+      if (!nodes.length) continue;
+      const req = nodes[0].reqPoints;
+      const unlocked = spent >= req;
+      h += `<div class="tal-tier ${unlocked ? '' : 'locked'}"><div class="tal-tierlabel">${tier === 5 ? 'Keystone' : `Row ${tier + 1}`}${req ? ` · needs ${req} points` : ''}${unlocked ? '' : ' 🔒'}</div><div class="tal-row">`;
+      for (const n of nodes) {
+        const r = Math.min(n.maxRank, s.talents[n.id] ?? 0);
+        const blocked = talentBlocked(s, n.id);
+        const state = r >= n.maxRank ? 'maxed' : !blocked ? 'open' : r > 0 ? 'partial' : 'closed';
+        h += `<div class="tal-node ${state} ${n.keystone ? 'keystone' : ''}" data-action="talent" data-arg="${n.id}" title="${blocked && r < n.maxRank ? blocked : ''}">
+          <div class="tal-icon">${n.icon}</div>
+          <div class="tal-body">
+            <div class="tal-name">${n.name} <span class="tal-rank">${r}/${n.maxRank}</span></div>
+            ${r > 0 ? `<div class="tal-now">Now: ${n.desc(r)}</div>` : ''}
+            ${r < n.maxRank ? `<div class="tal-next">${r > 0 ? 'Next' : 'Rank 1'}: ${n.desc(r + 1)}</div>` : ''}
+          </div>
+        </div>`;
+      }
+      h += `</div></div>`;
+    }
+    return h;
+  }
+
   private worldHtml(): string {
     const g = this.game;
     const s = g.state;
@@ -580,7 +642,7 @@ export class UI {
       </div>
       <button class="btn wide" style="background:#7f1d1d;margin-top:12px" data-action="reset">Reset this character to Lv 1</button>
       <p class="small" style="text-align:center;margin-top:16px"><a href="./side/">Play the classic side-scroller version</a></p>
-      <p class="muted small" style="text-align:center">v0.8.0</p>`;
+      <p class="muted small" style="text-align:center">v0.9.0</p>`;
   }
 
   // ---------------- Modals & toasts ----------------

@@ -13,6 +13,7 @@ const rand = () => {
 const job = (process.argv[2] ?? 'warrior') as JobId;
 
 function spend(game: Game) {
+  game.autoAssignTalents();
   for (let i = 0; i < 30; i++) {
     const pick = game.state.growth.hp < game.state.growth.atk * 0.7 ? 'hp' : 'atk';
     const crit = game.state.growth.critRate >= 250 ? 'critDmg' : 'critRate';
@@ -33,7 +34,7 @@ function spend(game: Game) {
 // 1. progress and snapshot
 const snaps = new Map<number, GameState>();
 const want = new Set<number>();
-for (const z of ZONES) for (const d of [0, 3, 6, 9]) want.add(z.bossLevel + d);
+for (const z of ZONES) for (const d of [0, 3, 6]) want.add(z.bossLevel + d);
 const g = new Game(newState('T', job), rand);
 g.summonGear(10);
 g.summonCompanions(10);
@@ -82,7 +83,7 @@ function fight(state: GameState, zone: number, skilled: boolean): { win: boolean
 }
 
 for (let z = 0; z < ZONES.length; z++) {
-  for (const d of [0, 3, 6, 9]) {
+  for (const d of [0, 3, 6]) {
     const lvl = ZONES[z].bossLevel + d;
     const snap = snaps.get(lvl);
     if (!snap) continue;

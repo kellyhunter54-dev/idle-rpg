@@ -30,6 +30,7 @@ while (t < hours * 3600) {
   game.update(dt);
   t += dt;
 
+  game.autoAssignTalents();
   // Spend gold: alternate between ATK and HP, sprinkle crit
   for (let i = 0; i < 20; i++) {
     const options = GROWTH.map((g) => ({ key: g.key, cost: game.state.growth[g.key] >= g.max ? Infinity : game.growthCost(g.key) }));

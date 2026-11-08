@@ -245,6 +245,17 @@ export class Renderer {
       // phase marks at 60% and 25%
       ctx.fillStyle = '#e8d7a9';
       for (const f of BALANCE.bossPhaseAt) ctx.fillRect(x + bw * f - 1, 60, 2, 16);
+      if (g.stats.t.stagger) {
+        const staggered = boss.staggerUntil > g.time;
+        bar(ctx, x + bw * 0.25, 100, bw * 0.5, 5, staggered ? 1 : boss.stagger / 100, staggered ? '#ffffff' : '#ffd166');
+        if (staggered) {
+          ctx.font = 'bold 11px Georgia, serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'top';
+          ctx.fillStyle = '#ffd166';
+          outlineText(ctx, 'STAGGERED', w / 2, 107);
+        }
+      }
       const t = Math.max(0, g.bossTimer / BALANCE.bossTimeLimit);
       bar(ctx, x, 77, bw, 5, g.enraged ? 1 : t, g.enraged ? '#ff0000' : t < 0.3 ? '#ef4444' : '#c9a227');
       ctx.font = '11px Georgia, serif';
@@ -439,7 +450,22 @@ export class Renderer {
     ctx.globalAlpha = g.deadTimer > 0 ? 0.3 : 1;
     drawHeroFigure(ctx, sx, sy, k, g.job, this.screenDir(p.angle), g.anim.swing, p.moving, time, g.anim.playerHit > 0.5);
     ctx.restore();
-    bar(ctx, sx - 22 * k, sy - 46 * k - 34 * k, 44 * k, 5, g.hp / g.stats.maxHp, '#4caf50');
+    const by = sy - 46 * k - 34 * k;
+    bar(ctx, sx - 22 * k, by, 44 * k, 5, g.hp / g.stats.maxHp, '#4caf50');
+    if (g.stats.maxMana > 0) bar(ctx, sx - 22 * k, by + 6, 44 * k, 4, g.mana / g.stats.maxMana, '#4ea1ff');
+    // Arcane Charges
+    const maxC = g.maxCharges();
+    for (let i = 0; i < maxC; i++) {
+      ctx.fillStyle = i < g.charges ? '#8fd3ff' : 'rgba(255,255,255,0.15)';
+      const cx = sx + (i - (maxC - 1) / 2) * 9;
+      ctx.beginPath();
+      ctx.moveTo(cx, by - 12);
+      ctx.lineTo(cx + 3.5, by - 7);
+      ctx.lineTo(cx, by - 2);
+      ctx.lineTo(cx - 3.5, by - 7);
+      ctx.closePath();
+      ctx.fill();
+    }
   }
 
   private drawProjectiles(g: Game) {
@@ -537,6 +563,10 @@ export class Renderer {
       }
     } else {
       if (m.hp < m.maxHp) bar(ctx, sx - rw, cy - rh - 12, rw * 2, 5, m.hp / m.maxHp, '#b91c1c');
+      if (m.bleeds.length) {
+        ctx.fillStyle = '#e5383b';
+        for (let i = 0; i < m.bleeds.length; i++) circle(ctx, sx - rw + 3 + i * 6, cy - rh - 19, 2.2);
+      }
       ctx.font = 'bold 11px Georgia, serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'bottom';

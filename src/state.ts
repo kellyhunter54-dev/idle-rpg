@@ -32,6 +32,8 @@ export interface GameState {
   bossKills: number[];
   /** Item bag (boss offerings etc.). Empty until the item system arrives. */
   items: Record<string, number>;
+  /** Talent ranks by node id. Unspent points are worked out from your level. */
+  talents: Record<string, number>;
 }
 
 export const SAVE_VERSION = 1;
@@ -61,6 +63,7 @@ export function newState(name = 'Hero', job: JobId = 'warrior'): GameState {
     bossesCleared: 0,
     bossKills: [],
     items: {},
+    talents: {},
   };
 }
 
@@ -78,6 +81,7 @@ export function migrate(raw: unknown): GameState {
     settings: { ...base.settings, ...(r.settings ?? {}) },
     bossKills: Array.isArray(r.bossKills) ? r.bossKills : [],
     items: r.items && typeof r.items === 'object' ? r.items : {},
+    talents: r.talents && typeof r.talents === 'object' ? r.talents : {},
     gear: r.gear ?? {},
     companions: r.companions ?? {},
     party: base.party.map((_, i) => r.party?.[i] ?? null),

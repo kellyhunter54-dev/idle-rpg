@@ -1,6 +1,6 @@
 import {
   BALANCE, COMPANION, COMPANIONS, GROWTH, GrowthKey, JobDef, MobStats, RARITIES, Rarity, SLOTS,
-  Slot, TIERS, TIER_WEIGHTS, ZONES, CAVE, BOSS_MOVE_PCT, BossMove, bossName, bossPctScale, jobOf, companionHitMult, dealtLevelMult, enhanceCopies,
+  Slot, TALENT_TREES, TIERS, TIER_WEIGHTS, ZONES, CAVE, MANA, BOSS_MOVE_PCT, SkillDef, BossMove, bossName, bossPctScale, jobOf, companionHitMult, dealtLevelMult, enhanceCopies,
   expLevelMult, expToNext, gearId, gearScore, mobForZone, parseGear, takenLevelMult,
 } from './data';
 import {
@@ -8,7 +8,7 @@ import {
   zoneAtX,
 } from './map';
 import { GameState } from './state';
-import { Stats, computeStats } from './stats';
+import { Stats, computeStats, talentBlocked } from './stats';
 
 // ---------------- Types ----------------
 
@@ -63,6 +63,16 @@ export interface Mob extends MobStats {
   moving: boolean;
   actionTimer: number; // boss: time until next special
   phase: number; // boss: 0, 1, 2
+  /** Bleed stacks: damage per tick and ticks left. */
+  bleeds: { tick: number; left: number }[];
+  bleedTimer: number;
+  /** Armor shred stacks (each = +shredPct damage taken). */
+  shred: number;
+  shredPct: number;
+  shredTimer: number;
+  /** Boss stagger meter (0..100) and when the current stagger ends. */
+  stagger: number;
+  staggerUntil: number;
   invuln: number; // boss: phase-change roar
   chargeTo: Vec | null;
 }
@@ -146,7 +156,11 @@ export interface Projectile {
   pierce: boolean;
   label?: string;
   hit: number[];
+  src: DmgSrc;
 }
+
+/** Where a hit came from (talents care: bleeds come from basic attacks, etc.). */
+export type DmgSrc = 'basic' | 'skill' | 'bleed' | 'companion' | 'proc';
 
 export interface SummonResult {
   id: string;
@@ -248,6 +262,13 @@ export class Game {
   private flaskRegen = 0;
   private flaskCd = 0;
   enraged = false;
+  /** Mage mana and Arcane Charges. */
+  mana = 0;
+  charges = 0;
+  private wardUntil = 0;
+  private fluxCd = 0;
+  private basicCount = 0;
+  private manaToastAt = -99;
   /**
    * How AUTO handles boss telegraphs: base reaction time, random extra delay, and the chance
    * it doesn't notice one at all. Tuned to play like a distracted average player; the boss
@@ -284,6 +305,7 @@ export class Game {
     this.player = { x: 0, y: 0, r: PHYS.playerRadius, angle: 0.8, moving: false, dash: null };
     this.recalc();
     this.hp = this.stats.maxHp;
+    this.mana = this.stats.maxMana;
     for (const s of this.job.skills) this.skillCd[s.id] = s.cd * 0.5;
     this.initWorld();
     this.syncParty();
@@ -292,6 +314,7 @@ export class Game {
   recalc() {
     const prevMax = this.stats?.maxHp ?? 0;
     this.stats = computeStats(this.state);
+    this.mana = Math.min(this.mana, this.stats.maxMana);
     if (prevMax > 0) this.hp = Math.min(this.stats.maxHp, this.hp + Math.max(0, this.stats.maxHp - prevMax));
     this.syncParty();
     this.dirty = true;
@@ -503,6 +526,42 @@ export class Game {
     return null;
   }
 
+  // ---------------- Talents ----------------
+  /** Spend a point on a talent. Returns a reason if it can't. */
+  allocateTalent(id: string): string | null {
+    const why = talentBlocked(this.state, id);
+    if (why) return why;
+    this.state.talents[id] = (this.state.talents[id] ?? 0) + 1;
+    this.recalc();
+    return null;
+  }
+
+  /** Refund every talent point (free for now). */
+  resetTalents() {
+    this.state.talents = {};
+    this.charges = 0;
+    this.recalc();
+  }
+
+  /** Spends all free points top to bottom through the tree (used by idle players and the sim). */
+  autoAssignTalents(): number {
+    let spent = 0;
+    const nodes = [...TALENT_TREES[this.job.id].nodes].sort((a, b) => a.tier - b.tier || a.col - b.col);
+    let progress = true;
+    while (progress) {
+      progress = false;
+      for (const n of nodes) {
+        if (!talentBlocked(this.state, n.id)) {
+          this.state.talents[n.id] = (this.state.talents[n.id] ?? 0) + 1;
+          spent++;
+          progress = true;
+        }
+      }
+    }
+    if (spent) this.recalc();
+    return spent;
+  }
+
   // ---------------- Testing tools ----------------
   /** Testing: jump straight to a level (EXP bar resets). */
   setLevel(level: number) {
@@ -623,6 +682,9 @@ export class Game {
 
     this.aimHold -= dt;
     this.flaskCd -= dt;
+    this.fluxCd -= dt;
+    if (this.stats.maxMana > 0) this.mana = Math.min(this.stats.maxMana, this.mana + this.stats.manaRegen * dt);
+    this.tickDots(dt);
     if (this.inLair < 0 && this.flasks < BALANCE.flaskCharges) {
       this.flaskRegen += dt;
       if (this.flaskRegen >= BALANCE.flaskRegen) {
@@ -813,6 +875,7 @@ export class Game {
       ...stats, id: this.nextMobId++, zone, maxHp: stats.hp, x: p.x, y: p.y, r, angle: this.rand() * 6.28,
       state: 'idle', timer: 0, homeX: p.x, homeY: p.y, wander: { x: 0, y: 0 }, path: null, pathTimer: 0,
       hitFlash: 0, spawnAnim: 1, moving: false, actionTimer: 0, chargeTo: null, phase: 0, invuln: 0, camp: -1,
+      bleeds: [], bleedTimer: 0, shred: 0, shredPct: 0, shredTimer: 0, stagger: 0, staggerUntil: 0,
     };
   }
 
@@ -1074,6 +1137,10 @@ export class Game {
     const p = this.player;
     for (const m of this.mobs) {
       if (m.spawnAnim > 0.3) continue;
+      if (m.staggerUntil > this.time) {
+        m.moving = false;
+        continue;
+      }
       const d = dist(m, p);
       if (d > PHYS.activeRange && !m.boss) {
         m.moving = false;
@@ -1352,6 +1419,16 @@ export class Game {
     const flat = amount * takenLevelMult(fromLevel, this.state.level);
     const share = pct > 0 ? this.stats.maxHp * pct * bossPctScale(fromLevel, this.state.level) : 0;
     amount = Math.max(flat, share) * this.job.damageTaken;
+    const t = this.stats.t;
+    if (t.frostWard && this.time < this.wardUntil) amount *= 1 - t.frostWard;
+    // Mana Shield keystone: part of the hit drains mana instead of HP
+    if (t.manaShield && this.mana > 0) {
+      const share2 = amount * MANA.shieldShare;
+      const cost = (share2 / this.stats.maxHp) * 100 * MANA.shieldCost;
+      const frac = Math.min(1, this.mana / Math.max(0.001, cost));
+      this.mana -= cost * frac;
+      amount -= share2 * frac;
+    }
     if (this.state.settings.testMode) {
       // testing: nothing can hurt you
       this.float(p.x, p.y, 40, 'Immune', '#9be89b', 13);
@@ -1406,6 +1483,7 @@ export class Game {
     if (this.playerTimer > 0 || this.player.dash) return;
     const p = this.player;
     const basic = this.job.basic;
+    const t = this.stats.t;
     const melee = basic.kind === 'melee';
     const reach = melee ? basic.range + p.r : basic.range * 0.92;
     const near = this.nearestMob(reach, p, !melee);
@@ -1416,30 +1494,98 @@ export class Game {
     // AUTO turns to face whatever is in reach
     if (this.auto && !this.input.attack && near) angle = angleTo(p, near);
     p.angle = angle;
-    this.aimHold = Math.max(0.45, basic.interval * 0.9);
-    this.playerTimer = basic.interval;
+    // attack speed: talents, plus Bloodlust for each bleeding enemy nearby
+    let speed = this.stats.atkSpeed;
+    if (t.bloodlust) speed += t.bloodlust * Math.min(5, this.mobs.filter((m) => m.bleeds.length && dist(m, p) < 320).length);
+    const interval = basic.interval / speed;
+    this.aimHold = Math.max(0.45, interval * 0.9);
+    this.playerTimer = interval;
     this.anim.swing = 1;
     const dmg = this.stats.atk * basic.mult;
+    this.basicCount++;
 
     if (melee) {
+      // Blade Dance keystone: every 4th swing is a spinning double strike
+      if (t.bladeDance && this.basicCount % 4 === 0) {
+        this.effect('ring', p.x, p.y, 170, '#ffd166', 0.45);
+        const around = this.mobs.filter((m) => dist(m, p) <= 170 + m.r);
+        for (let k = 0; k < 2; k++) for (const m of around) this.damage(m, dmg * 1.2, k ? undefined : 'Blade Dance', undefined, 'proc');
+        for (const m of around) if (this.mobs.includes(m)) for (let k = 0; k < 3; k++) this.applyBleed(m, dmg * 1.2);
+        return;
+      }
       this.effect('slash', p.x + Math.cos(angle) * 40, p.y + Math.sin(angle) * 40, basic.range, '#ffffff', 0.2, undefined, undefined, angle);
-      for (const m of this.mobsInCone(angle, basic.range, COMBAT.attackHalfAngle)) this.damage(m, dmg);
+      const targets = this.mobsInCone(angle, basic.range, COMBAT.attackHalfAngle);
+      for (const m of targets) this.damage(m, dmg, undefined, undefined, 'basic');
+      // off-hand strike
+      if (targets.length && this.rand() < this.stats.offhandChance) {
+        this.effect('slash', p.x + Math.cos(angle) * 34, p.y + Math.sin(angle) * 34, basic.range * 0.9, '#c9ced6', 0.2, undefined, undefined, angle + 0.6);
+        for (const m of targets) this.damage(m, dmg * this.stats.offhandRatio, 'Off-hand', '#d0d6e0', 'basic');
+      }
     } else if (basic.kind === 'arrow') {
-      this.shoot({ angle, speed: basic.speed ?? 900, maxDist: basic.range, damage: dmg, kind: 'arrow', color: '#e8d7a9' });
+      this.shoot({ angle, speed: basic.speed ?? 900, maxDist: basic.range, damage: dmg, kind: 'arrow', color: '#e8d7a9', src: 'basic' });
     } else {
-      this.shoot({ angle, speed: basic.speed ?? 650, maxDist: basic.range, damage: dmg, kind: 'bolt', color: '#b388ff', splash: basic.splash });
+      this.shoot({ angle, speed: basic.speed ?? 650, maxDist: basic.range, damage: dmg, kind: 'bolt', color: '#b388ff', splash: basic.splash, src: 'basic' });
+      // Arcane Charges build on every bolt
+      if (t.charges) this.charges = Math.min(this.maxCharges(), this.charges + 1);
+    }
+  }
+
+  maxCharges(): number {
+    return this.stats.t.charges ? 2 + this.stats.t.charges : 0;
+  }
+
+  /** Mana Tap: basic bolt hits restore mana. */
+  private onBoltHit() {
+    const tap = this.stats.t.manaTap;
+    if (tap && this.stats.maxMana) this.mana = Math.min(this.stats.maxMana, this.mana + tap);
+  }
+
+  /** Adds a bleed stack (max 5) worth `share` of the hit over 4 seconds. */
+  private applyBleed(m: Mob, hit: number) {
+    const share = Math.max(this.stats.t.bleed, 0.25);
+    m.bleeds.push({ tick: (hit * share) / 8, left: 8 });
+    if (m.bleeds.length > 5) m.bleeds.shift();
+  }
+
+  private addShred(m: Mob, pctPerStack: number) {
+    m.shred = Math.min(5, m.shred + 1);
+    m.shredPct = Math.max(m.shredPct, pctPerStack);
+    m.shredTimer = 4;
+  }
+
+  /** Bleed ticks, shred decay, stagger meters. */
+  private tickDots(dt: number) {
+    const t = this.stats.t;
+    const tickEvery = t.hemorrhage ? 0.35 : 0.5;
+    for (const m of [...this.mobs]) {
+      if (m.shredTimer > 0) {
+        m.shredTimer -= dt;
+        if (m.shredTimer <= 0) m.shred = 0;
+      }
+      if (!m.bleeds.length) continue;
+      m.bleedTimer -= dt;
+      if (m.bleedTimer > 0) continue;
+      m.bleedTimer = tickEvery;
+      let total = 0;
+      for (const b of m.bleeds) {
+        total += b.tick;
+        b.left--;
+      }
+      m.bleeds = m.bleeds.filter((b) => b.left > 0);
+      if (t.bleedHeal) this.hp = Math.min(this.stats.maxHp, this.hp + this.stats.maxHp * t.bleedHeal);
+      this.damage(m, total, undefined, '#e5383b', 'bleed');
     }
   }
 
   private shoot(o: {
     angle: number; speed: number; maxDist: number; damage: number; kind: Projectile['kind'];
-    color: string; splash?: number; pierce?: boolean; label?: string;
+    color: string; splash?: number; pierce?: boolean; label?: string; src?: DmgSrc;
   }) {
     const p = this.player;
     this.projectiles.push({
       x: p.x + Math.cos(o.angle) * (p.r + 6), y: p.y + Math.sin(o.angle) * (p.r + 6),
       angle: o.angle, speed: o.speed, traveled: 0, maxDist: o.maxDist, damage: o.damage, kind: o.kind,
-      color: o.color, splash: o.splash ?? 0, pierce: !!o.pierce, label: o.label, hit: [],
+      color: o.color, splash: o.splash ?? 0, pierce: !!o.pierce, label: o.label, hit: [], src: o.src ?? 'skill',
     });
   }
 
@@ -1465,7 +1611,8 @@ export class Game {
           this.explode(pr);
           alive = false;
         } else {
-          this.damage(hit, pr.damage, pr.label);
+          this.damage(hit, pr.damage, pr.label, undefined, pr.src);
+          if (pr.src === 'basic') this.onBoltHit();
           if (pr.pierce) pr.hit.push(hit.id);
           else alive = false;
         }
@@ -1477,7 +1624,9 @@ export class Game {
 
   private explode(pr: Projectile) {
     this.effect('blast', pr.x, pr.y, pr.splash, pr.color, 0.3);
-    for (const m of this.mobs.filter((m) => dist(m, pr) <= pr.splash + m.r)) this.damage(m, pr.damage, pr.label);
+    const hits = this.mobs.filter((m) => dist(m, pr) <= pr.splash + m.r);
+    for (const m of hits) this.damage(m, pr.damage, pr.label, undefined, pr.src);
+    if (pr.src === 'basic' && hits.length) this.onBoltHit();
   }
 
   private castSkills(dt: number) {
@@ -1487,7 +1636,16 @@ export class Game {
       this.skillCd[sk.id] -= dt;
       if (this.skillCd[sk.id] > 0 || p.dash) return;
       const pressed = this.input.skills[i];
-      const dmg = this.stats.atk * sk.mult;
+      if (!this.canAfford(sk)) {
+        if (pressed && this.time - this.manaToastAt > 1.5) {
+          this.manaToastAt = this.time;
+          this.onToast('Not enough mana.', '#4ea1ff');
+        }
+        return;
+      }
+      let dmg = this.stats.atk * sk.mult;
+      if (sk.id === 'whirl') dmg *= 1 + this.stats.t.whirlBonus;
+      if (sk.id === 'pierce') dmg *= 1 + this.stats.t.pierceBonus;
       const range = sk.range ?? 400;
       const radius = sk.radius ?? 150;
 
@@ -1503,7 +1661,7 @@ export class Game {
             }
           }
           if (!go) return;
-          this.startSkill(sk.id, sk.cd, sk.color);
+          dmg *= this.startSkill(sk);
           p.angle = angle;
           const tx = p.x + Math.cos(angle) * range;
           const ty = p.y + Math.sin(angle) * range;
@@ -1521,9 +1679,14 @@ export class Game {
         case 'spin': {
           const hits = this.mobs.filter((m) => dist(p, m) <= radius + m.r);
           if (!pressed && !(this.auto && hits.length)) return;
-          this.startSkill(sk.id, sk.cd, sk.color);
+          dmg *= this.startSkill(sk);
           this.effect('ring', p.x, p.y, radius, sk.color, 0.5);
           for (const m of hits) this.damage(m, dmg);
+          if (sk.id === 'whirl' && this.stats.t.whirlBonus) for (const m of hits) if (this.mobs.includes(m)) this.applyBleed(m, dmg);
+          if (sk.id === 'nova' && this.stats.t.frostWard) {
+            this.wardUntil = this.time + 4;
+            this.effect('ring', p.x, p.y, 50, '#90e0ef', 4);
+          }
           return;
         }
         case 'groundAoe': {
@@ -1536,7 +1699,7 @@ export class Game {
             spot = this.bestCluster(range, radius);
           }
           if (!spot) return;
-          this.startSkill(sk.id, sk.cd, sk.color);
+          dmg *= this.startSkill(sk);
           const delay = sk.delay ?? 0.5;
           this.blasts.push({ x: spot.x, y: spot.y, r: radius, time: delay, damage: dmg, color: sk.color, label: sk.name });
           this.effect('star', spot.x, spot.y, radius, sk.color, delay + 0.3);
@@ -1555,7 +1718,7 @@ export class Game {
             }
           }
           if (!go) return;
-          this.startSkill(sk.id, sk.cd, sk.color);
+          dmg *= this.startSkill(sk);
           p.angle = angle;
           this.anim.swing = 1;
           if (sk.type === 'pierce') {
@@ -1587,11 +1750,33 @@ export class Game {
     return this.telegraphs.some((t) => t.boss && t.wait <= 0 && this.inTelegraph(t, this.player, this.player.r));
   }
 
-  private startSkill(id: string, cd: number, color: string) {
-    this.skillCd[id] = cd;
+  private skillCost(sk: SkillDef): number {
+    return (sk.mana ?? 0) * (this.stats.t.manaShield ? MANA.keystoneCostMult : 1);
+  }
+
+  private canAfford(sk: SkillDef): boolean {
+    return !this.stats.maxMana || this.mana >= this.skillCost(sk);
+  }
+
+  /** Puts a skill on cooldown, pays its mana and spends Arcane Charges. Returns a damage multiplier. */
+  private startSkill(sk: SkillDef): number {
+    const t = this.stats.t;
+    const { id, cd, color } = sk;
+    this.skillCd[id] = cd * (1 - this.stats.cdr);
+    let mult = 1;
+    if (this.stats.maxMana) {
+      const cost = this.skillCost(sk);
+      this.mana -= cost;
+      if (this.charges > 0) {
+        if (t.surge && this.charges >= this.maxCharges()) this.mana = Math.min(this.stats.maxMana, this.mana + cost * t.surge);
+        mult = 1 + this.charges * (0.08 + t.chargeBonus);
+        this.charges = 0;
+      }
+    }
     this.aimHold = 0.5;
     this.anim.flash = 0.6;
     this.anim.flashColor = color;
+    return mult;
   }
 
   /** Point within range that would hit the most monsters. */
@@ -1614,7 +1799,7 @@ export class Game {
       b.time -= dt;
       if (b.time > 0) continue;
       this.effect('blast', b.x, b.y, b.r, b.color, 0.4);
-      for (const m of this.mobs.filter((m) => dist(b, m) <= b.r + m.r)) this.damage(m, b.damage, b.label);
+      for (const m of this.mobs.filter((m) => dist(b, m) <= b.r + m.r)) this.damage(m, b.damage, b.label, undefined, 'skill');
     }
     this.blasts = this.blasts.filter((b) => b.time > 0);
   }
@@ -1640,25 +1825,72 @@ export class Game {
       c.hit = 1;
       const color = COMPANION[c.id].color;
       this.effect('bolt', c.x, c.y, 6, color, 0.2, best.x, best.y);
-      this.damage(best, this.stats.atk * companionHitMult(c.id, o.level), undefined, color);
+      this.damage(best, this.stats.atk * companionHitMult(c.id, o.level), undefined, color, 'companion');
     });
   }
 
-  private damage(m: Mob, base: number, label?: string, color?: string) {
+  private damage(m: Mob, base: number, label?: string, color?: string, src: DmgSrc = 'skill') {
     if (!this.mobs.includes(m)) return;
     if (m.invuln > 0) {
-      this.float(m.x, m.y, m.r * 2 + 16, 'Immune', '#9a9a9a', 13);
+      if (src !== 'bleed') this.float(m.x, m.y, m.r * 2 + 16, 'Immune', '#9a9a9a', 13);
       return;
     }
-    const crit = this.rand() < this.stats.critRate;
-    const dmg = base * (crit ? this.stats.critDmg : 1) * (0.9 + this.rand() * 0.2) * dealtLevelMult(m.level, this.state.level) * (this.state.settings.testMode ? 10 : 1);
+    const t = this.stats.t;
+    const critRate = this.stats.critRate + t.chargeCrit * this.charges;
+    const canCrit = src !== 'bleed' || t.hemorrhage > 0;
+    const crit = canCrit && this.rand() < critRate;
+    let mult = dealtLevelMult(m.level, this.state.level) * (this.state.settings.testMode ? 10 : 1);
+    mult *= 1 + m.shred * m.shredPct;
+    if (m.boss) mult *= 1 + t.bossDmg;
+    if (m.staggerUntil > this.time) mult *= 1.25 + t.staggerBonus;
+    if (t.longShot && src !== 'companion' && src !== 'bleed' && dist(this.player, m) > 250) mult *= 1 + t.longShot;
+    if (crit && t.killshot && m.hp / m.maxHp < 0.3) mult *= 3;
+    const dmg = base * (crit ? this.stats.critDmg : 1) * (src === 'bleed' ? 1 : 0.9 + this.rand() * 0.2) * mult;
     m.hp -= dmg;
-    m.hitFlash = 1;
+    m.hitFlash = src === 'bleed' ? Math.max(m.hitFlash, 0.4) : 1;
     if (m.state === 'idle') m.state = 'chase';
+    const small = src === 'bleed';
     const text = (label ? label + ' ' : '') + fmtDmg(dmg) + (crit ? '!' : '');
-    this.float(m.x + (this.rand() - 0.5) * 20, m.y, m.r * 2 + 16, text, color ?? (crit ? '#ffb703' : '#ffffff'), crit ? 19 : label ? 17 : 14);
+    this.float(m.x + (this.rand() - 0.5) * 20, m.y, m.r * 2 + 16, text, color ?? (crit ? '#ffb703' : '#ffffff'), small ? 12 : crit ? 19 : label ? 17 : 14);
+
+    // ---- talent procs from your own hits ----
+    if (src === 'basic' || src === 'skill' || src === 'proc') {
+      if (src === 'basic' && t.bleed) this.applyBleed(m, dmg);
+      if (t.shred) this.addShred(m, t.shred);
+      if (crit && t.critShred) this.addShred(m, t.critShred);
+      if (crit && t.quickdraw && this.skillCd.pierce !== undefined) this.skillCd.pierce -= t.quickdraw;
+      if (crit && t.flux && this.fluxCd <= 0) {
+        this.fluxCd = 0.15;
+        for (const k of Object.keys(this.skillCd)) this.skillCd[k] -= t.flux;
+      }
+      if (m.boss && t.stagger && m.staggerUntil <= this.time && m.hp > 0) {
+        m.stagger += 2 * t.stagger;
+        if (m.stagger >= 100) this.staggerBoss(m);
+      }
+      if (crit && t.ricochet && src !== 'proc' && this.rand() < t.ricochet) {
+        const other = this.mobs.filter((o) => o !== m && dist(o, m) < 280).sort((a, b) => dist(a, m) - dist(b, m))[0];
+        if (other) {
+          this.effect('bolt', m.x, m.y, 5, '#f4a261', 0.2, other.x, other.y);
+          this.damage(other, base, 'Ricochet', '#f4a261', 'proc');
+        }
+      }
+    }
     if (m.boss && m.hp > 0) this.checkPhase(m);
     if (m.hp <= 0) this.killMob(m);
+  }
+
+  /** Marksman: a full stagger meter stuns the boss. */
+  private staggerBoss(m: Mob) {
+    const dur = this.stats.t.killshot ? 5 : 2.5;
+    m.stagger = 0;
+    m.staggerUntil = this.time + dur;
+    m.state = 'recover';
+    m.timer = dur;
+    m.actionTimer = Math.max(m.actionTimer, dur + 0.5);
+    m.chargeTo = null;
+    this.telegraphs = this.telegraphs.filter((t) => t.ownerId !== m.id);
+    this.effect('ring', m.x, m.y, 120, '#ffd166', 0.6);
+    this.float(m.x, m.y, m.r * 2 + 40, 'STAGGERED', '#ffd166', 20);
   }
 
   /** Bosses get faster and learn new moves at 60% and 25% HP. */
@@ -2003,7 +2235,7 @@ export class Game {
     const st = this.stats;
     const critF = 1 + st.critRate * (st.critDmg - 1);
     const job = this.job;
-    let perSec = (st.atk * job.basic.mult) / job.basic.interval;
+    let perSec = ((st.atk * job.basic.mult) / job.basic.interval) * st.atkSpeed * (1 + st.offhandChance * st.offhandRatio);
     for (const sk of job.skills) if (this.state.level >= sk.unlock) perSec += (st.atk * sk.mult * (sk.count ?? 1) * 0.6) / sk.cd;
     for (const id of this.state.party) {
       if (!id) continue;
