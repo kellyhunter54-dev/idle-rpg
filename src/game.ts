@@ -1833,36 +1833,30 @@ export class Game {
       m.actionTimer = (SPLIT.globeEvery[0] + this.rand() * (SPLIT.globeEvery[1] - SPLIT.globeEvery[0])) * (this.enraged ? 0.75 : 1);
       this.globeRain(m);
     }
-    else if (m.actionTimer <= 0 && m.invuln <= 0 && !this.telegraphs.some((t) => t.ownerId === m.id)) {
+    else if (m.actionTimer <= 0 && m.invuln <= 0) {
+      // constant slime rain: one glob at a time, all over the room
       const w = SPLIT.wild;
-      m.actionTimer = (w.spoutEvery[0] + this.rand() * (w.spoutEvery[1] - w.spoutEvery[0])) * (this.enraged ? 0.75 : 1);
+      m.actionTimer = (w.rainEvery[0] + this.rand() * (w.rainEvery[1] - w.rainEvery[0])) * (this.enraged ? 0.75 : 1);
       this.spout(m);
     }
   }
 
-  /** Wild phase: a spout of slime from the crowned slime, globs raining onto circles all over the room. */
+  /** Wild phase: one glob of the crowned slime's constant slime rain. */
   private spout(m: Mob) {
     const w = SPLIT.wild;
     const p = this.player;
-    const volley = this.nextVolley++;
-    const spots: Vec[] = [];
-    for (let i = 0; i < w.spoutNearPlayer; i++) {
+    let q: Vec;
+    if (this.rand() < w.rainNearPlayer) {
       const a = this.rand() * Math.PI * 2;
-      const d = i === 0 ? 0 : 90 + this.rand() * 120;
-      spots.push(this.clampArena({ x: p.x + Math.cos(a) * d, y: p.y + Math.sin(a) * d }));
-    }
-    for (let i = 0; i < w.spoutCircles; i++) spots.push(this.roomSpot(m, 0));
-    const dmg = m.atk * COMBAT.telegraphDamageMult * 0.6;
-    for (const q of spots) {
-      const time = w.spoutTime * (this.enraged ? 0.85 : 1);
-      this.telegraphs.push({
-        kind: 'circle', x: q.x, y: q.y, r: w.spoutRadius, inner: 0, angle: 0, width: 0, time, total: time,
-        damage: dmg, boss: true, ownerId: m.id, wait: this.rand() * 0.6, follow: false, volley, style: 'spout',
-        pct: w.spoutPct * (this.enraged ? BALANCE.bossEnrageDamage : 1),
-      });
-    }
-    this.effect('ring', m.x, m.y, 90, '#7bc950', 0.5);
-    this.float(m.x, m.y, m.r * 2 + 50, 'Slime spout!', '#7bc950', 18);
+      const d = this.rand() * 160;
+      q = this.clampArena({ x: p.x + Math.cos(a) * d, y: p.y + Math.sin(a) * d });
+    } else q = this.roomSpot(m, 0);
+    const time = w.spoutTime * (this.enraged ? 0.85 : 1);
+    this.telegraphs.push({
+      kind: 'circle', x: q.x, y: q.y, r: w.spoutRadius, inner: 0, angle: 0, width: 0, time, total: time,
+      damage: m.atk * COMBAT.telegraphDamageMult * 0.6, boss: true, ownerId: m.id, wait: 0, follow: false, style: 'spout',
+      pct: w.spoutPct * (this.enraged ? BALANCE.bossEnrageDamage : 1),
+    });
   }
 
   /**
