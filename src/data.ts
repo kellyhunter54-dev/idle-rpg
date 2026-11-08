@@ -416,7 +416,7 @@ export const SPLIT = {
   /** Hitting several slimes at once: each hit counts 1/sqrt(slimes hit in the last 0.5 s). */
   multiHitWindow: 0.5,
   /** Split-off slimes hop around instead of walking, and use this kit (lots of charges and circles). */
-  kit: ['charge', 'rain', 'charge', 'slam'] as BossMove[],
+  kit: ['charge', 'rain', 'charge', 'slam', 'cutoff'] as BossMove[],
   hopEvery: [0.9, 1.7] as [number, number], // seconds on the ground between hops
   hopTime: 0.75, // seconds in the air (the landing circle shows for this long)
   hopRadius: 80, // landing splash radius (scaled by attackSize)
@@ -437,11 +437,11 @@ export const SPLIT = {
  *  charge: line, boss rushes it   nova: ring around the boss (hug it)  rain: scattered circles near you
  *  cross: two lines crossing at your position                         adds: calls minions
  */
-export type BossMove = 'slam' | 'chase' | 'cone' | 'charge' | 'nova' | 'rain' | 'cross' | 'adds';
+export type BossMove = 'slam' | 'chase' | 'cone' | 'charge' | 'nova' | 'rain' | 'cross' | 'adds' | 'cutoff';
 
 /** Share of your max HP each boss attack takes at equal level (before your job's damage reduction). */
 export const BOSS_MOVE_PCT: Record<BossMove, number> = {
-  slam: 0.45, chase: 0.3, cone: 0.4, charge: 0.5, nova: 0.4, rain: 0.3, cross: 0.4, adds: 0,
+  slam: 0.45, chase: 0.3, cone: 0.4, charge: 0.5, nova: 0.4, rain: 0.3, cross: 0.4, adds: 0, cutoff: 0.35,
 };
 
 /**
@@ -456,17 +456,17 @@ export function bossPctScale(bossLevel: number, playerLevel: number): number {
 export const ZONES: ZoneDef[] = [
   {
     name: 'Sprout Meadow', minLevel: 1, maxLevel: 10, bossLevel: 12, chapter: 0, offering: [],
-    bossKit: [['slam', 'cone', 'charge'], ['slam', 'chase', 'cone'], ['chase', 'slam', 'charge', 'cone']],
+    bossKit: [['slam', 'cone', 'charge'], ['slam', 'chase', 'cone', 'cutoff'], ['chase', 'cutoff', 'charge', 'cone']],
     bossSplit: true,
     phaseAt: [0.8, 0.5], // splits early: the four-slime phase is the long one
   },
   {
     name: 'Whisper Woods', minLevel: 10, maxLevel: 20, bossLevel: 22, chapter: 1, offering: [],
-    bossKit: [['cross', 'nova', 'slam'], ['cross', 'rain', 'adds', 'nova'], ['cross', 'chase', 'rain', 'nova']],
+    bossKit: [['cross', 'nova', 'slam'], ['cross', 'rain', 'adds', 'nova', 'cutoff'], ['cross', 'chase', 'cutoff', 'rain', 'nova']],
   },
   {
     name: 'Ember Canyon', minLevel: 20, maxLevel: 30, bossLevel: 32, chapter: 2, offering: [],
-    bossKit: [['charge', 'rain', 'slam'], ['charge', 'nova', 'rain', 'cross', 'adds'], ['chase', 'charge', 'rain', 'cross', 'nova']],
+    bossKit: [['charge', 'rain', 'slam', 'cutoff'], ['charge', 'nova', 'rain', 'cross', 'adds', 'cutoff'], ['chase', 'charge', 'cutoff', 'rain', 'cross', 'nova']],
   },
 ];
 

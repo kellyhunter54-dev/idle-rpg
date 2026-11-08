@@ -76,7 +76,7 @@ A cave mouth in Sprout Meadow leads to a separate cave map (`generateCave`). AUT
 ## Bosses (hard by design)
 
 - Boss attacks take a share of your **max HP** (`BOSS_MOVE_PCT`), so HP stacking can't trivialize them; only out-levelling the boss shrinks it (`bossPctScale`).
-- Each boss has its own moveset per phase (`ZONES[z].bossKit`): slam, chase, cone, charge, nova, rain, cross, adds. Phases at 60% and 25% HP by default (`ZONES[z].phaseAt` overrides; King Jelly splits at 80% and 50%); enrage after 3 minutes.
+- Each boss has its own moveset per phase (`ZONES[z].bossKit`): slam, chase, cone, charge, nova, rain, cross, adds, cutoff (circles across where you're running). Phases at 60% and 25% HP by default (`ZONES[z].phaseAt` overrides; King Jelly splits at 80% and 50%); enrage after 3 minutes.
 - Healing flasks (R): 3 charges, refilled when entering a lair and slowly in the world.
 - AUTO dodges like a distracted average player (`aiReaction`, `aiJitter`, `aiMiss`). It needs to out-level a boss by about 8-9 levels to win. The final zone boss can't be out-levelled that far, so it needs a real player.
 - `npx tsx tools/bosstrial.ts <job> [zone]` levels a character and fights every boss (or just one zone's boss) at several levels with AUTO and a skilled profile, printing win rates.

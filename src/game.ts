@@ -1221,6 +1221,7 @@ export class Game {
     const p = this.player;
     for (const m of this.mobs) {
       if (m.spawnAnim > 0.3) continue;
+      if (!m.hop) this.depenetrate(m);
       if (m.staggerUntil > this.time) {
         m.moving = false;
         continue;
@@ -1243,7 +1244,7 @@ export class Game {
         const step = 900 * dt;
         const cd = dist(m, m.chargeTo);
         const a = angleTo(m, m.chargeTo);
-        const np = moveCircle(this.map, m.x, m.y, Math.cos(a) * Math.min(step, cd), Math.sin(a) * Math.min(step, cd), m.r * 0.6, true);
+        const np = moveCircle(this.map, m.x, m.y, Math.cos(a) * Math.min(step, cd), Math.sin(a) * Math.min(step, cd), m.r * 0.8, true);
         const stuck = dist(np, m) < 1;
         if (m.group && !this.isMainSlime(m)) this.trailGoo(m, dist(np, m));
         m.x = np.x;
@@ -1358,7 +1359,20 @@ export class Game {
       }
       if (vx || vy) {
         m.angle = Math.atan2(vy, vx);
-        const np = moveCircle(this.map, m.x, m.y, vx * speed * dt, vy * speed * dt, m.r * 0.8, true);
+        const want = Math.hypot(vx, vy) * speed * dt;
+        let np = moveCircle(this.map, m.x, m.y, vx * speed * dt, vy * speed * dt, m.r * 0.8, true);
+        if (Math.hypot(np.x - m.x, np.y - m.y) < want * 0.3) {
+          // blocked (pillar corner, wall): turn a little and slide around it, then re-plan
+          const a = Math.atan2(vy, vx);
+          for (const rot of [0.6, -0.6, 1.1, -1.1, 1.6, -1.6]) {
+            const tp = moveCircle(this.map, m.x, m.y, Math.cos(a + rot) * want, Math.sin(a + rot) * want, m.r * 0.8, true);
+            if (Math.hypot(tp.x - m.x, tp.y - m.y) > want * 0.5) {
+              np = tp;
+              break;
+            }
+          }
+          m.pathTimer = Math.min(m.pathTimer, 0.15);
+        }
         m.moving = Math.abs(np.x - m.x) + Math.abs(np.y - m.y) > 0.1;
         m.x = np.x;
         m.y = np.y;
@@ -1387,6 +1401,24 @@ export class Game {
     return this.clampArena({ x: p.x + Math.cos(a) * d, y: p.y + Math.sin(a) * d });
   }
 
+  /** A monster overlapping a wall can't move at all (every step is rejected), so push it back out. */
+  private depenetrate(m: Mob) {
+    const r = m.r * 0.8;
+    if (fits(this.map, m.x, m.y, r, true)) return;
+    for (let d = 6; d <= 160; d += 6) {
+      for (let i = 0; i < 16; i++) {
+        const a = (i / 16) * Math.PI * 2;
+        const x = m.x + Math.cos(a) * d;
+        const y = m.y + Math.sin(a) * d;
+        if (fits(this.map, x, y, r, true)) {
+          m.x = x;
+          m.y = y;
+          return;
+        }
+      }
+    }
+  }
+
   /** Pulls a point back toward the hero until it's on open floor, so attacks never land in walls. */
   private clampArena(q: Vec, r = 24): Vec {
     const p = this.player;
@@ -1402,7 +1434,7 @@ export class Game {
   /** How far a charge can go from (x, y) along angle a before hitting a wall. */
   private chargeLength(m: Mob, a: number, max: number): number {
     let len = 0;
-    while (len + 16 <= max && fits(this.map, m.x + Math.cos(a) * (len + 16), m.y + Math.sin(a) * (len + 16), m.r * 0.6, true)) len += 16;
+    while (len + 16 <= max && fits(this.map, m.x + Math.cos(a) * (len + 16), m.y + Math.sin(a) * (len + 16), m.r * 0.8, true)) len += 16;
     return Math.max(80, len);
   }
 
@@ -1433,7 +1465,8 @@ export class Game {
     m.hopTimer -= dt;
     if (m.hopTimer > 0) return;
     // land near you, ahead of you, or somewhere random in the arena
-    const to = this.rand() < 0.75 ? this.chaosPoint(SPLIT.hopTime) : this.clampArena({ x: p.x + (this.rand() - 0.5) * 700, y: p.y + (this.rand() - 0.5) * 700 });
+    const raw = this.rand() < 0.75 ? this.chaosPoint(SPLIT.hopTime) : { x: p.x + (this.rand() - 0.5) * 700, y: p.y + (this.rand() - 0.5) * 700 };
+    const to = this.clampArena(raw, m.r * 0.8 + 2);
     const dur = SPLIT.hopTime * (this.enraged ? 0.8 : 1);
     m.hop = { fx: m.x, fy: m.y, tx: to.x, ty: to.y, t: 0, dur };
     this.telegraphs.push({
@@ -1506,9 +1539,12 @@ export class Game {
       m.timer = t * speed;
     };
     switch (move) {
-      case 'slam':
-        tele({ kind: 'circle', x: p.x, y: p.y, r: 120, time: 1.2 }, move);
+      case 'slam': {
+        // sometimes aimed where you're heading instead of where you are
+        const lead = main && this.rand() < 0.4 ? this.clampArena({ x: p.x + this.pVel.x * 0.8, y: p.y + this.pVel.y * 0.8 }) : p;
+        tele({ kind: 'circle', x: lead.x, y: lead.y, r: 120, time: 1.2 }, move);
         break;
+      }
       case 'chase':
         // three slams, each landing where you are when it appears
         for (let i = 0; i < 3; i++) {
@@ -1556,6 +1592,35 @@ export class Game {
       case 'adds':
         this.spawnAdds(m, 3);
         break;
+      case 'cutoff': {
+        // read where you're running and wall it off: a line of circles across your path ahead,
+        // plus one where you'd end up if you keep going
+        const pl = this.player;
+        const sp = Math.hypot(this.pVel.x, this.pVel.y);
+        if (sp < 40) {
+          // standing still: box you in instead
+          for (let i = 0; i < 4; i++) {
+            const a = (i / 4) * Math.PI * 2 + this.rand();
+            const q = this.clampArena({ x: pl.x + Math.cos(a) * 130, y: pl.y + Math.sin(a) * 130 });
+            tele({ kind: 'circle', x: q.x, y: q.y, r: 80, time: 1.0, wait: i * 0.08 }, move);
+          }
+          tele({ kind: 'circle', x: pl.x, y: pl.y, r: 70, time: 1.3, wait: 0.35 }, move);
+          break;
+        }
+        const ux = this.pVel.x / sp;
+        const uy = this.pVel.y / sp;
+        const lead = 0.85 + this.rand() * 0.3;
+        const ahead = Math.min(320, sp * lead);
+        const cx = pl.x + ux * ahead;
+        const cy = pl.y + uy * ahead;
+        for (let i = -2; i <= 2; i++) {
+          const q = this.clampArena({ x: cx - uy * i * 85, y: cy + ux * i * 85 });
+          tele({ kind: 'circle', x: q.x, y: q.y, r: 75, time: 1.05, wait: Math.abs(i) * 0.06 }, move);
+        }
+        const far = this.clampArena({ x: pl.x + ux * Math.min(480, sp * 1.6), y: pl.y + uy * Math.min(480, sp * 1.6) });
+        tele({ kind: 'circle', x: far.x, y: far.y, r: 90, time: 1.4, wait: 0.15 }, move);
+        break;
+      }
     }
   }
 

@@ -231,10 +231,16 @@ export function walkablePoint(m: GameMap, x: number, y: number, mob = false): bo
 
 /** Can a circle of radius r stand at (x, y)? */
 export function fits(m: GameMap, x: number, y: number, r: number, mob = false): boolean {
-  return (
-    walkablePoint(m, x - r, y - r, mob) && walkablePoint(m, x + r, y - r, mob) &&
-    walkablePoint(m, x - r, y + r, mob) && walkablePoint(m, x + r, y + r, mob)
-  );
+  // Sample a grid over the circle's box no coarser than half a tile, so big bodies (bosses are
+  // wider than a tile) can't straddle a pillar that sits between the corners.
+  const n = Math.max(1, Math.ceil((2 * r) / (TILE * 0.5)));
+  for (let i = 0; i <= n; i++) {
+    const py = y - r + (2 * r * i) / n;
+    for (let j = 0; j <= n; j++) {
+      if (!walkablePoint(m, x - r + (2 * r * j) / n, py, mob)) return false;
+    }
+  }
+  return true;
 }
 
 /** Moves a circle by (dx, dy), sliding along walls. Returns the new position. */
