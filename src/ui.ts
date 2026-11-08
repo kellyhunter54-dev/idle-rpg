@@ -12,6 +12,14 @@ type Tab = 'growth' | 'world' | 'talents' | 'gear' | 'companions' | 'summon' | '
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
+const pixelOn = () => {
+  try {
+    return localStorage.getItem('idle-rpg-pixel') === '1';
+  } catch {
+    return false;
+  }
+};
+
 // ---- per-frame HUD helpers: cache elements and only touch the DOM when a value changes ----
 const elCache = new Map<string, HTMLElement>();
 const el = (id: string): HTMLElement => {
@@ -211,6 +219,15 @@ export class UI {
       case 'addLevel':
         g.setLevel(g.state.level + Number(arg));
         this.toast(`${g.state.name} is now level ${g.state.level}.`, '#c9a227');
+        this.renderPanel(true);
+        return;
+      case 'pixel':
+        try {
+          localStorage.setItem('idle-rpg-pixel', pixelOn() ? '0' : '1');
+        } catch {
+          /* storage blocked: nothing to do */
+        }
+        window.dispatchEvent(new Event('pixelmode'));
         this.renderPanel(true);
         return;
       case 'testMode':
@@ -710,6 +727,13 @@ export class UI {
         </div>
         <button class="btn ${s.settings.testMode ? '' : 'alt'}" data-action="testMode">${s.settings.testMode ? 'Turn off' : 'Turn on'}</button>
       </div>
+      <div class="row">
+        <div class="info">
+          <div class="name">Pixel art filter ${pixelOn() ? '<span class="tag" style="background:#2d6a4f">ON</span>' : ''}</div>
+          <div class="sub">Preview: draws the game at a low resolution with crisp pixels. Real pixel art sprites come later.</div>
+        </div>
+        <button class="btn ${pixelOn() ? '' : 'alt'}" data-action="pixel">${pixelOn() ? 'Turn off' : 'Turn on'}</button>
+      </div>
       <h3>Save</h3>
       <p class="muted small">The game saves automatically. Use export to back up your save or move it to another device.</p>
       <textarea id="savebox" placeholder="Paste a save code here to import"></textarea>
@@ -720,7 +744,7 @@ export class UI {
       </div>
       <button class="btn wide" style="background:#7f1d1d;margin-top:12px" data-action="reset">Reset this character to Lv 1</button>
       <p class="small" style="text-align:center;margin-top:16px"><a href="./side/">Play the classic side-scroller version</a></p>
-      <p class="muted small" style="text-align:center">v0.23.5</p>`;
+      <p class="muted small" style="text-align:center">v0.24.0</p>`;
   }
 
   // ---------------- Modals & toasts ----------------

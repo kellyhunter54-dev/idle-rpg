@@ -36,15 +36,34 @@ export class Renderer {
     this.ctx.ellipse = (x, y, rx, ry, rot, a0, a1, ccw) => ellipse(x, y, Math.max(0, rx), Math.max(0, ry), rot, a0, a1, ccw);
     this.resize();
     new ResizeObserver(() => this.resize()).observe(canvas);
+    window.addEventListener('pixelmode', () => this.resize());
+  }
+
+  /** Pixel filter (Info > Testing tools): draw at a low resolution and scale up with hard edges. */
+  private get pixel(): boolean {
+    try {
+      return localStorage.getItem('idle-rpg-pixel') === '1';
+    } catch {
+      return false;
+    }
   }
 
   private resize() {
-    this.dpr = window.devicePixelRatio || 1;
     const r = this.canvas.getBoundingClientRect();
     this.w = r.width;
     this.h = r.height;
-    this.canvas.width = Math.round(r.width * this.dpr);
-    this.canvas.height = Math.round(r.height * this.dpr);
+    if (this.pixel) {
+      // about 640 game pixels across, each drawn as a crisp block
+      const block = Math.max(2, Math.round(r.width / 640));
+      this.dpr = 1 / block;
+      this.canvas.style.imageRendering = 'pixelated';
+    } else {
+      this.dpr = window.devicePixelRatio || 1;
+      this.canvas.style.imageRendering = '';
+    }
+    this.canvas.width = Math.max(1, Math.round(r.width * this.dpr));
+    this.canvas.height = Math.max(1, Math.round(r.height * this.dpr));
+    this.ctx.imageSmoothingEnabled = !this.pixel;
     this.touch = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches;
     this.vignetteKey = '';
   }
