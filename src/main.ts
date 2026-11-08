@@ -1,75 +1,102 @@
-import { SKILLS } from './data';
+import { showCharacterSelect } from './charselect';
 import { Game } from './game';
 import { setupInput } from './input';
 import { Renderer } from './render';
-import { importSave, loadGame, saveGame } from './save';
-import { newState } from './state';
+import { importSave, migrateLegacySave, readSlot, resetCharacter, saveGame, setActiveSlot, writeSlot } from './save';
 import { UI } from './ui';
 
-const state = loadGame();
-const awaySeconds = (Date.now() - state.lastSaved) / 1000;
+migrateLegacySave();
 
-const game = new Game(state);
+// After a reset/import from inside the game, jump straight back into that character.
+const autoplay = sessionStorage.getItem('idle-rpg-autoplay');
+sessionStorage.removeItem('idle-rpg-autoplay');
+if (autoplay !== null && readSlot(Number(autoplay))) startGame(Number(autoplay));
+else showCharacterSelect(startGame);
 
-// Skill buttons (built before input setup so they get listeners)
-document.getElementById('skillbar')!.innerHTML = SKILLS.map(
-  (sk, i) => `<button class="skillbtn" data-skill="${i}" title="${sk.name} (${i + 1})">
+/** Starts playing the character in `slot`. Runs once per page load; switching reloads the page. */
+function startGame(slot: number) {
+  const state = readSlot(slot);
+  if (!state) return;
+  setActiveSlot(slot);
+  document.getElementById('app')!.classList.remove('hidden');
+  const awaySeconds = (Date.now() - state.lastSaved) / 1000;
+
+  const game = new Game(state);
+
+  // Skill buttons for this job (built before input setup so they get listeners)
+  document.getElementById('skillbar')!.innerHTML = game.job.skills
+    .map(
+      (sk, i) => `<button class="skillbtn" data-skill="${i}" title="${sk.name} (${i + 1}), unlocks at Lv ${sk.unlock}">
     ${sk.icon}<div class="cd"></div><span class="key">${i + 1}</span><div class="lock hidden">Lv${sk.unlock}</div>
   </button>`,
-).join('');
+    )
+    .join('');
 
-const renderer = new Renderer(document.getElementById('canvas') as HTMLCanvasElement);
-const ui = new UI(game);
-const toggleAuto = () => {
-  game.setAuto(!game.auto);
-  ui.toast(game.auto ? 'AUTO on: your hero plays itself.' : 'AUTO off: full manual control.', '#3a86ff');
-};
-document.getElementById('autobtn')!.addEventListener('click', toggleAuto);
-const canvas = document.getElementById('canvas') as HTMLCanvasElement;
-const pollInput = setupInput(game.input, canvas, (x, y) => renderer.screenToWorld(x, y), toggleAuto);
+  const canvas = document.getElementById('canvas') as HTMLCanvasElement;
+  const renderer = new Renderer(canvas);
+  const ui = new UI(game);
+  const toggleAuto = () => {
+    game.setAuto(!game.auto);
+    ui.toast(game.auto ? 'AUTO on: your hero plays itself.' : 'AUTO off: full manual control.', '#c9a227');
+  };
+  document.getElementById('autobtn')!.addEventListener('click', toggleAuto);
+  const pollInput = setupInput(game.input, canvas, (x, y) => renderer.screenToWorld(x, y), toggleAuto);
 
-ui.onReplaceState = (code) => {
-  const next = code ? importSave(code) : newState();
-  next.lastSaved = Date.now();
-  saveGame(next);
-  location.reload();
-};
-
-// Offline rewards on startup
-const offline = game.applyOffline(awaySeconds);
-if (offline) ui.showOffline(offline);
-
-// Main loop
-let last = performance.now();
-let hiddenAt = 0;
-function frame(now: number) {
-  const dt = Math.min(0.05, (now - last) / 1000);
-  last = now;
-  pollInput();
-  game.update(dt);
-  ui.update(dt);
-  renderer.draw(game, now / 1000);
-  requestAnimationFrame(frame);
-}
-requestAnimationFrame(frame);
-
-// Autosave
-setInterval(() => saveGame(game.state), 10_000);
-window.addEventListener('beforeunload', () => saveGame(game.state));
-
-// Browsers pause the game in background tabs, so treat long absences as offline time.
-document.addEventListener('visibilitychange', () => {
-  if (document.hidden) {
-    hiddenAt = Date.now();
+  const switchCharacter = () => {
     saveGame(game.state);
-  } else if (hiddenAt) {
-    const away = (Date.now() - hiddenAt) / 1000;
-    hiddenAt = 0;
-    last = performance.now();
-    const r = game.applyOffline(away);
-    if (r) ui.showOffline(r);
-  }
-});
+    location.reload();
+  };
+  document.getElementById('switchbtn')!.addEventListener('click', switchCharacter);
+  ui.onSwitchCharacter = switchCharacter;
 
-// Handy for debugging in the browser console: __game.state, __game.challengeBoss(), ...
-(window as unknown as { __game: Game }).__game = game;
+  ui.onReplaceState = (code) => {
+    if (code) {
+      const next = importSave(code);
+      next.lastSaved = Date.now();
+      writeSlot(slot, next);
+    } else {
+      resetCharacter(slot);
+    }
+    sessionStorage.setItem('idle-rpg-autoplay', String(slot));
+    location.reload();
+  };
+
+  // Offline rewards
+  const offline = game.applyOffline(awaySeconds);
+  if (offline) ui.showOffline(offline);
+
+  // Main loop
+  let last = performance.now();
+  let hiddenAt = 0;
+  function frame(now: number) {
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    pollInput();
+    game.update(dt);
+    ui.update(dt);
+    renderer.draw(game, now / 1000);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  // Autosave
+  setInterval(() => saveGame(game.state), 10_000);
+  window.addEventListener('beforeunload', () => saveGame(game.state));
+
+  // Browsers pause the game in background tabs, so treat long absences as offline time.
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      hiddenAt = Date.now();
+      saveGame(game.state);
+    } else if (hiddenAt) {
+      const away = (Date.now() - hiddenAt) / 1000;
+      hiddenAt = 0;
+      last = performance.now();
+      const r = game.applyOffline(away);
+      if (r) ui.showOffline(r);
+    }
+  });
+
+  // Handy for debugging in the browser console: __game.state, __game.challengeBoss(), ...
+  (window as unknown as { __game: Game }).__game = game;
+}

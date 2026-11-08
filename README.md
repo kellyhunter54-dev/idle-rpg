@@ -15,7 +15,7 @@ npm install
 npm run dev      # opens a local dev server with hot reload
 npm run build    # production build into dist/
 npm run sim      # headless balance simulation (default 3 hours of play)
-npm run sim -- 8 # simulate 8 hours
+npm run sim -- 8 archer # simulate 8 hours as an archer (warrior | archer | mage)
 ```
 
 ## Deploying
@@ -34,10 +34,15 @@ One-time setup: repo **Settings → Pages → Source: GitHub Actions**.
 | `src/map.ts` | Procedural tile maps per chapter, collision, A* pathfinding. |
 | `src/game.ts` | Game logic: movement, mob AI, AUTO pilot (pathing + dodging), action combat, boss telegraphs, summoning, enhancing, offline rewards. No browser code, so it can be simulated. |
 | `src/input.ts` | Keyboard and touch controls. |
+| `src/charselect.ts` | Character select screen: 3 slots, create (name + job), play, reset to Lv 1, delete. |
 | `src/render.ts` | Isometric canvas renderer (placeholder shapes; replace when real art arrives). |
 | `src/ui.ts` | Tabs, panels, modals, toasts. |
 | `src/main.ts` | Wires everything together, game loop, autosave. |
 | `tools/sim.ts` | Balance simulator. |
+
+## Characters and jobs
+
+Three character slots, each with its own save. Jobs: **Warrior** (melee, tanky, takes 35% less damage), **Archer** (ranged arrows, keeps its distance on AUTO), **Mage** (exploding spells, fragile). Job stats and skills live in `JOBS` in `src/data.ts`.
 
 ## Controls
 
@@ -46,7 +51,7 @@ The hero plays itself while AUTO is on. Any input takes over, and AUTO resumes 2
 - WASD or arrows: move
 - Mouse: aim
 - Left click (hold), Space or J: attack
-- 1, 2, 3: skills (Dash Strike, Cyclone, Starfall) toward the mouse
+- 1, 2, 3: job skills, aimed at the mouse
 - Q: toggle AUTO
 
 Phones: drag on the battlefield for a joystick, buttons for attack and skills.

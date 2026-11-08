@@ -1,10 +1,10 @@
 import {
-  BALANCE, COMPANION, COMPANIONS, GROWTH, GrowthKey, MobStats, RARITIES, Rarity, SKILLS, SLOTS,
-  Slot, TIERS, TIER_WEIGHTS, chapterOf, companionHitMult, enhanceCopies, expToNext, gearId,
+  BALANCE, COMPANION, COMPANIONS, GROWTH, GrowthKey, JobDef, MobStats, RARITIES, Rarity, SLOTS,
+  Slot, TIERS, TIER_WEIGHTS, chapterOf, jobOf, companionHitMult, enhanceCopies, expToNext, gearId,
   gearScore, mobFor, parseGear,
 } from './data';
 import {
-  GameMap, PHYS, TILE, findPath, fits, generateMap, lineOfSight, moveCircle,
+  GameMap, PHYS, TILE, findPath, fits, generateMap, lineOfSight, moveCircle, walkablePoint,
 } from './map';
 import { GameState } from './state';
 import { Stats, computeStats } from './stats';
@@ -26,7 +26,7 @@ export interface Input {
 }
 
 export function emptyInput(): Input {
-  return { moveX: 0, moveY: 0, attack: false, aim: null, skills: SKILLS.map(() => false) };
+  return { moveX: 0, moveY: 0, attack: false, aim: null, skills: [false, false, false] };
 }
 
 export interface Player {
@@ -113,6 +113,24 @@ interface PendingBlast {
   r: number;
   time: number;
   damage: number;
+  color: string;
+  label?: string;
+}
+
+export interface Projectile {
+  x: number;
+  y: number;
+  angle: number;
+  speed: number;
+  traveled: number;
+  maxDist: number;
+  damage: number;
+  kind: 'arrow' | 'bolt' | 'fireball';
+  color: string;
+  splash: number;
+  pierce: boolean;
+  label?: string;
+  hit: number[];
 }
 
 export interface SummonResult {
@@ -150,15 +168,10 @@ const angDiff = (a: number, b: number) => {
 };
 
 export const COMBAT = {
-  attackRange: 80, // from player edge
   attackHalfAngle: 1.05, // ~60 degrees each side
-  dashDistance: 190,
   dashSpeed: 1100,
   dashWidth: 55,
-  cycloneRadius: 160,
-  starfallRange: 440,
-  starfallRadius: 140,
-  starfallDelay: 0.5,
+  kiteDistance: 120, // ranged AUTO backs away from monsters closer than this
   mobWindup: 0.5,
   mobRecover: 0.6,
   mobReach: 26, // beyond touching
@@ -182,6 +195,7 @@ export class Game {
   mobs: Mob[] = [];
   telegraphs: Telegraph[] = [];
   private blasts: PendingBlast[] = [];
+  projectiles: Projectile[] = [];
   private nextMobId = 1;
   private spawnTimer = 0;
   private bossQueued = false;
@@ -214,7 +228,7 @@ export class Game {
     this.player = { x: 0, y: 0, r: PHYS.playerRadius, angle: 0.8, moving: false, dash: null };
     this.recalc();
     this.hp = this.stats.maxHp;
-    for (const s of SKILLS) this.skillCd[s.id] = s.cd * 0.5;
+    for (const s of this.job.skills) this.skillCd[s.id] = s.cd * 0.5;
     this.syncMap();
     this.syncParty();
   }
@@ -229,6 +243,10 @@ export class Game {
 
   get inBossFight(): boolean {
     return this.mobs.some((m) => m.boss);
+  }
+
+  get job(): JobDef {
+    return jobOf(this.state);
   }
 
   get auto(): boolean {
@@ -252,6 +270,7 @@ export class Game {
     this.mobs = [];
     this.telegraphs = [];
     this.blasts = [];
+    this.projectiles = [];
     this.target = null;
     this.path = null;
     Object.assign(this.player, { x: this.map.spawn.x, y: this.map.spawn.y, dash: null });
@@ -293,6 +312,7 @@ export class Game {
     }
     this.playerAttacks(dt);
     this.castSkills(dt);
+    this.updateProjectiles(dt);
     this.updateBlasts(dt);
     this.updateCompanions(dt);
 
@@ -456,8 +476,21 @@ export class Game {
     if (!t) return zero;
 
     const d = dist(p, t);
-    const reach = COMBAT.attackRange + t.r + p.r;
-    if (d <= reach - 12) {
+    const basic = this.job.basic;
+    const ranged = basic.kind !== 'melee';
+
+    // Ranged jobs back away from anything that gets too close
+    if (ranged) {
+      const close = this.nearestMob(COMBAT.kiteDistance);
+      if (close) {
+        const away = this.escapeFrom(close);
+        if (away) return away;
+      }
+    }
+
+    const reach = ranged ? basic.range * 0.75 : basic.range + t.r + p.r;
+    const clear = !ranged || lineOfSight(this.map, p.x, p.y, t.x, t.y);
+    if (d <= reach - 12 && clear) {
       this.targetTime = 0;
       p.angle = angleTo(p, t);
       return zero;
@@ -490,6 +523,18 @@ export class Game {
     if (!wp) return zero;
     const wd = dist(p, wp) || 1;
     return { x: (wp.x - p.x) / wd, y: (wp.y - p.y) / wd };
+  }
+
+  /** Direction away from a monster, if there is room to move that way. */
+  private escapeFrom(m: Mob): Vec | null {
+    const p = this.player;
+    const a = angleTo(m, p);
+    for (const rot of [0, 0.6, -0.6, 1.2, -1.2]) {
+      const dx = Math.cos(a + rot);
+      const dy = Math.sin(a + rot);
+      if (fits(this.map, p.x + dx * 40, p.y + dy * 40, p.r)) return { x: dx, y: dy };
+    }
+    return null;
   }
 
   private escapeDir(t: Telegraph): Vec {
@@ -755,6 +800,7 @@ export class Game {
 
   private hurtPlayer(amount: number) {
     const p = this.player;
+    amount *= this.job.damageTaken;
     this.hp -= amount;
     this.anim.playerHit = 1;
     this.float(p.x, p.y, 40, '-' + fmtDmg(amount), '#ff6b6b', 15);
@@ -763,22 +809,24 @@ export class Game {
 
   // ---------------- Player combat ----------------
   /** Direction the player is aiming: mouse in manual, target in auto. */
-  private aimAngle(): number {
+  private aimAngle(range = 200): number {
     const p = this.player;
     if (this.manualActive && this.input.aim) return angleTo(p, this.input.aim);
     if (this.auto || !this.input.aim) {
       // no mouse (touch / keyboard only): soft-lock onto whatever is closest
-      const t = this.target && this.mobs.includes(this.target) ? this.target : this.nearestMob(COMBAT.attackRange + 120);
+      const t = this.target && this.mobs.includes(this.target) ? this.target : this.nearestMob(range + 40);
       if (t) return angleTo(p, t);
     }
     return p.angle;
   }
 
-  private nearestMob(maxD = Infinity, from: Vec = this.player): Mob | null {
+  private nearestMob(maxD = Infinity, from: Vec = this.player, needSight = false): Mob | null {
     let best: Mob | null = null;
     let bd = maxD;
     for (const m of this.mobs) {
       const d = dist(from, m) - m.r;
+      if (d >= bd) continue;
+      if (needSight && !lineOfSight(this.map, from.x, from.y, m.x, m.y)) continue;
       if (d < bd) {
         bd = d;
         best = m;
@@ -800,81 +848,182 @@ export class Game {
   private playerAttacks(dt: number) {
     this.playerTimer -= dt;
     if (this.playerTimer > 0 || this.player.dash) return;
-    const near = this.nearestMob(COMBAT.attackRange + this.player.r);
+    const p = this.player;
+    const basic = this.job.basic;
+    const melee = basic.kind === 'melee';
+    const reach = melee ? basic.range + p.r : basic.range * 0.92;
+    const near = this.nearestMob(reach, p, !melee);
     const wantsAttack = this.input.attack || (this.auto && !!near);
     if (!wantsAttack) return;
 
-    let angle = this.aimAngle();
+    let angle = this.aimAngle(reach);
     // AUTO turns to face whatever is in reach
-    if (this.auto && !this.input.attack && near) angle = angleTo(this.player, near);
-    this.player.angle = angle;
-    this.playerTimer = BALANCE.playerAttackInterval;
+    if (this.auto && !this.input.attack && near) angle = angleTo(p, near);
+    p.angle = angle;
+    this.playerTimer = basic.interval;
     this.anim.swing = 1;
+    const dmg = this.stats.atk * basic.mult;
+
+    if (melee) {
+      this.effect('slash', p.x + Math.cos(angle) * 40, p.y + Math.sin(angle) * 40, basic.range, '#ffffff', 0.2, undefined, undefined, angle);
+      for (const m of this.mobsInCone(angle, basic.range, COMBAT.attackHalfAngle)) this.damage(m, dmg);
+    } else if (basic.kind === 'arrow') {
+      this.shoot({ angle, speed: basic.speed ?? 900, maxDist: basic.range, damage: dmg, kind: 'arrow', color: '#e8d7a9' });
+    } else {
+      this.shoot({ angle, speed: basic.speed ?? 650, maxDist: basic.range, damage: dmg, kind: 'bolt', color: '#b388ff', splash: basic.splash });
+    }
+  }
+
+  private shoot(o: {
+    angle: number; speed: number; maxDist: number; damage: number; kind: Projectile['kind'];
+    color: string; splash?: number; pierce?: boolean; label?: string;
+  }) {
     const p = this.player;
-    this.effect('slash', p.x + Math.cos(angle) * 40, p.y + Math.sin(angle) * 40, COMBAT.attackRange, '#ffffff', 0.2, undefined, undefined, angle);
-    for (const m of this.mobsInCone(angle, COMBAT.attackRange, COMBAT.attackHalfAngle)) this.damage(m, this.stats.atk);
+    this.projectiles.push({
+      x: p.x + Math.cos(o.angle) * (p.r + 6), y: p.y + Math.sin(o.angle) * (p.r + 6),
+      angle: o.angle, speed: o.speed, traveled: 0, maxDist: o.maxDist, damage: o.damage, kind: o.kind,
+      color: o.color, splash: o.splash ?? 0, pierce: !!o.pierce, label: o.label, hit: [],
+    });
+  }
+
+  private updateProjectiles(dt: number) {
+    const keep: Projectile[] = [];
+    for (const pr of this.projectiles) {
+      const step = pr.speed * dt;
+      let alive = true;
+      // sub-step so fast arrows can't skip past a mob
+      const sub = Math.max(1, Math.ceil(step / 20));
+      for (let i = 0; i < sub && alive; i++) {
+        pr.x += Math.cos(pr.angle) * (step / sub);
+        pr.y += Math.sin(pr.angle) * (step / sub);
+        pr.traveled += step / sub;
+        if (!walkablePoint(this.map, pr.x, pr.y) || pr.traveled >= pr.maxDist) {
+          if (pr.splash) this.explode(pr);
+          alive = false;
+          break;
+        }
+        const hit = this.mobs.find((m) => !pr.hit.includes(m.id) && dist(m, pr) <= m.r + 8);
+        if (!hit) continue;
+        if (pr.splash) {
+          this.explode(pr);
+          alive = false;
+        } else {
+          this.damage(hit, pr.damage, pr.label);
+          if (pr.pierce) pr.hit.push(hit.id);
+          else alive = false;
+        }
+      }
+      if (alive) keep.push(pr);
+    }
+    this.projectiles = keep;
+  }
+
+  private explode(pr: Projectile) {
+    this.effect('blast', pr.x, pr.y, pr.splash, pr.color, 0.3);
+    for (const m of this.mobs.filter((m) => dist(m, pr) <= pr.splash + m.r)) this.damage(m, pr.damage, pr.label);
   }
 
   private castSkills(dt: number) {
     const p = this.player;
-    SKILLS.forEach((sk, i) => {
+    this.job.skills.forEach((sk, i) => {
       if (this.state.level < sk.unlock) return;
       this.skillCd[sk.id] -= dt;
       if (this.skillCd[sk.id] > 0 || p.dash) return;
       const pressed = this.input.skills[i];
       const dmg = this.stats.atk * sk.mult;
+      const range = sk.range ?? 400;
+      const radius = sk.radius ?? 150;
 
-      if (sk.id === 'strike') {
-        let angle = this.aimAngle();
-        let go = pressed;
-        if (!go && this.auto) {
-          const t = this.nearestMob(COMBAT.dashDistance + 20);
-          if (t && lineOfSight(this.map, p.x, p.y, t.x, t.y, p.r) && !this.standingInBossTelegraph()) {
-            angle = angleTo(p, t);
-            go = true;
+      switch (sk.type) {
+        case 'dash': {
+          let angle = this.aimAngle(range);
+          let go = pressed;
+          if (!go && this.auto) {
+            const t = this.nearestMob(range + 20, p, true);
+            if (t && !this.standingInBossTelegraph()) {
+              angle = angleTo(p, t);
+              go = true;
+            }
           }
-        }
-        if (!go) return;
-        this.startSkill(sk.id, sk.cd, sk.color);
-        p.angle = angle;
-        const tx = p.x + Math.cos(angle) * COMBAT.dashDistance;
-        const ty = p.y + Math.sin(angle) * COMBAT.dashDistance;
-        p.dash = { tx, ty, t: 0.35 };
-        // damage everything along the dash line
-        for (const m of this.mobs) {
-          const dx = m.x - p.x;
-          const dy = m.y - p.y;
-          const along = dx * Math.cos(angle) + dy * Math.sin(angle);
-          const across = Math.abs(-dx * Math.sin(angle) + dy * Math.cos(angle));
-          if (along > -m.r && along < COMBAT.dashDistance + m.r && across < COMBAT.dashWidth + m.r) this.damage(m, dmg, sk.name);
-        }
-        this.effect('dash', p.x, p.y, COMBAT.dashWidth, sk.color, 0.35, tx, ty);
-      } else if (sk.id === 'cyclone') {
-        const hits = this.mobs.filter((m) => dist(p, m) <= COMBAT.cycloneRadius + m.r);
-        if (!pressed && !(this.auto && hits.length)) return;
-        this.startSkill(sk.id, sk.cd, sk.color);
-        this.effect('ring', p.x, p.y, COMBAT.cycloneRadius, sk.color, 0.5);
-        for (const m of hits) this.damage(m, dmg);
-      } else {
-        // Starfall: lands where you aim (mouse), or on the biggest group for AUTO
-        let spot: Vec | null = null;
-        if (pressed) {
-          const a = this.input.aim && this.manualActive ? this.input.aim : null;
-          spot = a ?? this.bestCluster() ?? { x: p.x + Math.cos(p.angle) * 150, y: p.y + Math.sin(p.angle) * 150 };
-          const d = dist(p, spot);
-          if (d > COMBAT.starfallRange) {
-            const k = COMBAT.starfallRange / d;
-            spot = { x: p.x + (spot.x - p.x) * k, y: p.y + (spot.y - p.y) * k };
+          if (!go) return;
+          this.startSkill(sk.id, sk.cd, sk.color);
+          p.angle = angle;
+          const tx = p.x + Math.cos(angle) * range;
+          const ty = p.y + Math.sin(angle) * range;
+          p.dash = { tx, ty, t: 0.35 };
+          for (const m of this.mobs) {
+            const dx = m.x - p.x;
+            const dy = m.y - p.y;
+            const along = dx * Math.cos(angle) + dy * Math.sin(angle);
+            const across = Math.abs(-dx * Math.sin(angle) + dy * Math.cos(angle));
+            if (along > -m.r && along < range + m.r && across < COMBAT.dashWidth + m.r) this.damage(m, dmg, sk.name);
           }
-        } else if (this.auto) {
-          spot = this.bestCluster();
+          this.effect('dash', p.x, p.y, COMBAT.dashWidth, sk.color, 0.35, tx, ty);
+          return;
         }
-        if (!spot) return;
-        this.startSkill(sk.id, sk.cd, sk.color);
-        this.blasts.push({ x: spot.x, y: spot.y, r: COMBAT.starfallRadius, time: COMBAT.starfallDelay, damage: dmg });
-        this.effect('star', spot.x, spot.y, COMBAT.starfallRadius, sk.color, COMBAT.starfallDelay + 0.3);
+        case 'spin': {
+          const hits = this.mobs.filter((m) => dist(p, m) <= radius + m.r);
+          if (!pressed && !(this.auto && hits.length)) return;
+          this.startSkill(sk.id, sk.cd, sk.color);
+          this.effect('ring', p.x, p.y, radius, sk.color, 0.5);
+          for (const m of hits) this.damage(m, dmg);
+          return;
+        }
+        case 'groundAoe': {
+          let spot: Vec | null = null;
+          if (pressed) {
+            spot = (this.manualActive && this.input.aim) || this.bestCluster(range, radius) ||
+              { x: p.x + Math.cos(p.angle) * Math.min(150, range), y: p.y + Math.sin(p.angle) * Math.min(150, range) };
+            spot = this.clampTo(spot, range);
+          } else if (this.auto) {
+            spot = this.bestCluster(range, radius);
+          }
+          if (!spot) return;
+          this.startSkill(sk.id, sk.cd, sk.color);
+          const delay = sk.delay ?? 0.5;
+          this.blasts.push({ x: spot.x, y: spot.y, r: radius, time: delay, damage: dmg, color: sk.color, label: sk.name });
+          this.effect('star', spot.x, spot.y, radius, sk.color, delay + 0.3);
+          return;
+        }
+        case 'pierce':
+        case 'fan':
+        case 'fireball': {
+          let go = pressed;
+          let angle = this.aimAngle(range);
+          if (!go && this.auto) {
+            const t = this.nearestMob(range * 0.9, p, true);
+            if (t) {
+              angle = angleTo(p, t);
+              go = true;
+            }
+          }
+          if (!go) return;
+          this.startSkill(sk.id, sk.cd, sk.color);
+          p.angle = angle;
+          this.anim.swing = 1;
+          if (sk.type === 'pierce') {
+            this.shoot({ angle, speed: 1400, maxDist: range, damage: dmg, kind: 'arrow', color: sk.color, pierce: true, label: sk.name });
+          } else if (sk.type === 'fan') {
+            const n = sk.count ?? 5;
+            for (let k = 0; k < n; k++) {
+              const a = angle + (k - (n - 1) / 2) * 0.13;
+              this.shoot({ angle: a, speed: 1000, maxDist: range, damage: dmg, kind: 'arrow', color: sk.color });
+            }
+          } else {
+            this.shoot({ angle, speed: 700, maxDist: range, damage: dmg, kind: 'fireball', color: sk.color, splash: radius, label: sk.name });
+          }
+          return;
+        }
       }
     });
+  }
+
+  private clampTo(spot: Vec, range: number): Vec {
+    const p = this.player;
+    const d = dist(p, spot);
+    if (d <= range) return spot;
+    const k = range / d;
+    return { x: p.x + (spot.x - p.x) * k, y: p.y + (spot.y - p.y) * k };
   }
 
   private standingInBossTelegraph(): boolean {
@@ -887,13 +1036,13 @@ export class Game {
     this.anim.flashColor = color;
   }
 
-  /** Point within Starfall range that would hit the most monsters. */
-  private bestCluster(): Vec | null {
+  /** Point within range that would hit the most monsters. */
+  private bestCluster(range: number, radius: number): Vec | null {
     let best: Vec | null = null;
     let bestN = 0;
     for (const m of this.mobs) {
-      if (dist(this.player, m) > COMBAT.starfallRange) continue;
-      const n = this.mobs.filter((o) => dist(o, m) <= COMBAT.starfallRadius).length + (m.boss ? 5 : 0);
+      if (dist(this.player, m) > range) continue;
+      const n = this.mobs.filter((o) => dist(o, m) <= radius).length + (m.boss ? 5 : 0);
       if (n > bestN) {
         bestN = n;
         best = { x: m.x, y: m.y };
@@ -906,8 +1055,8 @@ export class Game {
     for (const b of this.blasts) {
       b.time -= dt;
       if (b.time > 0) continue;
-      this.effect('blast', b.x, b.y, b.r, '#c77dff', 0.4);
-      for (const m of this.mobs.filter((m) => dist(b, m) <= b.r + m.r)) this.damage(m, b.damage, 'Starfall');
+      this.effect('blast', b.x, b.y, b.r, b.color, 0.4);
+      for (const m of this.mobs.filter((m) => dist(b, m) <= b.r + m.r)) this.damage(m, b.damage, b.label);
     }
     this.blasts = this.blasts.filter((b) => b.time > 0);
   }
@@ -1005,7 +1154,7 @@ export class Game {
       s.exp -= expToNext(s.level);
       s.level++;
       gained++;
-      const unlocked = SKILLS.find((k) => k.unlock === s.level);
+      const unlocked = this.job.skills.find((k) => k.unlock === s.level);
       if (unlocked) this.onToast(`New skill: ${unlocked.icon} ${unlocked.name}`, unlocked.color);
     }
     if (gained) {
@@ -1025,6 +1174,7 @@ export class Game {
     this.mobs = [];
     this.telegraphs = [];
     this.blasts = [];
+    this.projectiles = [];
     this.target = null;
     this.player.dash = null;
     if (wasBoss) {
@@ -1262,8 +1412,9 @@ export class Game {
   dps(): number {
     const st = this.stats;
     const critF = 1 + st.critRate * (st.critDmg - 1);
-    let perSec = st.atk / BALANCE.playerAttackInterval;
-    for (const sk of SKILLS) if (this.state.level >= sk.unlock) perSec += (st.atk * sk.mult) / sk.cd;
+    const job = this.job;
+    let perSec = (st.atk * job.basic.mult) / job.basic.interval;
+    for (const sk of job.skills) if (this.state.level >= sk.unlock) perSec += (st.atk * sk.mult * (sk.count ?? 1) * 0.6) / sk.cd;
     for (const id of this.state.party) {
       if (!id) continue;
       const o = this.state.companions[id];

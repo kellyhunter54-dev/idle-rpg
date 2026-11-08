@@ -186,22 +186,97 @@ export function companionOwnedAtk(id: string, level: number): number {
   return 0.02 * RARITY[COMPANION[id].rarity].mult * (1 + 0.25 * level);
 }
 
-// ---------- Skills ----------
+// ---------- Jobs & skills ----------
+export type JobId = 'warrior' | 'archer' | 'mage';
+
+/** How a skill behaves. game.ts implements each type. */
+export type SkillType =
+  | 'dash' // dash toward aim, hitting everything along the way
+  | 'spin' // hit everything around you
+  | 'groundAoe' // delayed blast at the aimed spot
+  | 'pierce' // fast projectile that passes through enemies
+  | 'fan' // spread of projectiles
+  | 'fireball'; // projectile that explodes on impact
+
 export interface SkillDef {
   id: string;
   name: string;
+  type: SkillType;
   unlock: number; // player level
   cd: number;
-  mult: number; // x ATK
+  mult: number; // x ATK per hit
   color: string;
   icon: string;
+  radius?: number; // spin / groundAoe / fireball explosion
+  range?: number; // how far it can be aimed or travel
+  delay?: number; // groundAoe delay
+  count?: number; // fan projectiles
 }
 
-export const SKILLS: SkillDef[] = [
-  { id: 'strike', name: 'Dash Strike', unlock: 1, cd: 4, mult: 3, color: '#ffd166', icon: '⚡' },
-  { id: 'cyclone', name: 'Cyclone', unlock: 8, cd: 10, mult: 8, color: '#4ecdc4', icon: '🌀' },
-  { id: 'starfall', name: 'Starfall', unlock: 20, cd: 25, mult: 25, color: '#c77dff', icon: '🌠' },
-];
+export interface BasicAttack {
+  kind: 'melee' | 'arrow' | 'bolt';
+  range: number; // melee: reach beyond your body; ranged: max travel distance
+  interval: number; // seconds between attacks
+  mult: number; // x ATK
+  speed?: number; // projectile speed
+  splash?: number; // bolt explosion radius
+}
+
+export interface JobDef {
+  id: JobId;
+  name: string;
+  icon: string;
+  color: string; // cloak / theme color
+  desc: string;
+  basic: BasicAttack;
+  atkMult: number;
+  hpMult: number;
+  critBonus: number;
+  damageTaken: number; // 1 = normal, 0.65 = takes 35% less
+  skills: SkillDef[];
+}
+
+export const JOBS: Record<JobId, JobDef> = {
+  warrior: {
+    id: 'warrior', name: 'Warrior', icon: '🛡️', color: '#3d5a80',
+    desc: 'Up close and sturdy. Cleaves groups with every swing, has the most HP and takes 35% less damage.',
+    basic: { kind: 'melee', range: 80, interval: 1.0, mult: 1 },
+    atkMult: 1.3, hpMult: 1.5, critBonus: 0, damageTaken: 0.65,
+    skills: [
+      { id: 'dash', name: 'Dash Strike', type: 'dash', unlock: 1, cd: 4, mult: 3, color: '#ffd166', icon: '⚡', range: 190 },
+      { id: 'whirl', name: 'Whirlwind', type: 'spin', unlock: 8, cd: 10, mult: 8, color: '#4ecdc4', icon: '🌀', radius: 160 },
+      { id: 'quake', name: 'Earthshatter', type: 'groundAoe', unlock: 20, cd: 25, mult: 25, color: '#d4a373', icon: '💥', radius: 180, range: 260, delay: 0.35 },
+    ],
+  },
+  archer: {
+    id: 'archer', name: 'Archer', icon: '🏹', color: '#4f6d3a',
+    desc: 'Fast arrows from a distance. Keeps away from enemies and crits more often.',
+    basic: { kind: 'arrow', range: 390, interval: 0.75, mult: 0.7, speed: 950 },
+    atkMult: 0.85, hpMult: 0.85, critBonus: 0.05, damageTaken: 1,
+    skills: [
+      { id: 'pierce', name: 'Piercing Arrow', type: 'pierce', unlock: 1, cd: 4, mult: 3, color: '#e9c46a', icon: '➶', range: 620 },
+      { id: 'rain', name: 'Arrow Rain', type: 'groundAoe', unlock: 8, cd: 10, mult: 8, color: '#90be6d', icon: '🌧️', radius: 150, range: 460, delay: 0.6 },
+      { id: 'volley', name: 'Volley', type: 'fan', unlock: 20, cd: 25, mult: 10, color: '#f4a261', icon: '🎯', range: 480, count: 7 },
+    ],
+  },
+  mage: {
+    id: 'mage', name: 'Mage', icon: '🔮', color: '#5a3d80',
+    desc: 'Exploding spells that hit groups. Hardest hitter, but fragile.',
+    basic: { kind: 'bolt', range: 390, interval: 1.1, mult: 1.2, speed: 650, splash: 55 },
+    atkMult: 0.9, hpMult: 0.8, critBonus: 0, damageTaken: 1,
+    skills: [
+      { id: 'fireball', name: 'Fireball', type: 'fireball', unlock: 1, cd: 4, mult: 3.5, color: '#f3722c', icon: '🔥', radius: 110, range: 460 },
+      { id: 'nova', name: 'Frost Nova', type: 'spin', unlock: 8, cd: 10, mult: 8, color: '#90e0ef', icon: '❄️', radius: 185 },
+      { id: 'meteor', name: 'Meteor', type: 'groundAoe', unlock: 20, cd: 25, mult: 27, color: '#c77dff', icon: '☄️', radius: 155, range: 460, delay: 0.6 },
+    ],
+  },
+};
+
+export const JOB_LIST: JobDef[] = [JOBS.warrior, JOBS.archer, JOBS.mage];
+
+export function jobOf(state: { job?: string }): JobDef {
+  return JOBS[(state.job as JobId) ?? 'warrior'] ?? JOBS.warrior;
+}
 
 // ---------- World ----------
 export interface ChapterDef {

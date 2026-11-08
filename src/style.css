@@ -358,4 +358,85 @@ a { color: var(--trim-hi); }
   #battle { height: 60vh; }
 }
 
+/* Character select */
+#charselect {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  overflow-y: auto;
+  background: radial-gradient(ellipse at 50% 30%, #2a2116 0%, #0b0a08 70%);
+}
+.cs-wrap { max-width: 980px; margin: 0 auto; padding: 28px 16px 40px; }
+.cs-title {
+  text-align: center;
+  font-size: 30px;
+  color: var(--trim-hi);
+  letter-spacing: 2px;
+  margin: 10px 0 24px;
+  text-shadow: 0 2px 0 #000, 0 0 18px #c9a22744;
+  font-weight: normal;
+}
+.cs-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-bottom: 18px; }
+.cs-card {
+  background: linear-gradient(#211a12, #15110c);
+  border: 2px solid var(--trim);
+  border-radius: 6px;
+  padding: 14px;
+  text-align: center;
+  box-shadow: 0 6px 24px #000a, inset 0 0 30px #000;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.cs-card .portrait { width: 140px; height: 140px; margin: 0 auto 4px; display: block; }
+.cs-card.empty {
+  border-style: dashed;
+  color: var(--muted);
+  justify-content: center;
+  min-height: 330px;
+  cursor: pointer;
+  font-size: 16px;
+}
+.cs-card.empty:hover { color: var(--trim-hi); border-color: var(--trim-hi); }
+.cs-plus { font-size: 54px; line-height: 1; }
+.cs-name { font-size: 20px; color: var(--trim-hi); }
+.cs-sub { font-size: 13px; }
+.cs-card .btn.wide { margin-top: 10px; }
+.cs-row { display: flex; gap: 6px; margin-top: 6px; }
+.cs-row .btn { flex: 1; font-size: 12px; padding: 7px 6px; }
+.cs-input {
+  display: block;
+  margin: 0 auto 18px;
+  width: min(320px, 90%);
+  padding: 10px 12px;
+  font-size: 18px;
+  font-family: var(--serif);
+  text-align: center;
+  background: #0b0906;
+  color: var(--text);
+  border: 1px solid var(--trim);
+  border-radius: 4px;
+  user-select: text;
+}
+.cs-jobs { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-bottom: 18px; }
+.cs-job {
+  background: linear-gradient(#211a12, #15110c);
+  border: 2px solid #3a3022;
+  border-radius: 6px;
+  padding: 12px;
+  text-align: center;
+  cursor: pointer;
+  transition: transform 0.1s;
+}
+.cs-job:hover { border-color: var(--trim); }
+.cs-job.picked { border-color: var(--trim-hi); box-shadow: 0 0 18px #c9a22755; transform: translateY(-3px); }
+.cs-job .portrait { width: 120px; height: 120px; display: block; margin: 0 auto; }
+.cs-jobname { font-size: 18px; color: var(--trim-hi); margin: 4px 0; }
+.cs-desc { font-size: 12px; color: var(--muted); min-height: 46px; }
+.cs-skills { display: flex; flex-direction: column; gap: 3px; margin-top: 8px; font-size: 12px; }
+.cs-skills span { background: #0007; border: 1px solid #3a3022; border-radius: 3px; padding: 3px; }
+.cs-actions { display: flex; justify-content: center; gap: 10px; }
+.cs-actions .btn { min-width: 140px; padding: 11px 16px; font-size: 15px; }
+.hudswitch { cursor: pointer; color: var(--text); font-family: var(--serif); }
+
 .hidden { display: none !important; }

@@ -1,4 +1,3 @@
-import { SKILLS } from './data';
 import { Input, Vec } from './game';
 
 /**
@@ -40,7 +39,7 @@ export function setupInput(
       e.preventDefault();
     }
     const skill = ['Digit1', 'Digit2', 'Digit3'].indexOf(e.code);
-    if (skill >= 0 && skill < SKILLS.length && !e.repeat) input.skills[skill] = true;
+    if (skill >= 0 && !e.repeat) input.skills[skill] = true;
     if (e.code === 'KeyQ' && !e.repeat) onToggleAuto();
   });
   window.addEventListener('keyup', (e) => {

@@ -1,4 +1,4 @@
-import { BALANCE, GrowthKey, Slot } from './data';
+import { BALANCE, GrowthKey, JobId, Slot } from './data';
 
 export interface Owned {
   count: number;
@@ -8,6 +8,8 @@ export interface Owned {
 export interface GameState {
   version: number;
   lastSaved: number;
+  name: string;
+  job: JobId;
   level: number;
   exp: number;
   gold: number;
@@ -27,10 +29,12 @@ export interface GameState {
 
 export const SAVE_VERSION = 1;
 
-export function newState(): GameState {
+export function newState(name = 'Hero', job: JobId = 'warrior'): GameState {
   return {
     version: SAVE_VERSION,
     lastSaved: Date.now(),
+    name,
+    job,
     level: 1,
     exp: 0,
     gold: 0,

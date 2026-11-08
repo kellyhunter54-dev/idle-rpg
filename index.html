@@ -9,7 +9,8 @@
     <link rel="stylesheet" href="./src/style.css" />
   </head>
   <body>
-    <div id="app">
+    <div id="charselect" class="hidden"></div>
+    <div id="app" class="hidden">
       <header id="topbar">
         <div class="lvl">
           <span id="lvl">Lv. 1</span>
@@ -17,6 +18,7 @@
         </div>
         <div class="cur"><span>🪙</span><b id="gold">0</b></div>
         <div class="cur"><span>💎</span><b id="gems">0</b></div>
+        <button id="switchbtn" class="cur hudswitch" title="Switch character">👥</button>
       </header>
 
       <section id="battle">

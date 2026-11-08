@@ -1,6 +1,6 @@
 // Balance simulator: plays the game headlessly with a simple "buy cheapest useful
-// upgrade" strategy and prints progress over time. Run with: npm run sim
-import { GROWTH } from '../src/data';
+// upgrade" strategy and prints progress over time. Run with: npm run sim -- <hours> <warrior|archer|mage>
+import { GROWTH, JobId } from '../src/data';
 import { Game } from '../src/game';
 import { newState } from '../src/state';
 
@@ -10,7 +10,9 @@ const rand = () => {
   return seed / 4294967296;
 };
 
-const game = new Game(newState(), rand);
+const job = (process.argv[3] ?? 'warrior') as JobId;
+const game = new Game(newState('Sim', job), rand);
+console.log(`Simulating a ${job}`);
 game.summonGear(10);
 game.summonCompanions(10);
 

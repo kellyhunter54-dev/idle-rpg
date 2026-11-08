@@ -1,4 +1,4 @@
-import { BALANCE, COMPANION, chapterOf } from './data';
+import { BALANCE, COMPANION, JOBS, JobDef, JobId, chapterOf } from './data';
 import { Game, Mob, Telegraph, Vec } from './game';
 import { TILE, Tile } from './map';
 
@@ -169,6 +169,7 @@ export class Renderer {
     for (const d of list) d.draw();
 
     // ---- air effects (bolts, falling stars) ----
+    this.drawProjectiles(g);
     this.drawAirEffects(g);
 
     // ---- floating text ----
@@ -399,55 +400,39 @@ export class Renderer {
     const sx = this.px(p.x, p.y);
     const bob = p.moving ? Math.abs(Math.sin(time * 11)) * 4 : Math.sin(time * 2.5) * 1.2;
     const sy = this.py(p.x, p.y) - bob;
-    const dir = this.screenDir(p.angle);
-    const flip = dir.dx >= 0 ? 1 : -1;
-    const bw = 30 * k;
-    const bh = 46 * k;
     ctx.save();
     ctx.globalAlpha = g.deadTimer > 0 ? 0.3 : 1;
-
-    // weapon behind body when facing away (up the screen)
-    const drawSword = () => {
-      const swing = (g.anim.swing - 0.5) * 2.2;
-      const base = Math.atan2(dir.dy, dir.dx) + swing * flip * -1;
-      ctx.save();
-      ctx.translate(sx + dir.dx * 12 * k, sy - bh * 0.55 + dir.dy * 6 * k);
-      ctx.rotate(base);
-      ctx.fillStyle = '#c9ced6';
-      ctx.fillRect(4 * k, -3 * k, 46 * k, 6 * k);
-      ctx.fillStyle = '#c9a227';
-      ctx.fillRect(0, -7 * k, 6 * k, 14 * k);
-      ctx.restore();
-    };
-    if (dir.dy < 0) drawSword();
-
-    // legs
-    ctx.fillStyle = '#3b2f24';
-    const step = p.moving ? Math.sin(time * 11) * 5 * k : 0;
-    ctx.fillRect(sx - 9 * k, sy - 14 * k + step, 7 * k, 14 * k - step);
-    ctx.fillRect(sx + 2 * k, sy - 14 * k - step, 7 * k, 14 * k + step);
-    // cloak / body
-    ctx.fillStyle = g.anim.playerHit > 0.5 ? '#d66' : '#3d5a80';
-    roundRect(ctx, sx - bw / 2, sy - bh, bw, bh - 10 * k, 8 * k);
-    ctx.fill();
-    ctx.fillStyle = '#2b4060';
-    ctx.fillRect(sx - bw / 2, sy - 22 * k, bw, 6 * k); // belt
-    ctx.fillStyle = '#c9a227';
-    ctx.fillRect(sx - 3 * k, sy - 22 * k, 6 * k, 6 * k);
-    // head + helmet
-    ctx.fillStyle = '#e0b48a';
-    circle(ctx, sx, sy - bh - 9 * k, 11 * k);
-    ctx.fillStyle = '#7d8590';
-    ctx.beginPath();
-    ctx.arc(sx, sy - bh - 10 * k, 12 * k, Math.PI, 0);
-    ctx.fill();
-    // eye toward facing
-    ctx.fillStyle = '#111';
-    if (dir.dy > -0.6) circle(ctx, sx + flip * 5 * k, sy - bh - 7 * k, 2 * k);
-
-    if (dir.dy >= 0) drawSword();
+    drawHeroFigure(ctx, sx, sy, k, g.job, this.screenDir(p.angle), g.anim.swing, p.moving, time, g.anim.playerHit > 0.5);
     ctx.restore();
-    bar(ctx, sx - 22 * k, sy - bh - 32 * k, 44 * k, 5, g.hp / g.stats.maxHp, '#4caf50');
+    bar(ctx, sx - 22 * k, sy - 46 * k - 34 * k, 44 * k, 5, g.hp / g.stats.maxHp, '#4caf50');
+  }
+
+  private drawProjectiles(g: Game) {
+    const ctx = this.ctx;
+    for (const pr of g.projectiles) {
+      const sx = this.px(pr.x, pr.y);
+      const sy = this.py(pr.x, pr.y, 28);
+      if (pr.kind === 'arrow') {
+        const d = this.screenDir(pr.angle);
+        const len = 26 * this.k + 6;
+        ctx.strokeStyle = pr.color;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(sx - d.dx * len, sy - d.dy * len);
+        ctx.lineTo(sx, sy);
+        ctx.stroke();
+        ctx.fillStyle = '#ddd';
+        circle(ctx, sx, sy, 2.5);
+      } else {
+        const r = (pr.kind === 'fireball' ? 13 : 7) * Math.max(0.7, this.k);
+        const glow = ctx.createRadialGradient(sx, sy, 0, sx, sy, r * 2.2);
+        glow.addColorStop(0, '#ffffff');
+        glow.addColorStop(0.35, pr.color);
+        glow.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = glow;
+        circle(ctx, sx, sy, r * 2.2);
+      }
+    }
   }
 
   private drawCompanion(g: Game, c: { id: string; x: number; y: number; hit: number }, time: number) {
@@ -547,6 +532,162 @@ export class Renderer {
     const [pxm, pym] = toMini(g.player.x, g.player.y);
     circle(ctx, pxm, pym, 3.5);
   }
+}
+
+// ---------------- Hero figure (shared by the game and the character select) ----------------
+/**
+ * Draws the hero standing at screen point (sx, sy) (their feet). k is the zoom.
+ * dir is the on-screen facing direction.
+ */
+export function drawHeroFigure(
+  ctx: CanvasRenderingContext2D, sx: number, sy: number, k: number, job: JobDef,
+  dir: { dx: number; dy: number }, swing: number, moving: boolean, time: number, hurt = false,
+) {
+  const flip = dir.dx >= 0 ? 1 : -1;
+  const bw = 30 * k;
+  const bh = 46 * k;
+  const body = hurt ? '#d66' : job.color;
+  const trim = shade(job.color, -0.35);
+
+  const drawWeapon = () => {
+    ctx.save();
+    if (job.id === 'warrior') {
+      const sw = (swing - 0.5) * 2.2;
+      ctx.translate(sx + dir.dx * 12 * k, sy - bh * 0.55 + dir.dy * 6 * k);
+      ctx.rotate(Math.atan2(dir.dy, dir.dx) - sw * flip);
+      ctx.fillStyle = '#c9ced6';
+      ctx.fillRect(4 * k, -3 * k, 46 * k, 6 * k);
+      ctx.fillStyle = '#c9a227';
+      ctx.fillRect(0, -7 * k, 6 * k, 14 * k);
+    } else if (job.id === 'archer') {
+      // bow held out toward the aim, string pulled back while shooting
+      ctx.translate(sx + dir.dx * 18 * k, sy - bh * 0.55 + dir.dy * 8 * k);
+      ctx.rotate(Math.atan2(dir.dy, dir.dx));
+      ctx.strokeStyle = '#8b5a2b';
+      ctx.lineWidth = 4 * k;
+      ctx.beginPath();
+      ctx.arc(-6 * k, 0, 22 * k, -1.2, 1.2);
+      ctx.stroke();
+      const pull = swing * 10 * k;
+      ctx.strokeStyle = '#e8d7a9';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(-6 * k + Math.cos(-1.2) * 22 * k, Math.sin(-1.2) * 22 * k);
+      ctx.lineTo(-6 * k - pull, 0);
+      ctx.lineTo(-6 * k + Math.cos(1.2) * 22 * k, Math.sin(1.2) * 22 * k);
+      ctx.stroke();
+    } else {
+      // staff at the side, orb glows when casting
+      const tx = sx + flip * 20 * k;
+      const lift = swing * 6 * k;
+      ctx.strokeStyle = '#6b4423';
+      ctx.lineWidth = 4 * k;
+      ctx.beginPath();
+      ctx.moveTo(tx, sy - 2 * k - lift);
+      ctx.lineTo(tx, sy - bh - 26 * k - lift);
+      ctx.stroke();
+      const r = (6 + swing * 4) * k;
+      const g = ctx.createRadialGradient(tx, sy - bh - 30 * k - lift, 0, tx, sy - bh - 30 * k - lift, r * 2.4);
+      g.addColorStop(0, '#ffffff');
+      g.addColorStop(0.4, '#b388ff');
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g;
+      circle(ctx, tx, sy - bh - 30 * k - lift, r * 2.4);
+    }
+    ctx.restore();
+  };
+
+  if (dir.dy < 0) drawWeapon();
+
+  if (job.id === 'mage') {
+    // long robe
+    ctx.fillStyle = body;
+    ctx.beginPath();
+    ctx.moveTo(sx - bw * 0.42, sy - bh + 4 * k);
+    ctx.lineTo(sx + bw * 0.42, sy - bh + 4 * k);
+    ctx.lineTo(sx + bw * 0.62, sy);
+    ctx.lineTo(sx - bw * 0.62, sy);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = trim;
+    ctx.fillRect(sx - bw * 0.62, sy - 5 * k, bw * 1.24, 5 * k);
+  } else {
+    ctx.fillStyle = '#3b2f24';
+    const step = moving ? Math.sin(time * 11) * 5 * k : 0;
+    ctx.fillRect(sx - 9 * k, sy - 14 * k + step, 7 * k, 14 * k - step);
+    ctx.fillRect(sx + 2 * k, sy - 14 * k - step, 7 * k, 14 * k + step);
+    if (job.id === 'archer') {
+      // quiver on the back
+      ctx.fillStyle = '#6b4423';
+      ctx.fillRect(sx - flip * 16 * k - 4 * k, sy - bh - 2 * k, 8 * k, 26 * k);
+    }
+    ctx.fillStyle = body;
+    roundRect(ctx, sx - bw / 2, sy - bh, bw, bh - 10 * k, 8 * k);
+    ctx.fill();
+    ctx.fillStyle = trim;
+    ctx.fillRect(sx - bw / 2, sy - 22 * k, bw, 6 * k);
+    ctx.fillStyle = '#c9a227';
+    ctx.fillRect(sx - 3 * k, sy - 22 * k, 6 * k, 6 * k);
+  }
+
+  // head
+  const hy = sy - bh - 9 * k;
+  ctx.fillStyle = '#e0b48a';
+  circle(ctx, sx, hy, 11 * k);
+  if (job.id === 'warrior') {
+    ctx.fillStyle = '#7d8590';
+    ctx.beginPath();
+    ctx.arc(sx, hy - 1 * k, 12 * k, Math.PI, 0);
+    ctx.fill();
+    ctx.fillRect(sx - 2 * k, hy - 1 * k, 4 * k, 8 * k);
+  } else if (job.id === 'archer') {
+    ctx.fillStyle = shade(job.color, -0.2);
+    ctx.beginPath();
+    ctx.arc(sx, hy, 13 * k, Math.PI * 0.95, Math.PI * 2.05);
+    ctx.lineTo(sx - flip * 16 * k, hy + 8 * k);
+    ctx.closePath();
+    ctx.fill();
+  } else {
+    // pointy wizard hat
+    ctx.fillStyle = shade(job.color, -0.15);
+    ctx.beginPath();
+    ctx.ellipse(sx, hy - 6 * k, 17 * k, 5 * k, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(sx - 10 * k, hy - 7 * k);
+    ctx.lineTo(sx - flip * 6 * k, hy - 38 * k);
+    ctx.lineTo(sx + 10 * k, hy - 7 * k);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.fillStyle = '#111';
+  if (dir.dy > -0.6) circle(ctx, sx + flip * 5 * k, hy + 2 * k, 2 * k);
+
+  if (dir.dy >= 0) drawWeapon();
+}
+
+/** Draws an idle, slowly turning hero for the character select screen. */
+export function drawHeroPortrait(canvas: HTMLCanvasElement, job: JobId, time: number) {
+  const ctx = canvas.getContext('2d')!;
+  const w = canvas.width;
+  const h = canvas.height;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  const def = JOBS[job];
+  const bg = ctx.createRadialGradient(w / 2, h * 0.6, 4, w / 2, h * 0.6, w * 0.6);
+  bg.addColorStop(0, hexA(def.color, 0.55));
+  bg.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  ctx.beginPath();
+  ctx.ellipse(w / 2, h * 0.82, w * 0.2, w * 0.06, 0, 0, Math.PI * 2);
+  ctx.fill();
+  const a = Math.sin(time * 0.6) * 0.9 + 0.4;
+  const dir = { dx: Math.cos(a), dy: Math.sin(a) * 0.5 + 0.3 };
+  const l = Math.hypot(dir.dx, dir.dy);
+  const swing = Math.max(0, Math.sin(time * 1.7)) ** 6;
+  drawHeroFigure(ctx, w / 2, h * 0.82 - Math.sin(time * 2.5) * 1.5, w / 95, def, { dx: dir.dx / l, dy: dir.dy / l }, swing, false, time);
 }
 
 // ---------------- helpers ----------------

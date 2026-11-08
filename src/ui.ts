@@ -1,15 +1,16 @@
 import {
-  BALANCE, COMPANION, COMPANIONS, GROWTH, GrowthKey, RARITIES, RARITY, SKILLS, SLOTS, SLOT_INFO, Slot,
+  BALANCE, COMPANION, COMPANIONS, GROWTH, GrowthKey, RARITIES, RARITY, SLOTS, SLOT_INFO, Slot,
   companionHitMult, companionOwnedAtk, enhanceCopies, expToNext, gearEffect, gearName, parseGear,
   rarityIndex, stageLabel,
 } from './data';
 import { fmt, fmtPct, fmtTime } from './format';
 import { Game, OfflineRewards, SummonResult } from './game';
-import { clearSave, exportSave, importSave, saveGame } from './save';
+import { exportSave, importSave, saveGame } from './save';
 
 type Tab = 'growth' | 'gear' | 'companions' | 'summon' | 'info';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
+const esc = (t: string) => t.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
 export class UI {
   tab: Tab = 'growth';
@@ -17,8 +18,10 @@ export class UI {
   private panelTimer = 0;
   private holdTimer: number | undefined;
   private holdInterval: number | undefined;
-  /** Called when the whole game is replaced (import / reset). */
+  /** Called when the character's save is replaced: an import code, or null to reset to level 1. */
   onReplaceState: (code: string | null) => void = () => {};
+  /** Called to go back to the character select screen. */
+  onSwitchCharacter: () => void = () => {};
 
   constructor(private game: Game) {
     game.onToast = (m, c) => this.toast(m, c);
@@ -127,10 +130,10 @@ export class UI {
         return;
       }
       case 'reset':
-        if (window.confirm('Reset ALL progress? This cannot be undone.')) {
-          clearSave();
-          this.onReplaceState(null);
-        }
+        if (window.confirm(`Reset ${g.state.name} back to level 1? This cannot be undone.`)) this.onReplaceState(null);
+        return;
+      case 'switch':
+        this.onSwitchCharacter();
         return;
       case 'save':
         saveGame(g.state);
@@ -145,7 +148,7 @@ export class UI {
   update(dt: number) {
     const g = this.game;
     const s = g.state;
-    $('lvl').textContent = `Lv. ${s.level}`;
+    $('lvl').textContent = `${s.name}  ·  Lv. ${s.level} ${g.job.name}`;
     $('expfill').style.width = `${Math.min(100, (s.exp / expToNext(s.level)) * 100)}%`;
     $('gold').textContent = fmt(s.gold);
     $('gems').textContent = fmt(s.gems);
@@ -175,7 +178,8 @@ export class UI {
     ab.textContent = g.auto ? 'AUTO ✓' : 'AUTO ✗';
     $('modebadge').classList.toggle('hidden', !g.auto || !g.manualActive);
     document.querySelectorAll<HTMLElement>('.skillbtn').forEach((el, i) => {
-      const sk = SKILLS[i];
+      const sk = g.job.skills[i];
+      if (!sk) return;
       const locked = s.level < sk.unlock;
       el.classList.toggle('locked', locked);
       el.querySelector('.lock')!.classList.toggle('hidden', !locked);
@@ -379,8 +383,11 @@ export class UI {
   }
 
   private infoHtml(): string {
-    const s = this.game.state;
+    const g = this.game;
+    const s = g.state;
     return `
+      <h3>${g.job.icon} ${esc(s.name)}, Lv. ${s.level} ${g.job.name}</h3>
+      <button class="btn wide alt" data-action="switch" style="margin-bottom:12px">👥 Switch character</button>
       <h3>Progress</h3>
       <div class="statgrid">
         <div class="stat">Best stage<b>${stageLabel(s.maxStage)}</b></div>
@@ -400,9 +407,9 @@ export class UI {
         <button class="btn alt" data-action="export">Export</button>
         <button class="btn alt" data-action="import">Import</button>
       </div>
-      <button class="btn wide" style="background:#7f1d1d;margin-top:12px" data-action="reset">Reset progress</button>
+      <button class="btn wide" style="background:#7f1d1d;margin-top:12px" data-action="reset">Reset this character to Lv 1</button>
       <p class="small" style="text-align:center;margin-top:16px"><a href="./side/">Play the classic side-scroller version</a></p>
-      <p class="muted small" style="text-align:center">v0.3.0</p>`;
+      <p class="muted small" style="text-align:center">v0.4.0</p>`;
   }
 
   // ---------------- Modals & toasts ----------------

@@ -1,5 +1,5 @@
 import {
-  BALANCE, GROWTH, Slot, companionOwnedAtk, gearEffect, levelBaseAtk, levelBaseHp, parseGear,
+  BALANCE, GROWTH, Slot, companionOwnedAtk, gearEffect, jobOf, levelBaseAtk, levelBaseHp, parseGear,
 } from './data';
 import { GameState } from './state';
 
@@ -40,9 +40,10 @@ export function computeStats(state: GameState): Stats {
 
   const atkPct = bonus.weapon + compAtk;
   const hpPct = bonus.armor;
-  const atk = (levelBaseAtk(state.level) + growthValue(state, 'atk')) * (1 + atkPct);
-  const maxHp = (levelBaseHp(state.level) + growthValue(state, 'hp')) * (1 + hpPct);
-  const critRate = Math.min(1, growthValue(state, 'critRate'));
+  const job = jobOf(state);
+  const atk = (levelBaseAtk(state.level) + growthValue(state, 'atk')) * (1 + atkPct) * job.atkMult;
+  const maxHp = (levelBaseHp(state.level) + growthValue(state, 'hp')) * (1 + hpPct) * job.hpMult;
+  const critRate = Math.min(1, growthValue(state, 'critRate') + job.critBonus);
   const critDmg = BALANCE.baseCritDmg + growthValue(state, 'critDmg') + bonus.accessory;
   const power = atk * (1 + critRate * (critDmg - 1)) * 10 + maxHp;
 
