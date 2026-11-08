@@ -1689,6 +1689,33 @@ export class Game {
     }
   }
 
+  /**
+   * Wild phase: the clean spot. Samples open spots in the room and picks the one furthest from any
+   * goo (and from where the other slimes are already heading), so the minis spread slime everywhere.
+   */
+  private cleanSpot(m: Mob): Vec {
+    const claimed: Vec[] = [];
+    for (const o of this.mobs) {
+      if (o === m || o.group !== m.group) continue;
+      if (o.hop) claimed.push({ x: o.hop.tx, y: o.hop.ty });
+      if (o.chargeTo) claimed.push(o.chargeTo);
+    }
+    let best: Vec | null = null;
+    let bestScore = -Infinity;
+    for (let i = 0; i < 24; i++) {
+      const q = this.roomSpot(m, 0);
+      let near = 400;
+      for (const g of this.goo) near = Math.min(near, Math.hypot(g.x - q.x, g.y - q.y) - g.r);
+      for (const c of claimed) near = Math.min(near, dist(c, q) * 0.6);
+      const score = near + this.rand() * 25; // a little noise so it's not perfectly predictable
+      if (score > bestScore) {
+        bestScore = score;
+        best = q;
+      }
+    }
+    return best ?? this.roomSpot(m, 0);
+  }
+
   /** A random open spot in the arena for a slime of this size, at least `minFromPlayer` away from you. */
   private roomSpot(m: Mob, minFromPlayer: number): Vec {
     const c = this.map.altars[0] ?? { x: m.x, y: m.y };
@@ -1876,7 +1903,7 @@ export class Game {
     if (m.hopTimer > 0) return;
     // land near you, ahead of you, or somewhere random in the arena
     let to: Vec;
-    if (m.phase === 2) to = this.roomSpot(m, 0); // wild phase: anywhere in the room
+    if (m.phase === 2) to = this.cleanSpot(m); // wild phase: the cleanest floor in the room
     else {
       const raw = this.rand() < 0.75 ? this.chaosPoint(SPLIT.hopTime) : { x: p.x + (this.rand() - 0.5) * 700, y: p.y + (this.rand() - 0.5) * 700 };
       to = this.clampArena(raw, m.r * 0.8 + 2);
@@ -1937,7 +1964,7 @@ export class Game {
     const main = this.isMainSlime(m);
     // wild phase: the minis ignore you and go anywhere in the room
     const wildMini = !main && !!m.group && m.phase === 2;
-    const p: Vec = main ? this.player : wildMini ? this.roomSpot(m, 0) : this.chaosPoint(1.1);
+    const p: Vec = main ? this.player : wildMini ? this.cleanSpot(m) : this.chaosPoint(1.1);
     this.telegraphs = this.telegraphs.filter((t) => t.ownerId !== m.id);
     const kit = main ? ZONES[m.zone].bossKit[m.phase] ?? ZONES[m.zone].bossKit[0] : m.phase === 2 ? SPLIT.wild.kit : SPLIT.kit;
     const move = kit[Math.floor(this.rand() * kit.length)];
