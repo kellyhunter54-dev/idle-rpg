@@ -1,4 +1,5 @@
-import { JOBS, JOB_LIST, JobId, jobOf, stageLabel } from './data';
+import { JOBS, JOB_LIST, JobId, ZONES, jobOf } from './data';
+import { TILE, ZONE_TILES } from './map';
 import { drawHeroPortrait } from './render';
 import { SLOT_COUNT, createCharacter, deleteSlot, readSlot, resetCharacter } from './save';
 
@@ -61,7 +62,7 @@ export function showCharacterSelect(onPlay: (slot: number) => void) {
           <canvas class="portrait" data-job="${j.id}" width="140" height="140"></canvas>
           <div class="cs-name">${esc(s.name)}</div>
           <div class="cs-sub">Lv. ${s.level} ${j.name}</div>
-          <div class="cs-sub muted">${stageLabel(s.stage)}</div>
+          <div class="cs-sub muted">${ZONES[Math.min(ZONES.length - 1, Math.floor((s.pos?.x ?? 0) / TILE / ZONE_TILES))].name} · ${s.bossesCleared}/${ZONES.length} bosses</div>
           <div class="cs-sub muted small">Played ${ago(s.lastSaved)}</div>
           <button class="btn wide" data-act="play" data-arg="${i}">Play</button>
           <div class="cs-row">

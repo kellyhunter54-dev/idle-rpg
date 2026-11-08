@@ -1,4 +1,4 @@
-import { BALANCE, COMPANION, JOBS, JobDef, JobId, chapterOf } from './data';
+import { BALANCE, CHAPTERS, COMPANION, JOBS, JobDef, JobId, ZONES, levelColor } from './data';
 import { Game, Mob, Telegraph, Vec } from './game';
 import { TILE, Tile } from './map';
 
@@ -21,6 +21,11 @@ export class Renderer {
 
   constructor(private canvas: HTMLCanvasElement) {
     this.ctx = canvas.getContext('2d')!;
+    // Shrinking effects can produce tiny negative radii; canvas throws on those, so clamp.
+    const arc = this.ctx.arc.bind(this.ctx);
+    this.ctx.arc = (x, y, r, a0, a1, ccw) => arc(x, y, Math.max(0, r), a0, a1, ccw);
+    const ellipse = this.ctx.ellipse.bind(this.ctx);
+    this.ctx.ellipse = (x, y, rx, ry, rot, a0, a1, ccw) => ellipse(x, y, Math.max(0, rx), Math.max(0, ry), rot, a0, a1, ccw);
     this.resize();
     new ResizeObserver(() => this.resize()).observe(canvas);
   }
@@ -67,7 +72,7 @@ export class Renderer {
   draw(g: Game, time: number) {
     const { ctx, w, h } = this;
     if (w === 0 || h === 0) return;
-    const ch = chapterOf(g.state.stage).def;
+    const chOf = (tx: number) => CHAPTERS[ZONES[Math.min(ZONES.length - 1, Math.floor(tx / g.map.zoneW))].chapter];
     const p = g.player;
 
     // zoom: about 11-14 tiles across, never too tiny on phones
@@ -101,7 +106,8 @@ export class Renderer {
       for (let tx = minTx; tx <= maxTx; tx++) {
         const i = ty * g.map.w + tx;
         const v = g.map.variant[i];
-        ctx.fillStyle = (tx + ty) % 2 === 0 ? ch.floor[0] : ch.floor[1];
+        const tc = chOf(tx);
+        ctx.fillStyle = (tx + ty) % 2 === 0 ? tc.floor[0] : tc.floor[1];
         ctx.fillRect(tx * TILE, ty * TILE, TILE + 0.5, TILE + 0.5);
         if (v === 0) {
           // little tufts / pebbles for texture
@@ -128,6 +134,8 @@ export class Renderer {
     ctx.stroke();
 
     // ---- ground layer: telegraphs, spell circles, shadows ----
+    this.drawAltars(g, time);
+    if (g.travelGoal) this.drawGoal(g.travelGoal, time);
     for (const t of g.telegraphs) this.drawTelegraph(t);
     this.drawGroundEffects(g);
 
@@ -149,7 +157,7 @@ export class Renderer {
     for (let ty = minTy; ty <= maxTy; ty++) {
       for (let tx = minTx; tx <= maxTx; tx++) {
         const tile = g.map.tiles[ty * g.map.w + tx];
-        if (tile === Tile.Floor) continue;
+        if (tile === Tile.Floor || tile === Tile.Altar) continue;
         const cx = (tx + 0.5) * TILE;
         const cy = (ty + 0.5) * TILE;
         // fade obstacles that stand in front of the hero
@@ -158,11 +166,16 @@ export class Renderer {
         const front = cx + cy > p.x + p.y && Math.abs(sxp - this.px(p.x, p.y)) < 70 && syp - this.py(p.x, p.y) < 140;
         list.push({
           depth: cx + cy,
-          draw: () => (tile === Tile.Tree ? this.drawTree(cx, cy, ch.tree, front, g.map.variant[ty * g.map.w + tx]) : this.drawRock(cx, cy, ch.rock, front)),
+          draw: () => {
+            const tc = chOf(tx);
+            if (tile === Tile.Gate) this.drawGate(cx, cy, time);
+            else if (tile === Tile.Tree) this.drawTree(cx, cy, tc.tree, front, g.map.variant[ty * g.map.w + tx]);
+            else this.drawRock(cx, cy, tc.rock, front);
+          },
         });
       }
     }
-    for (const m of g.mobs) list.push({ depth: m.x + m.y, draw: () => this.drawMob(m, time) });
+    for (const m of g.mobs) list.push({ depth: m.x + m.y, draw: () => this.drawMob(m, time, g.state.level) });
     for (const c of g.party) list.push({ depth: c.x + c.y, draw: () => this.drawCompanion(g, c, time) });
     list.push({ depth: p.x + p.y, draw: () => this.drawPlayer(g, time) });
     list.sort((a, b) => a.depth - b.depth);
@@ -455,7 +468,7 @@ export class Renderer {
     void g;
   }
 
-  private drawMob(m: Mob, time: number) {
+  private drawMob(m: Mob, time: number, playerLevel: number) {
     const ctx = this.ctx;
     const k = this.k;
     const grow = 1 - m.spawnAnim;
@@ -500,37 +513,121 @@ export class Renderer {
         ctx.closePath();
         ctx.fill();
       }
-    } else if (m.hp < m.maxHp) {
-      bar(ctx, sx - rw, cy - rh - 12, rw * 2, 5, m.hp / m.maxHp, '#b91c1c');
+    } else {
+      if (m.hp < m.maxHp) bar(ctx, sx - rw, cy - rh - 12, rw * 2, 5, m.hp / m.maxHp, '#b91c1c');
+      ctx.font = 'bold 11px Georgia, serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      ctx.fillStyle = levelColor(m.level, playerLevel);
+      outlineText(ctx, `Lv ${m.level}`, sx, cy - rh - (m.hp < m.maxHp ? 14 : 4));
+    }
+  }
+
+  /** Boss altars: grey when sealed, pulsing red when ready, dim when the boss is resting. */
+  private drawAltars(g: Game, time: number) {
+    const ctx = this.ctx;
+    g.map.altars.forEach((a, z) => {
+      const st = g.bossStatus(z);
+      const color = st === 'locked' ? '#6b6b6b' : st === 'cooldown' ? '#8a6d2b' : '#c1121f';
+      const pulse = st === 'ready' || st === 'fighting' ? 0.5 + 0.5 * Math.sin(time * 3) : 0.3;
+      ctx.fillStyle = 'rgba(20,16,12,0.65)';
+      ctx.beginPath();
+      ctx.arc(a.x, a.y, 150, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = color;
+      ctx.globalAlpha = 0.5 + pulse * 0.5;
+      ctx.lineWidth = 6;
+      ctx.beginPath();
+      ctx.arc(a.x, a.y, 140, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(a.x, a.y, 95, 0, Math.PI * 2);
+      ctx.stroke();
+      // rune spokes
+      for (let i = 0; i < 8; i++) {
+        const ang = (i / 8) * Math.PI * 2 + time * 0.15;
+        ctx.beginPath();
+        ctx.moveTo(a.x + Math.cos(ang) * 100, a.y + Math.sin(ang) * 100);
+        ctx.lineTo(a.x + Math.cos(ang) * 135, a.y + Math.sin(ang) * 135);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+    });
+  }
+
+  private drawGoal(gl: { x: number; y: number }, time: number) {
+    const ctx = this.ctx;
+    ctx.strokeStyle = '#c9a227';
+    ctx.globalAlpha = 0.6 + 0.4 * Math.sin(time * 5);
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.arc(gl.x, gl.y, 30 + 6 * Math.sin(time * 5), 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+
+  /** Barrier between zones: a shimmering rune wall the hero can walk through. */
+  private drawGate(x: number, y: number, time: number) {
+    const ctx = this.ctx;
+    const k = this.k;
+    const sx = this.px(x, y);
+    const sy = this.py(x, y);
+    const hgt = 110 * k;
+    const g = ctx.createLinearGradient(0, sy - hgt, 0, sy);
+    const a = 0.25 + 0.12 * Math.sin(time * 2 + x * 0.01);
+    g.addColorStop(0, 'rgba(160,110,255,0)');
+    g.addColorStop(1, `rgba(160,110,255,${a + 0.2})`);
+    ctx.fillStyle = g;
+    ctx.fillRect(sx - 30 * k, sy - hgt, 60 * k, hgt);
+    ctx.fillStyle = `rgba(220,200,255,${a + 0.3})`;
+    for (let i = 0; i < 3; i++) {
+      const ry = sy - ((time * 30 + i * 37 + x) % hgt);
+      ctx.fillRect(sx - 3 * k + Math.sin(i + x) * 18 * k, ry, 6 * k, 6 * k);
     }
   }
 
   private minimap(g: Game) {
     const ctx = this.ctx;
-    const size = Math.min(130, this.w * 0.28);
-    const x0 = this.w - size - 10;
+    const mw = Math.min(240, this.w * 0.36);
+    const k = mw / g.map.w;
+    const mh = g.map.h * k;
+    const x0 = this.w - mw - 10;
     const y0 = 42;
-    const k = size / Math.max(g.map.w, g.map.h);
-    ctx.fillStyle = 'rgba(10,8,6,0.75)';
-    ctx.fillRect(x0 - 3, y0 - 3, size + 6, size + 6);
+    ctx.fillStyle = 'rgba(10,8,6,0.8)';
+    ctx.fillRect(x0 - 3, y0 - 3, mw + 6, mh + 6);
     ctx.strokeStyle = '#6b5a36';
     ctx.lineWidth = 2;
-    ctx.strokeRect(x0 - 3, y0 - 3, size + 6, size + 6);
-    ctx.fillStyle = 'rgba(255,255,255,0.08)';
+    ctx.strokeRect(x0 - 3, y0 - 3, mw + 6, mh + 6);
     for (let i = 0; i < g.map.tiles.length; i++) {
-      if (g.map.tiles[i] !== Tile.Floor) continue;
+      const t = g.map.tiles[i];
+      if (t === Tile.Rock || t === Tile.Tree) continue;
       const tx = i % g.map.w;
+      ctx.fillStyle = t === Tile.Gate ? '#a06eff' : Math.floor(tx / g.map.zoneW) === g.zone ? 'rgba(255,255,255,0.16)' : 'rgba(255,255,255,0.07)';
       ctx.fillRect(x0 + tx * k, y0 + ((i - tx) / g.map.w) * k, k + 0.3, k + 0.3);
     }
     const toMini = (x: number, y: number): [number, number] => [x0 + (x / TILE) * k, y0 + (y / TILE) * k];
+    g.map.altars.forEach((a, z) => {
+      const st = g.bossStatus(z);
+      ctx.fillStyle = st === 'locked' ? '#777' : st === 'cooldown' ? '#8a6d2b' : '#ff2a4d';
+      const [ax, ay] = toMini(a.x, a.y);
+      circle(ctx, ax, ay, 4);
+    });
     for (const m of g.mobs) {
+      if (m.zone !== g.zone && !m.boss) continue;
       ctx.fillStyle = m.boss ? '#ff4d6d' : '#d64545';
       const [mx, my] = toMini(m.x, m.y);
-      circle(ctx, mx, my, m.boss ? 4 : 2);
+      circle(ctx, mx, my, m.boss ? 4 : 1.6);
+    }
+    if (g.travelGoal) {
+      ctx.strokeStyle = '#c9a227';
+      ctx.lineWidth = 1.5;
+      const [gx, gy] = toMini(g.travelGoal.x, g.travelGoal.y);
+      ctx.strokeRect(gx - 4, gy - 4, 8, 8);
     }
     ctx.fillStyle = '#ffd60a';
     const [pxm, pym] = toMini(g.player.x, g.player.y);
-    circle(ctx, pxm, pym, 3.5);
+    circle(ctx, pxm, pym, 3.2);
   }
 }
 

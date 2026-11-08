@@ -25,6 +25,11 @@ export interface GameState {
   party: (string | null)[];
   totals: { kills: number; bosses: number; summons: number; deaths: number };
   settings: { auto: boolean };
+  /** Where the hero stands (world units); null = zone 1 entrance. */
+  pos: { x: number; y: number } | null;
+  /** How many zone bosses have been beaten in order (0 = none yet). */
+  bossesCleared: number;
+  bossKills: number[];
 }
 
 export const SAVE_VERSION = 1;
@@ -50,6 +55,9 @@ export function newState(name = 'Hero', job: JobId = 'warrior'): GameState {
     party: Array(BALANCE.partySize).fill(null),
     totals: { kills: 0, bosses: 0, summons: 0, deaths: 0 },
     settings: { auto: true },
+    pos: null,
+    bossesCleared: 0,
+    bossKills: [],
   };
 }
 
@@ -65,6 +73,7 @@ export function migrate(raw: unknown): GameState {
     equipped: { ...base.equipped, ...(r.equipped ?? {}) },
     totals: { ...base.totals, ...(r.totals ?? {}) },
     settings: { ...base.settings, ...(r.settings ?? {}) },
+    bossKills: Array.isArray(r.bossKills) ? r.bossKills : [],
     gear: r.gear ?? {},
     companions: r.companions ?? {},
     party: base.party.map((_, i) => r.party?.[i] ?? null),

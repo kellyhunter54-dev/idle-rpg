@@ -1,6 +1,7 @@
-// Balance simulator: plays the game headlessly with a simple "buy cheapest useful
-// upgrade" strategy and prints progress over time. Run with: npm run sim -- <hours> <warrior|archer|mage>
-import { GROWTH, JobId } from '../src/data';
+// Balance simulator: plays the game headlessly. AUTO fights; this script plays the "human"
+// part: spends gold, summons, moves to the next zone when leveled enough and fights bosses.
+// Run with: npm run sim -- <hours> <warrior|archer|mage>
+import { GROWTH, JobId, ZONES } from '../src/data';
 import { Game } from '../src/game';
 import { newState } from '../src/state';
 
@@ -20,7 +21,9 @@ const dt = 0.05;
 const hours = Number(process.argv[2] ?? 3);
 let t = 0;
 let nextReport = 0;
-let lastChallenge = 0;
+let nextDecision = 0;
+const milestones: string[] = [];
+let lastCleared = 0;
 
 while (t < hours * 3600) {
   game.update(dt);
@@ -37,7 +40,6 @@ while (t < hours * 3600) {
     const choice = [pick, crit, cdmg].sort((a, b) => a.cost - b.cost)[0];
     if (!game.buyGrowth(choice.key)) break;
   }
-  // Spend gems
   if (game.state.gems >= 450) {
     if (rand() < 0.5) game.summonGear(10);
     else game.summonCompanions(10);
@@ -46,19 +48,32 @@ while (t < hours * 3600) {
     game.equipAllBest();
     game.autoParty();
   }
-  // Retry boss every 60s
-  if (game.state.bossFailed && t - lastChallenge > 60) {
-    lastChallenge = t;
-    game.challengeBoss();
+
+  // Decisions a player would make every 30s
+  if (t >= nextDecision && !game.inBossFight && !game.travelGoal && game.deadTimer <= 0) {
+    nextDecision = t + 30;
+    const lvl = game.state.level;
+    const cleared = game.state.bossesCleared;
+    if (cleared < ZONES.length && lvl >= ZONES[cleared].bossLevel - 1 && game.zone === cleared && game.bossStatus(cleared) === 'ready') {
+      game.goToBoss(cleared);
+    } else {
+      let want = 0;
+      for (let z = 0; z < ZONES.length; z++) if (lvl >= ZONES[z].minLevel && z <= cleared) want = z;
+      if (want !== game.zone) game.travelToZone(want);
+    }
+  }
+  if (game.state.bossesCleared > lastCleared) {
+    lastCleared = game.state.bossesCleared;
+    milestones.push(`${(t / 60).toFixed(0)}m: beat ${ZONES[lastCleared - 1].name} boss at Lv ${game.state.level}`);
   }
 
   if (t >= nextReport) {
-    nextReport += 600;
+    nextReport += 900;
     const s = game.state;
     console.log(
-      `${(t / 60).toFixed(0).padStart(4)}m  stage ${String(s.stage).padStart(3)} (max ${s.maxStage})  lv ${String(s.level).padStart(3)}  ` +
-        `atkLv ${s.growth.atk} hpLv ${s.growth.hp}  ATK ${game.stats.atk.toExponential(2)}  HP ${game.stats.maxHp.toExponential(2)}  ` +
-        `deaths ${s.totals.deaths}  summons ${s.totals.summons}`,
+      `${(t / 60).toFixed(0).padStart(4)}m  zone ${game.zone} lv ${String(s.level).padStart(3)}  exp/h ${Math.round(game.expPerHour()).toExponential(1)}  ` +
+        `atkLv ${s.growth.atk} hpLv ${s.growth.hp}  bosses ${s.bossesCleared}  deaths ${s.totals.deaths}  kills ${s.totals.kills}`,
     );
   }
 }
+for (const m of milestones) console.log('  ' + m);

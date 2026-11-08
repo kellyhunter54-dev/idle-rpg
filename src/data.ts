@@ -5,19 +5,21 @@ export type Slot = 'weapon' | 'armor' | 'accessory';
 
 export const BALANCE = {
   killsPerStage: 15,
-  bossTimeLimit: 30, // seconds
-  bossHpMult: 8,
+  bossTimeLimit: 60, // seconds
+  bossHpMult: 14,
+  bossRespawn: 30, // seconds before a beaten boss can be fought again
+  bossLeash: 900, // boss resets if you run this far from its altar
   bossAtkMult: 1.6,
   bossGoldMult: 10,
   bossExpMult: 10,
 
   mobHpBase: 40,
-  mobHpGrowth: 1.13, // per stage
+  mobHpGrowth: 1.25, // per monster level
   mobAtkBase: 3,
-  mobAtkGrowth: 1.115,
+  mobAtkGrowth: 1.22,
   goldBase: 3,
-  goldGrowth: 1.13,
-  expBase: 4,
+  goldGrowth: 1.22,
+  expBase: 3,
   expGrowth: 1.13,
 
   gemDropChance: 0.04,
@@ -69,7 +71,7 @@ export function rarityIndex(r: Rarity): number {
 
 // ---------- Player level ----------
 export function expToNext(level: number): number {
-  return Math.floor(25 * Math.pow(1.12, level - 1) + 10 * level);
+  return Math.floor(300 * Math.pow(1.18, level - 1));
 }
 export function levelBaseAtk(level: number): number {
   return 10 + 3 * (level - 1);
@@ -338,6 +340,7 @@ export function stageLabel(stage: number): string {
 }
 
 export interface MobStats {
+  level: number;
   name: string;
   color: string;
   hp: number;
@@ -347,6 +350,7 @@ export interface MobStats {
   boss: boolean;
 }
 
+/** @deprecated stage-based mobs from before zones; kept for the old offline formula. */
 export function mobFor(stage: number, boss: boolean, rand = Math.random): MobStats {
   const B = BALANCE;
   const n = stage - 1;
@@ -356,10 +360,81 @@ export function mobFor(stage: number, boss: boolean, rand = Math.random): MobSta
   const atk = B.mobAtkBase * Math.pow(B.mobAtkGrowth, n);
   const gold = B.goldBase * Math.pow(B.goldGrowth, n);
   const exp = B.expBase * Math.pow(B.expGrowth, n);
-  if (!boss) return { name: pick.name, color: pick.color, hp, atk, gold, exp, boss };
+  if (!boss) return { level: stage, name: pick.name, color: pick.color, hp, atk, gold, exp, boss };
   return {
-    name: c.boss, color: pick.color, boss,
+    level: stage, name: c.boss, color: pick.color, boss,
     hp: hp * B.bossHpMult, atk: atk * B.bossAtkMult,
     gold: gold * B.bossGoldMult, exp: exp * B.bossExpMult,
   };
+}
+
+// ---------- Zones ----------
+export interface ZoneDef {
+  name: string;
+  minLevel: number; // monster level at the entrance
+  maxLevel: number; // monster level at the far end
+  bossLevel: number;
+  chapter: number; // index into CHAPTERS for colors, monsters and boss name
+}
+
+export const ZONES: ZoneDef[] = [
+  { name: 'Sprout Meadow', minLevel: 1, maxLevel: 10, bossLevel: 12, chapter: 0 },
+  { name: 'Whisper Woods', minLevel: 10, maxLevel: 20, bossLevel: 22, chapter: 1 },
+  { name: 'Ember Canyon', minLevel: 20, maxLevel: 30, bossLevel: 32, chapter: 2 },
+];
+
+export function zoneLabel(z: number): string {
+  const d = ZONES[z] ?? ZONES[0];
+  return `${d.name} (Lv ${d.minLevel}-${d.maxLevel})`;
+}
+
+/** Monster stats for a level in a zone. Bosses use the zone's boss. */
+export function mobForZone(zone: number, level: number, boss: boolean, rand = Math.random): MobStats {
+  const B = BALANCE;
+  const z = ZONES[zone] ?? ZONES[0];
+  const c = CHAPTERS[z.chapter];
+  const pick = c.mobs[Math.floor(rand() * c.mobs.length)];
+  const n = level - 1;
+  const hp = B.mobHpBase * Math.pow(B.mobHpGrowth, n);
+  const atk = B.mobAtkBase * Math.pow(B.mobAtkGrowth, n);
+  const gold = B.goldBase * Math.pow(B.goldGrowth, n);
+  const exp = B.expBase * Math.pow(B.expGrowth, n);
+  if (!boss) return { level, name: pick.name, color: pick.color, hp, atk, gold, exp, boss };
+  return {
+    level, name: c.boss, color: pick.color, boss,
+    hp: hp * B.bossHpMult, atk: atk * B.bossAtkMult,
+    gold: gold * B.bossGoldMult, exp: exp * B.bossExpMult,
+  };
+}
+
+/**
+ * EXP multiplier for killing a monster of `mobLevel` at `playerLevel`.
+ * Higher monsters give a bonus; anything more than a few levels below gives almost nothing.
+ */
+export function expLevelMult(mobLevel: number, playerLevel: number): number {
+  const d = mobLevel - playerLevel;
+  if (d >= 0) return Math.min(1.5, 1 + 0.1 * d);
+  return Math.max(0.02, 1 + 0.16 * d);
+}
+
+/** Damage the hero deals to a monster above their level is reduced... */
+export function dealtLevelMult(mobLevel: number, playerLevel: number): number {
+  const d = mobLevel - playerLevel;
+  return d > 0 ? Math.max(0.25, 1 - 0.08 * d) : 1;
+}
+
+/** ...and damage it deals to the hero is increased. */
+export function takenLevelMult(mobLevel: number, playerLevel: number): number {
+  const d = mobLevel - playerLevel;
+  return d > 0 ? 1 + 0.15 * d : Math.max(0.5, 1 + 0.03 * d);
+}
+
+/** Text color for a monster's level compared to yours (classic MMO con colors). */
+export function levelColor(mobLevel: number, playerLevel: number): string {
+  const d = mobLevel - playerLevel;
+  if (d >= 5) return '#ff3b3b';
+  if (d >= 3) return '#ff8c3b';
+  if (d >= -2) return '#f2e6c9';
+  if (d >= -6) return '#7bd389';
+  return '#8a8a8a';
 }

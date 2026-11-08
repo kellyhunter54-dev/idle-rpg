@@ -15,7 +15,7 @@ npm install
 npm run dev      # opens a local dev server with hot reload
 npm run build    # production build into dist/
 npm run sim      # headless balance simulation (default 3 hours of play)
-npm run sim -- 8 archer # simulate 8 hours as an archer (warrior | archer | mage)
+npm run sim -- 8 archer # simulate 8 hours as an archer (warrior | archer | mage); the sim also travels and fights bosses
 ```
 
 ## Deploying
@@ -31,7 +31,7 @@ One-time setup: repo **Settings → Pages → Source: GitHub Actions**.
 | `src/state.ts` | Save data shape, new game defaults, migration for old saves. |
 | `src/save.ts` | Saving/loading. Swap the storage implementation here for the desktop build. |
 | `src/stats.ts` | Turns save data into combat stats (ATK, HP, crit). |
-| `src/map.ts` | Procedural tile maps per chapter, collision, A* pathfinding. |
+| `src/map.ts` | The connected world (3 zones, barrier gates, boss altars), collision, A* pathfinding. |
 | `src/game.ts` | Game logic: movement, mob AI, AUTO pilot (pathing + dodging), action combat, boss telegraphs, summoning, enhancing, offline rewards. No browser code, so it can be simulated. |
 | `src/input.ts` | Keyboard and touch controls. |
 | `src/charselect.ts` | Character select screen: 3 slots, create (name + job), play, reset to Lv 1, delete. |
@@ -39,6 +39,14 @@ One-time setup: repo **Settings → Pages → Source: GitHub Actions**.
 | `src/ui.ts` | Tabs, panels, modals, toasts. |
 | `src/main.ts` | Wires everything together, game loop, autosave. |
 | `tools/sim.ts` | Balance simulator. |
+
+## World and progression
+
+One connected world split into zones (`ZONES` in `src/data.ts`): Sprout Meadow (Lv 1-10), Whisper Woods (Lv 10-20), Ember Canyon (Lv 20-30). Purple barrier gates between zones stop monsters but not the hero. Monster level rises from a zone's entrance to its far end.
+
+- Monsters above your level deal more damage and take less; monsters far below give almost no EXP (`expLevelMult`, `dealtLevelMult`, `takenLevelMult`).
+- Each zone's boss waits on an altar near the far end. Walk onto it (or use Fight boss) to start. Bosses must be beaten in order and can be repeated after a short rest.
+- AUTO farms the zone you are in, preferring monsters near your level. The World tab can send AUTO to another zone or to a boss.
 
 ## Characters and jobs
 

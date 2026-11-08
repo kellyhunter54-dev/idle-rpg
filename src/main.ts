@@ -68,14 +68,19 @@ function startGame(slot: number) {
   // Main loop
   let last = performance.now();
   let hiddenAt = 0;
+  let errors = 0;
   function frame(now: number) {
+    requestAnimationFrame(frame); // schedule first so one bad frame can never freeze the game
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
-    pollInput();
-    game.update(dt);
-    ui.update(dt);
-    renderer.draw(game, now / 1000);
-    requestAnimationFrame(frame);
+    try {
+      pollInput();
+      game.update(dt);
+      ui.update(dt);
+      renderer.draw(game, now / 1000);
+    } catch (e) {
+      if (errors++ < 5) console.error(e);
+    }
   }
   requestAnimationFrame(frame);
 

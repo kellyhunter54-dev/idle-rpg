@@ -1,13 +1,13 @@
 import {
   BALANCE, COMPANION, COMPANIONS, GROWTH, GrowthKey, RARITIES, RARITY, SLOTS, SLOT_INFO, Slot,
   companionHitMult, companionOwnedAtk, enhanceCopies, expToNext, gearEffect, gearName, parseGear,
-  rarityIndex, stageLabel,
+  ZONES, expLevelMult, mobForZone, rarityIndex,
 } from './data';
 import { fmt, fmtPct, fmtTime } from './format';
 import { Game, OfflineRewards, SummonResult } from './game';
 import { exportSave, importSave, saveGame } from './save';
 
-type Tab = 'growth' | 'gear' | 'companions' | 'summon' | 'info';
+type Tab = 'growth' | 'world' | 'gear' | 'companions' | 'summon' | 'info';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const esc = (t: string) => t.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
@@ -35,7 +35,11 @@ export class UI {
       });
     });
 
-    $('bossbtn').addEventListener('click', () => this.game.challengeBoss());
+    $('bossbtn').addEventListener('click', () => {
+      const g = this.game;
+      if (g.travelGoal) g.cancelTravel();
+      else g.goToBoss(g.zone);
+    });
 
     // Event delegation. pointerdown so panel re-renders never swallow a tap.
     const panel = $('panel');
@@ -132,6 +136,14 @@ export class UI {
       case 'reset':
         if (window.confirm(`Reset ${g.state.name} back to level 1? This cannot be undone.`)) this.onReplaceState(null);
         return;
+      case 'travel':
+        g.travelToZone(Number(arg));
+        this.toast(`Walking to ${ZONES[Number(arg)].name}...`, '#c9a227');
+        break;
+      case 'fightBoss':
+        g.goToBoss(Number(arg));
+        this.toast(`Heading to the ${ZONES[Number(arg)].name} altar...`, '#c9a227');
+        break;
       case 'switch':
         this.onSwitchCharacter();
         return;
@@ -153,24 +165,35 @@ export class UI {
     $('gold').textContent = fmt(s.gold);
     $('gems').textContent = fmt(s.gems);
     $('power').textContent = fmt(g.stats.power);
-    $('stagename').textContent = stageLabel(s.stage) + (s.bossFailed ? '  (Farming)' : '');
+    const zd = ZONES[g.zone];
+    $('stagename').textContent = `${zd.name}  (Lv ${zd.minLevel}-${zd.maxLevel})` + (g.travelGoal ? `  ·  walking to ${g.travelGoal.label}...` : '');
 
     const kf = $('killfill');
     const kt = $('killtext');
     if (g.inBossFight) {
       kf.style.width = '100%';
-      kf.style.background = '#f72585';
+      kf.style.background = '#a4161a';
       kt.textContent = 'BOSS FIGHT';
-    } else if (s.bossFailed) {
-      kf.style.width = '100%';
-      kf.style.background = '#555a70';
-      kt.textContent = 'Farming';
     } else {
-      kf.style.width = `${(s.kills / BALANCE.killsPerStage) * 100}%`;
-      kf.style.background = '';
-      kt.textContent = `${s.kills} / ${BALANCE.killsPerStage}`;
+      // EXP/hour compared to farming monsters at your own level
+      const eph = g.expPerHour();
+      const ideal = mobForZone(g.zone, s.level, false).exp * 1300;
+      const ratio = Math.max(0, Math.min(1, eph / ideal));
+      kf.style.width = `${ratio * 100}%`;
+      kf.style.background = ratio > 0.6 ? '#4f772d' : ratio > 0.25 ? '#b08d1e' : '#8b2e1f';
+      if (eph <= 0) kt.textContent = 'EXP/hr: measuring...';
+      else {
+        const toNext = expToNext(s.level) - s.exp;
+        const mins = (toNext / eph) * 60;
+        kt.textContent = `EXP/hr ${fmt(eph)}  ·  next level in ${mins > 600 ? 'ages' : fmtTime(mins * 60)}`;
+      }
     }
-    $('bossbtn').classList.toggle('hidden', !s.bossFailed || g.inBossFight);
+    const bb = $('bossbtn');
+    const showBoss = !g.inBossFight && (!!g.travelGoal || g.bossStatus(g.zone) === 'ready');
+    bb.classList.toggle('hidden', !showBoss);
+    bb.textContent = g.travelGoal ? 'Cancel travel' : `⚔ Fight boss (Lv ${zd.bossLevel})`;
+    bb.classList.toggle('boss', !g.travelGoal);
+    bb.classList.toggle('alt', !!g.travelGoal);
 
     // Battle HUD
     const ab = $('autobtn');
@@ -203,6 +226,7 @@ export class UI {
       case 'companions': html = this.companionHtml(); break;
       case 'summon': html = this.summonHtml(); break;
       case 'info': html = this.infoHtml(); break;
+      case 'world': html = this.worldHtml(); break;
     }
     if (!force && html === this.lastPanelHtml) return;
     // keep text typed in the save box
@@ -382,6 +406,44 @@ export class UI {
       <p class="muted small">Earn 💎 from monster drops (${fmtPct(BALANCE.gemDropChance)} per kill) and first-time boss clears (+${BALANCE.bossFirstClearGems}).</p>`;
   }
 
+  private worldHtml(): string {
+    const g = this.game;
+    const s = g.state;
+    let h = `<h3>🗺️ World</h3>
+      <p class="muted small">Zones get harder the further east you go, and monsters get stronger deeper into each zone.
+      Monsters above your level hit much harder; monsters far below it give almost no EXP. Bosses wait on altars and must be beaten in order.</p>`;
+    ZONES.forEach((z, i) => {
+      const here = g.zone === i;
+      const lvl = s.level;
+      const verdict =
+        lvl < z.minLevel - 2 ? ['Too dangerous', '#ff3b3b']
+        : lvl > z.maxLevel + 4 ? ['Low EXP', '#8a8a8a']
+        : ['Good EXP', '#7bd389'];
+      const mult = expLevelMult(Math.min(z.maxLevel, Math.max(z.minLevel, lvl)), lvl);
+      const st = g.bossStatus(i);
+      const bossText =
+        st === 'locked' ? `🔒 Sealed until ${ZONES[i - 1].name}'s boss is beaten`
+        : st === 'cooldown' ? `⏳ Returns in ${Math.ceil(g.bossCooldownLeft(i))}s`
+        : st === 'fighting' ? '⚔ Fighting now'
+        : '🔥 Ready';
+      const kills = s.bossKills[i] ?? 0;
+      h += `<div class="row" style="border-left:4px solid ${here ? '#c9a227' : '#3a3022'}">
+        <div class="icon">${['🌱', '🌲', '🔥'][i] ?? '🗺️'}</div>
+        <div class="info">
+          <div class="name">${z.name} <span class="muted small">Lv ${z.minLevel}-${z.maxLevel}</span>${here ? '<span class="tag" style="background:#6b5a36">YOU ARE HERE</span>' : ''}</div>
+          <div class="sub"><span style="color:${verdict[1]}">${verdict[0]}</span>${mult < 1 && verdict[0] !== 'Too dangerous' ? ` (×${mult.toFixed(2)} EXP)` : ''}</div>
+          <div class="sub">Boss Lv ${z.bossLevel}: ${bossText}${kills ? ` · beaten ${kills}×` : ''}</div>
+        </div>
+        <div class="btn-col">
+          <button class="btn alt ${here ? 'disabled' : ''}" data-action="travel" data-arg="${i}">Travel</button>
+          <button class="btn ${st === 'ready' ? '' : 'disabled'}" data-action="fightBoss" data-arg="${i}">Fight boss</button>
+        </div>
+      </div>`;
+    });
+    h += `<p class="muted small">Travel and Fight boss turn AUTO on and walk you there. You can also just walk: the purple barriers between zones only stop monsters.</p>`;
+    return h;
+  }
+
   private infoHtml(): string {
     const g = this.game;
     const s = g.state;
@@ -390,7 +452,7 @@ export class UI {
       <button class="btn wide alt" data-action="switch" style="margin-bottom:12px">👥 Switch character</button>
       <h3>Progress</h3>
       <div class="statgrid">
-        <div class="stat">Best stage<b>${stageLabel(s.maxStage)}</b></div>
+        <div class="stat">Bosses beaten<b>${s.bossesCleared} / ${ZONES.length}</b></div>
         <div class="stat">Monsters defeated<b>${fmt(s.totals.kills)}</b></div>
         <div class="stat">Bosses defeated<b>${fmt(s.totals.bosses)}</b></div>
         <div class="stat">Summons<b>${fmt(s.totals.summons)}</b></div>
@@ -398,7 +460,7 @@ export class UI {
       <h3>How to play</h3>
       <p class="muted small"><b>Controls:</b> your hero plays itself while AUTO is on. Take over any time: WASD or arrows to move, mouse to aim, hold left click (or Space) to attack, and 1/2/3 to cast skills where you aim. On a phone, drag on the battlefield to move and use the buttons. AUTO takes back over 2 seconds after you stop. Press Q or the AUTO button for full manual mode.</p>
       <p class="muted small"><b>Bosses</b> mark the ground in red before they strike. Step out of the marked area to avoid the hit. Monsters flash red and show an orange arc before they swing.</p>
-      <p class="muted small">Your hero fights on its own. Spend 🪙 gold on Growth, summon gear and companions with 💎 gems, and beat the boss every ${BALANCE.killsPerStage} kills to advance. If you lose to a boss you will farm the stage until you tap Challenge Boss. You keep earning for up to ${BALANCE.offlineCapHours} hours while away.</p>
+      <p class="muted small">Your hero fights on its own. Spend 🪙 gold on Growth and summon gear and companions with 💎 gems. Explore east into harder zones when you are ready (the 🗺️ World tab shows where your level fits), and challenge each zone's boss at its altar. You keep earning for up to ${BALANCE.offlineCapHours} hours while away, farming wherever you left your hero.</p>
       <h3>Save</h3>
       <p class="muted small">The game saves automatically. Use export to back up your save or move it to another device.</p>
       <textarea id="savebox" placeholder="Paste a save code here to import"></textarea>
@@ -409,7 +471,7 @@ export class UI {
       </div>
       <button class="btn wide" style="background:#7f1d1d;margin-top:12px" data-action="reset">Reset this character to Lv 1</button>
       <p class="small" style="text-align:center;margin-top:16px"><a href="./side/">Play the classic side-scroller version</a></p>
-      <p class="muted small" style="text-align:center">v0.4.0</p>`;
+      <p class="muted small" style="text-align:center">v0.5.0</p>`;
   }
 
   // ---------------- Modals & toasts ----------------
