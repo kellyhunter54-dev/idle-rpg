@@ -51,7 +51,7 @@ export function rollRarity(luck: number, rand: () => number, floor = 0): RunRari
 }
 
 // ---------------------------------------------------------------- weapons
-export type WeaponKind = 'arc' | 'arrow' | 'bolt' | 'orbit' | 'storm' | 'nova' | 'axe' | 'pool' | 'aura';
+export type WeaponKind = 'arc' | 'arrow' | 'bolt' | 'orbit' | 'storm' | 'nova' | 'axe' | 'pool' | 'aura' | 'beam' | 'meteor' | 'summon';
 export type WStat = 'dmg' | 'cd' | 'count' | 'area' | 'pierce' | 'speed' | 'duration';
 export const WSTAT_NAME: Record<WStat, string> = {
   dmg: 'Damage',
@@ -82,6 +82,17 @@ export interface WeaponDef {
   /** stats an upgrade can roll */
   ups: WStat[];
   color: string;
+  /** fire: Ignite and Combust work with it; shock: Overload and Static work with it */
+  fire?: boolean;
+  shock?: boolean;
+  /** built-in burn (fraction of the hit over 3 s) */
+  burn?: number;
+  /** heals this fraction of the damage it deals */
+  leech?: number;
+  /** slows what it hits (pools, auras) */
+  slow?: boolean;
+  /** a sharpshooter weapon (Headshot works with it) */
+  shot?: boolean;
 }
 
 export const WEAPONS: WeaponDef[] = [
@@ -91,15 +102,40 @@ export const WEAPONS: WeaponDef[] = [
   { id: 'quake', name: 'Ground Slam', icon: '💥', desc: 'A shockwave from your feet that slows what it hits.', kind: 'nova', dmg: 12, cd: 2.8, count: 1, area: 1, pierce: 0, speed: 0, duration: 1.5, ups: ['dmg', 'cd', 'area', 'duration'], color: '#e0b073' },
   { id: 'hatchet', name: 'Hurled Axe', icon: '🪃', desc: 'Thrown out and back, cutting everything twice.', kind: 'axe', dmg: 16, cd: 1.8, count: 1, area: 1, pierce: 99, speed: 620, duration: 0, ups: ['dmg', 'cd', 'count', 'area', 'speed'], color: '#c0a070' },
   // Archer
-  { id: 'longbow', name: 'Longbow', icon: '🏹', desc: 'Arrows at the nearest foe.', kind: 'arrow', dmg: 11, cd: 0.8, count: 1, area: 1, pierce: 1, speed: 900, duration: 0, ups: ['dmg', 'cd', 'count', 'pierce', 'speed'], color: '#e0c08a' },
+  { id: 'longbow', name: 'Longbow', icon: '🏹', desc: 'Arrows at the nearest foe.', kind: 'arrow', dmg: 11, cd: 0.8, count: 1, area: 1, pierce: 1, speed: 900, duration: 0, ups: ['dmg', 'cd', 'count', 'pierce', 'speed'], color: '#e0c08a', shot: true },
   { id: 'rain', name: 'Arrow Rain', icon: '🌧️', desc: 'Volleys fall on random foes nearby.', kind: 'storm', dmg: 15, cd: 1.6, count: 3, area: 1, pierce: 0, speed: 0, duration: 0, ups: ['dmg', 'cd', 'count', 'area'], color: '#e0c08a' },
   { id: 'traps', name: 'Spike Traps', icon: '🪤', desc: 'Throws spike fields among your foes.', kind: 'pool', dmg: 4.5, cd: 2.6, count: 1, area: 1, pierce: 0, speed: 0, duration: 3.5, ups: ['dmg', 'cd', 'count', 'area', 'duration'], color: '#b08a5a' },
   { id: 'disc', name: 'Ricochet Disc', icon: '🥏', desc: 'A disc that flies out and back through foes.', kind: 'axe', dmg: 13, cd: 1.5, count: 1, area: 1, pierce: 99, speed: 760, duration: 0, ups: ['dmg', 'cd', 'count', 'speed'], color: '#cfd8e3' },
   // Mage
-  { id: 'ember', name: 'Ember Bolt', icon: '🔥', desc: 'Seeking fire that bursts on impact.', kind: 'bolt', dmg: 13, cd: 1.1, count: 1, area: 1, pierce: 0, speed: 520, duration: 0, ups: ['dmg', 'cd', 'count', 'area', 'speed'], color: '#ff8c42' },
-  { id: 'spark', name: 'Sky Spark', icon: '⚡', desc: 'Lightning strikes random foes nearby.', kind: 'storm', dmg: 18, cd: 1.6, count: 2, area: 1, pierce: 0, speed: 0, duration: 0, ups: ['dmg', 'cd', 'count', 'area'], color: '#ffe66d' },
+  { id: 'ember', name: 'Ember Bolt', icon: '🔥', desc: 'Seeking fire that bursts on impact.', kind: 'bolt', dmg: 13, cd: 1.1, count: 1, area: 1, pierce: 0, speed: 520, duration: 0, ups: ['dmg', 'cd', 'count', 'area', 'speed'], color: '#ff8c42', fire: true },
+  { id: 'spark', name: 'Sky Spark', icon: '⚡', desc: 'Lightning strikes random foes nearby.', kind: 'storm', dmg: 18, cd: 1.6, count: 2, area: 1, pierce: 0, speed: 0, duration: 0, ups: ['dmg', 'cd', 'count', 'area'], color: '#ffe66d', shock: true },
   { id: 'frost', name: 'Frost Ring', icon: '❄️', desc: 'A freezing ring that slows what it touches.', kind: 'nova', dmg: 9, cd: 2.6, count: 1, area: 1, pierce: 0, speed: 0, duration: 2, ups: ['dmg', 'cd', 'area', 'duration'], color: '#a8e6ff' },
   { id: 'orbs', name: 'Arcane Orbs', icon: '🔮', desc: 'Orbs of force circle you for a few seconds.', kind: 'orbit', dmg: 8, cd: 4.5, count: 2, area: 1, pierce: 0, speed: 2.8, duration: 3.5, ups: ['dmg', 'cd', 'count', 'area', 'duration'], color: '#b388ff' },
+  // ---- job advancement abilities (granted at Lv 10 / 15 / 25) ----
+  // Warrior: Berserker
+  { id: 'rend', name: 'Rending Blades', icon: '🩸', desc: 'Fast blades circle you and drink blood (heal 2% of damage).', kind: 'orbit', dmg: 12, cd: 3.5, count: 3, area: 0.9, pierce: 0, speed: 5, duration: 3, ups: ['dmg', 'cd', 'count', 'duration'], color: '#e05a5a', leech: 0.02 },
+  { id: 'bloodnova', name: 'Blood Nova', icon: '💢', desc: 'A red burst around you; heals 3% of the damage it deals.', kind: 'nova', dmg: 26, cd: 3.2, count: 1, area: 1.1, pierce: 0, speed: 0, duration: 0.5, ups: ['dmg', 'cd', 'area'], color: '#d9383b', leech: 0.03 },
+  { id: 'warcleave', name: 'Warlord Cleave', icon: '⚔️', desc: 'Huge sweeps in every direction at once.', kind: 'arc', dmg: 42, cd: 2.0, count: 4, area: 1.5, pierce: 0, speed: 0, duration: 0, ups: ['dmg', 'cd', 'area'], color: '#ff9a7a' },
+  // Warrior: Guardian
+  { id: 'shieldtoss', name: 'Shield Toss', icon: '🛡️', desc: 'A heavy shield that flies out, knocks foes back and returns.', kind: 'axe', dmg: 18, cd: 2.0, count: 1, area: 1.3, pierce: 99, speed: 560, duration: 0, ups: ['dmg', 'cd', 'count', 'area'], color: '#9fb4d0' },
+  { id: 'consecrate', name: 'Holy Ground', icon: '🌟', desc: 'Blessed ground around you that burns and slows foes.', kind: 'aura', dmg: 12, cd: 0.5, count: 1, area: 1.6, pierce: 0, speed: 0, duration: 0, ups: ['dmg', 'cd', 'area'], color: '#ffe08a', slow: true },
+  { id: 'judgment', name: 'Judgment', icon: '⚜️', desc: 'Pillars of light crash down on foes around you.', kind: 'storm', dmg: 60, cd: 2.4, count: 4, area: 1.6, pierce: 0, speed: 0, duration: 0, ups: ['dmg', 'cd', 'count', 'area'], color: '#fff1a8' },
+  // Archer: Ranger
+  { id: 'wolves', name: 'Wolf Pack', icon: '🐺', desc: 'Spirit wolves hunt the foes around you.', kind: 'summon', dmg: 12, cd: 0.6, count: 2, area: 1, pierce: 0, speed: 380, duration: 0, ups: ['dmg', 'cd', 'count', 'speed'], color: '#b9c7d6' },
+  { id: 'brambles', name: 'Bramble Field', icon: '🌿', desc: 'Thorny patches that slow and cut foes.', kind: 'pool', dmg: 7, cd: 2.2, count: 2, area: 1.2, pierce: 0, speed: 0, duration: 4, ups: ['dmg', 'cd', 'count', 'area', 'duration'], color: '#7bc96f', slow: true },
+  { id: 'stampede', name: 'Spirit Stampede', icon: '🦌', desc: 'A wide rush of spirit beasts tramples a whole line.', kind: 'beam', dmg: 38, cd: 2.6, count: 1, area: 2.4, pierce: 0, speed: 0, duration: 0, ups: ['dmg', 'cd', 'count', 'area'], color: '#a8f0c6' },
+  // Archer: Marksman
+  { id: 'pierce', name: 'Piercing Shot', icon: '➶', desc: 'A shot that goes through everything in a long line.', kind: 'beam', dmg: 24, cd: 1.6, count: 1, area: 1, pierce: 0, speed: 0, duration: 0, ups: ['dmg', 'cd', 'count', 'area'], color: '#ffe0a0', shot: true },
+  { id: 'snipe', name: 'Snipe', icon: '🎯', desc: 'A slow, huge hit on the toughest foe in sight.', kind: 'arrow', dmg: 75, cd: 2.8, count: 1, area: 1.4, pierce: 3, speed: 1700, duration: 0, ups: ['dmg', 'cd', 'count', 'pierce'], color: '#ff6b6b', shot: true },
+  { id: 'barrage', name: 'Barrage', icon: '🎇', desc: 'A storm of arrows over everything nearby.', kind: 'storm', dmg: 22, cd: 1.8, count: 8, area: 1.1, pierce: 0, speed: 0, duration: 0, ups: ['dmg', 'cd', 'count', 'area'], color: '#e0c08a', shot: true },
+  // Mage: Pyromancer
+  { id: 'meteor', name: 'Meteor', icon: '☄️', desc: 'A falling star that crushes a group of foes.', kind: 'meteor', dmg: 30, cd: 2.2, count: 1, area: 1.2, pierce: 0, speed: 0, duration: 0, ups: ['dmg', 'cd', 'count', 'area'], color: '#ff7b2e', fire: true, burn: 0.3 },
+  { id: 'wreath', name: 'Flame Wreath', icon: '🌞', desc: 'Fire orbs circle you, setting foes alight.', kind: 'orbit', dmg: 14, cd: 3.5, count: 3, area: 1.2, pierce: 0, speed: 3, duration: 4, ups: ['dmg', 'cd', 'count', 'area', 'duration'], color: '#ff9a3c', fire: true, burn: 0.5 },
+  { id: 'inferno', name: 'Inferno', icon: '🌋', desc: 'Pools of fire that keep everything in them burning.', kind: 'pool', dmg: 18, cd: 2.4, count: 2, area: 1.5, pierce: 0, speed: 0, duration: 4, ups: ['dmg', 'cd', 'count', 'area', 'duration'], color: '#ff5a1f', fire: true, burn: 0.4 },
+  // Mage: Stormcaller
+  { id: 'lance', name: 'Lightning Lance', icon: '🔱', desc: 'A bolt of lightning through a long line of foes.', kind: 'beam', dmg: 22, cd: 1.4, count: 1, area: 1, pierce: 0, speed: 0, duration: 0, ups: ['dmg', 'cd', 'count', 'area'], color: '#8fd3ff', shock: true },
+  { id: 'tempest', name: 'Tempest Orb', icon: '🌪️', desc: 'A slow storm ball that bursts in a wide blast.', kind: 'bolt', dmg: 40, cd: 2.2, count: 1, area: 2.0, pierce: 0, speed: 300, duration: 0, ups: ['dmg', 'cd', 'count', 'area'], color: '#a8e6ff', shock: true },
+  { id: 'thunder', name: 'Thunderstorm', icon: '⛈️', desc: 'Lightning rains down on everything around you.', kind: 'storm', dmg: 32, cd: 1.6, count: 6, area: 1.3, pierce: 0, speed: 0, duration: 0, ups: ['dmg', 'cd', 'count', 'area'], color: '#d6f0ff', shock: true },
 ];
 export const WEAPON: Record<string, WeaponDef> = Object.fromEntries(WEAPONS.map((w) => [w.id, w]));
 
@@ -111,7 +147,8 @@ export type PStat =
 export type PSpecial =
   | 'bloodlust' | 'berserk' | 'retaliate' | 'execute' | 'momentum'
   | 'mark' | 'kite' | 'sharpshot' | 'volley'
-  | 'shield' | 'ignite' | 'frostbite' | 'echo' | 'chain';
+  | 'shield' | 'ignite' | 'frostbite' | 'echo' | 'chain'
+  | 'leech' | 'rampage' | 'block' | 'pack' | 'headshot' | 'steady' | 'combust' | 'static';
 
 export interface PassiveDef {
   id: string;
@@ -160,13 +197,145 @@ export const PASSIVES: Record<JobId, PassiveDef[]> = {
     { id: 'study', name: 'Studious', icon: '📘', stats: { xp: 0.12, pickup: 0.15 }, max: 5 },
     { id: 'glass', name: 'Glass Cannon', icon: '🍷', stats: { dmg: 0.2, maxHp: -10 }, max: 3 },
     { id: 'shield', name: 'Mana Shield', icon: '🫧', special: 'shield', step: 15, text: (v) => `A shield soaks ${Math.round(v)} damage, refills when you avoid hits`, max: 5 },
-    { id: 'ignite', name: 'Ignite', icon: '🔥', special: 'ignite', step: 0.4, text: (v) => `Ember Bolt burns for ${pct(v)} of its hit over 3s`, max: 5 },
+    { id: 'ignite', name: 'Ignite', icon: '🔥', special: 'ignite', step: 0.4, text: (v) => `Fire abilities burn for ${pct(v)} of the hit over 3s`, max: 5 },
     { id: 'frostbite', name: 'Frostbite', icon: '🥶', special: 'frostbite', step: 0.15, text: (v) => `Slowed foes take +${pct(v)} damage`, max: 5 },
-    { id: 'chain', name: 'Overload', icon: '🌩️', special: 'chain', step: 1, flat: true, text: (v) => `Sky Spark jumps to ${v} more foe${v > 1 ? 's' : ''}`, max: 3 },
+    { id: 'chain', name: 'Overload', icon: '🌩️', special: 'chain', step: 1, flat: true, text: (v) => `Lightning strikes jump to ${v} more foe${v > 1 ? 's' : ''}`, max: 3 },
     { id: 'echo', name: 'Echo', icon: '🔁', special: 'echo', step: 0.08, text: (v) => `${pct(v)} chance to cast an ability twice`, max: 5 },
   ],
 };
-export const PASSIVE: Record<string, PassiveDef> = Object.fromEntries(Object.values(PASSIVES).flat().map((p) => [p.id, p]));
+
+// ---------------------------------------------------------------- job advancements
+/** Levels at which your job advances (the first one is where you pick a branch). */
+export const ADVANCE_LEVELS = [10, 15, 25];
+export interface BranchTier {
+  /** job title at this tier */
+  title: string;
+  ability: string;
+  passives: PassiveDef[];
+}
+export interface BranchDef {
+  id: string;
+  name: string;
+  icon: string;
+  color: string;
+  desc: string;
+  tiers: BranchTier[];
+}
+export const BRANCHES: Record<JobId, BranchDef[]> = {
+  warrior: [
+    {
+      id: 'berserker', name: 'Berserker', icon: '🩸', color: '#e05a5a', desc: 'All offence. Drinks blood to stay alive and snowballs off kills.',
+      tiers: [
+        { title: 'Berserker', ability: 'rend', passives: [
+          { id: 'leech', name: 'Blood Drinker', icon: '🧛', special: 'leech', step: 0.01, text: (v) => `All damage heals ${pct(v)} of itself`, max: 5 },
+          { id: 'savage', name: 'Savagery', icon: '🐗', stats: { dmg: 0.15, armor: -0.03 }, max: 5 },
+        ] },
+        { title: 'Bloodreaver', ability: 'bloodnova', passives: [
+          { id: 'rampage', name: 'Rampage', icon: '🔥', special: 'rampage', step: 0.01, text: (v) => `Each kill: +${pct(v)} damage for 3s (stacks to 30)`, max: 5 },
+          { id: 'frenzied', name: 'Frenzied', icon: '🌪️', stats: { cd: 0.1, speed: 0.04 }, max: 5 },
+        ] },
+        { title: 'Warlord', ability: 'warcleave', passives: [
+          { id: 'carnage', name: 'Carnage', icon: '💀', stats: { area: 0.12, critDmg: 0.25 }, max: 5 },
+          { id: 'undying', name: 'Undying Rage', icon: '😡', stats: { maxHp: 30, regen: 0.6 }, max: 5 },
+        ] },
+      ],
+    },
+    {
+      id: 'guardian', name: 'Guardian', icon: '🛡️', color: '#9fb4d0', desc: 'A wall. Blocks hits, punishes anyone who touches you, holy light.',
+      tiers: [
+        { title: 'Guardian', ability: 'shieldtoss', passives: [
+          { id: 'block', name: 'Shield Block', icon: '🛡️', special: 'block', step: 0.05, text: (v) => `${pct(v)} chance to block a hit completely`, max: 5 },
+          { id: 'bastion', name: 'Bastion', icon: '🏰', stats: { armor: 0.05, maxHp: 20 }, max: 5 },
+        ] },
+        { title: 'Crusader', ability: 'consecrate', passives: [
+          { id: 'spikes', name: 'Spiked Plate', icon: '🌵', special: 'retaliate', step: 0.6, text: (v) => `Getting hit releases a shockwave (${pct(v * 2)} damage)`, max: 5 },
+          { id: 'faith', name: 'Faith', icon: '🙏', stats: { regen: 0.8, duration: 0.1 }, max: 5 },
+        ] },
+        { title: 'Paragon', ability: 'judgment', passives: [
+          { id: 'radiance', name: 'Radiance', icon: '☀️', stats: { dmg: 0.12, area: 0.1 }, max: 5 },
+          { id: 'aegis', name: 'Aegis', icon: '🔰', special: 'block', step: 0.04, text: (v) => `+${pct(v)} block chance`, max: 5 },
+        ] },
+      ],
+    },
+  ],
+  archer: [
+    {
+      id: 'ranger', name: 'Ranger', icon: '🐺', color: '#7bc96f', desc: 'Nature and beasts. Wolves fight beside you, the ground turns against foes.',
+      tiers: [
+        { title: 'Ranger', ability: 'wolves', passives: [
+          { id: 'packleader', name: 'Pack Leader', icon: '🐾', special: 'pack', step: 1, flat: true, text: (v) => `+${v} wolf`, max: 3 },
+          { id: 'wild', name: 'Call of the Wild', icon: '🌲', stats: { dmg: 0.1, speed: 0.04 }, max: 5 },
+        ] },
+        { title: 'Beastwarden', ability: 'brambles', passives: [
+          { id: 'thornskin', name: 'Thornskin', icon: '🌵', stats: { armor: 0.04, regen: 0.4 }, max: 5 },
+          { id: 'harmony', name: 'Harmony', icon: '🍃', stats: { duration: 0.12, area: 0.08 }, max: 5 },
+        ] },
+        { title: 'Wildheart', ability: 'stampede', passives: [
+          { id: 'alpha', name: 'Alpha', icon: '👑', stats: { dmg: 0.15, cd: 0.06 }, max: 5 },
+          { id: 'verdant', name: 'Verdant', icon: '💚', stats: { maxHp: 25, pickup: 0.2 }, max: 5 },
+        ] },
+      ],
+    },
+    {
+      id: 'marksman', name: 'Marksman', icon: '🎯', color: '#ffd166', desc: 'Precision. Huge single shots, crits and headshots from far away.',
+      tiers: [
+        { title: 'Marksman', ability: 'pierce', passives: [
+          { id: 'headshot', name: 'Headshot', icon: '🎯', special: 'headshot', step: 0.04, text: (v) => `Shots have ${pct(v)} chance to deal triple damage`, max: 5 },
+          { id: 'steady', name: 'Steady Hands', icon: '🧘', special: 'steady', step: 0.12, text: (v) => `+${pct(v)} damage while standing still`, max: 5 },
+        ] },
+        { title: 'Sniper', ability: 'snipe', passives: [
+          { id: 'scope', name: 'Long Scope', icon: '🔭', stats: { critDmg: 0.35, crit: 0.03 }, max: 5 },
+          { id: 'hollow', name: 'Hollow Points', icon: '🔩', stats: { pierce: 1, dmg: 0.06 }, flat: true, max: 3 },
+        ] },
+        { title: 'Deadeye', ability: 'barrage', passives: [
+          { id: 'executioner', name: 'Kill Shot', icon: '🪦', special: 'execute', step: 0.05, text: (v) => `Hits kill foes under ${pct(v)} HP (not bosses)`, max: 4 },
+          { id: 'trueaim', name: 'True Aim', icon: '✴️', stats: { crit: 0.06, cd: 0.05 }, max: 5 },
+        ] },
+      ],
+    },
+  ],
+  mage: [
+    {
+      id: 'pyro', name: 'Pyromancer', icon: '🔥', color: '#ff7b2e', desc: 'Fire everywhere. Everything burns, and burning foes explode.',
+      tiers: [
+        { title: 'Pyromancer', ability: 'meteor', passives: [
+          { id: 'kindling', name: 'Kindling', icon: '🪵', special: 'ignite', step: 0.3, text: (v) => `Fire abilities burn for +${pct(v)} of the hit`, max: 5 },
+          { id: 'heat', name: 'Searing Heat', icon: '🌡️', stats: { dmg: 0.12 }, max: 5 },
+        ] },
+        { title: 'Flamecaller', ability: 'wreath', passives: [
+          { id: 'combust', name: 'Combustion', icon: '💥', special: 'combust', step: 0.15, text: (v) => `Burning foes explode on death (${pct(v)} of their max HP)`, max: 5 },
+          { id: 'blaze', name: 'Blaze', icon: '🔆', stats: { area: 0.1, cd: 0.05 }, max: 5 },
+        ] },
+        { title: 'Phoenix Sage', ability: 'inferno', passives: [
+          { id: 'rebirth', name: 'Ashen Rebirth', icon: '🐦', stats: { regen: 1, maxHp: 15 }, max: 5 },
+          { id: 'sun', name: 'Heart of the Sun', icon: '🌞', stats: { dmg: 0.18, duration: 0.1 }, max: 5 },
+        ] },
+      ],
+    },
+    {
+      id: 'storm', name: 'Stormcaller', icon: '⚡', color: '#8fd3ff', desc: 'Lightning. Fast casts, strikes that jump from foe to foe.',
+      tiers: [
+        { title: 'Stormcaller', ability: 'lance', passives: [
+          { id: 'static', name: 'Static', icon: '🔌', special: 'static', step: 0.08, text: (v) => `Hits have ${pct(v)} chance to zap a nearby foe`, max: 5 },
+          { id: 'charged', name: 'Charged', icon: '🔋', stats: { cd: 0.1 }, max: 5 },
+        ] },
+        { title: 'Tempest', ability: 'tempest', passives: [
+          { id: 'conduct', name: 'Conductor', icon: '🌩️', special: 'chain', step: 1, flat: true, text: (v) => `Lightning strikes jump to ${v} more foe${v > 1 ? 's' : ''}`, max: 3 },
+          { id: 'galeforce', name: 'Gale Force', icon: '💨', stats: { speed: 0.08, area: 0.06 }, max: 5 },
+        ] },
+        { title: 'Thunderlord', ability: 'thunder', passives: [
+          { id: 'overcharge', name: 'Overcharge', icon: '⚡', stats: { dmg: 0.15, crit: 0.04 }, max: 5 },
+          { id: 'eye', name: 'Eye of the Storm', icon: '🌀', special: 'shield', step: 25, text: (v) => `A shield soaks ${Math.round(v)} damage, refills when you avoid hits`, max: 5 },
+        ] },
+      ],
+    },
+  ],
+};
+export const BRANCH: Record<string, BranchDef> = Object.fromEntries(Object.values(BRANCHES).flat().map((b) => [b.id, b]));
+
+export const PASSIVE: Record<string, PassiveDef> = Object.fromEntries(
+  [...Object.values(PASSIVES).flat(), ...Object.values(BRANCHES).flat().flatMap((b) => b.tiers.flatMap((t) => t.passives))].map((p) => [p.id, p]),
+);
 
 // ---------------------------------------------------------------- items (from chests, unlimited)
 export interface ItemDef {
@@ -258,8 +427,8 @@ export interface BossDef {
   speed: number;
   dmg: number;
 }
-export const MINI_BOSS: BossDef = { name: 'Bog Warden', color: '#4f9d69', r: 70, hp: 16000, speed: 95, dmg: 20 };
-export const FINAL_BOSS: BossDef = { name: 'The Gloom Tide', color: '#7a3fb5', r: 95, hp: 140000, speed: 105, dmg: 28 };
+export const MINI_BOSS: BossDef = { name: 'Bog Warden', color: '#4f9d69', r: 70, hp: 24000, speed: 95, dmg: 20 };
+export const FINAL_BOSS: BossDef = { name: 'The Gloom Tide', color: '#7a3fb5', r: 95, hp: 260000, speed: 105, dmg: 28 };
 
 // ---------------------------------------------------------------- levels
 export function xpToNext(level: number): number {

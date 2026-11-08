@@ -2,7 +2,7 @@ import '@fontsource/pixelify-sans/400.css';
 import '@fontsource/pixelify-sans/600.css';
 import { JobId } from '../data';
 import * as PX from '../pixel';
-import { HEROES, ITEM, PASSIVE, PASSIVES, RUN, RUN_RARITIES, WEAPON } from './data';
+import { ADVANCE_LEVELS, BRANCHES, HEROES, ITEM, PASSIVE, PASSIVES, RUN, RUN_RARITIES, WEAPON } from './data';
 import { setupRunInput } from './input';
 import { RunRenderer } from './render';
 import { Run } from './run';
@@ -68,6 +68,7 @@ function showTitle() {
       <div class="hc-abs">${abil}</div>
       <div class="hc-pass">${h.passive}</div>
       <div class="hc-more">${PASSIVES[job].length} class passives</div>
+      <div class="hc-branch">Lv ${ADVANCE_LEVELS[0]}: ${BRANCHES[job].map((br) => `<span style="color:${br.color}">${br.icon} ${br.name}</span>`).join(' or ')}</div>
       <div class="hc-best">${b ? (b.win ? `Won in ${fmtTime(b.time)}` : `Best: ${fmtTime(b.time)}, Lv ${b.level}`) : 'No runs yet'}</div>`;
     portrait(card.querySelector('canvas')!, job);
     card.addEventListener('click', () => startRun(job));
@@ -163,11 +164,11 @@ function renderCards(r: Run) {
   setText('choicetitle', r.choiceTitle);
   r.choices!.forEach((c, i) => {
     const el = document.createElement('button');
-    el.className = `card r-${c.rarity.id}`;
+    el.className = `card r-${c.rarity.id}${c.kind === 'advance' ? ' adv' : ''}`;
     el.style.setProperty('--rc', c.rarity.color);
-    const tag = c.kind === 'newWeapon' ? 'NEW ABILITY' : c.kind === 'newPassive' ? 'NEW PASSIVE' : c.kind === 'passive' ? `Lv ${c.level} / ${PASSIVE[c.id].max}` : c.level ? `Lv ${c.level}` : c.kind === 'boon' ? 'BOON' : '';
+    const tag = c.kind === 'advance' ? c.rarity.name.toUpperCase() : c.kind === 'newWeapon' ? 'NEW ABILITY' : c.kind === 'newPassive' ? 'NEW PASSIVE' : c.kind === 'passive' ? `Lv ${c.level} / ${PASSIVE[c.id].max}` : c.level ? `Lv ${c.level}` : c.kind === 'boon' ? 'BOON' : '';
     el.innerHTML = `
-      <div class="card-top"><span class="card-rar">${c.rarity.name}</span><span class="card-tag">${tag}</span></div>
+      <div class="card-top"><span class="card-rar">${c.kind === 'advance' ? '' : c.rarity.name}</span><span class="card-tag">${tag}</span></div>
       <div class="card-icon">${c.icon}</div>
       <div class="card-name">${c.name}</div>
       <div class="card-lines">${c.lines.map((l) => `<div>${l}</div>`).join('')}</div>
@@ -178,6 +179,7 @@ function renderCards(r: Run) {
   const reroll = $('rerollbtn') as HTMLButtonElement;
   reroll.textContent = `Reroll (${r.rerolls})`;
   reroll.disabled = r.rerolls <= 0 || r.choiceTitle !== 'Level up!';
+  reroll.classList.toggle('hidden', r.choiceTitle === 'Job advancement');
   $('skipbtn').classList.toggle('hidden', r.choiceTitle !== 'Level up!');
 }
 
@@ -187,7 +189,9 @@ function slotHtml(icon: string, level: number | string, title: string, color = '
 
 function updateHud(r: Run) {
   const s = r.stats;
-  setText('rlvl', `Lv ${r.level}`);
+  setText('rlvl', `Lv ${r.level} ${r.title}`);
+  const next = r.branch ? ADVANCE_LEVELS[r.tier] : ADVANCE_LEVELS[0];
+  setText('advnext', next && r.level < next ? `Job advancement at Lv ${next}` : '');
   setText('rgold', String(Math.floor(r.gold)));
   setText('rkills', String(r.kills));
   setWidth('rhpfill', r.hp / s.maxHp);
@@ -204,7 +208,8 @@ function updateHud(r: Run) {
   }
   $('clock').classList.toggle('danger', r.t >= RUN.length || r.timeLeft < 30);
   // the class's 4 abilities, locked ones dimmed
-  const ws = r.hero.abilities.map((id) => {
+  const ids = [...r.hero.abilities, ...(r.branch ? r.branch.tiers.map((t) => t.ability) : [])];
+  const ws = ids.map((id) => {
     const w = r.weapons.find((x) => x.def.id === id);
     const d = WEAPON[id];
     return w ? slotHtml(d.icon, w.level, `${d.name}: ${d.desc}`) : `<div class="rslot locked" title="${d.name} (not learned yet)"><span>${d.icon}</span></div>`;

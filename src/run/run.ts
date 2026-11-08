@@ -4,7 +4,7 @@ import { JobId } from '../data';
 import { GameMap, TILE, Tile, fits, moveCircle } from '../map';
 import {
   BossDef, ELITE, ENEMIES, EnemyDef, FINAL_BOSS, HEROES, HeroDef, ITEM, ITEMS, ItemDef, MINI_BOSS, PStat, RUN, RUN_RARITIES,
-  PASSIVE, PASSIVES, PSpecial, PassiveDef, RunRarity, SHRINE_BOONS, SHRINE_RADIUS, SHRINE_TIME, STAT_LABEL, WEAPON, WSTAT_NAME, WSTAT_STEP, WStat,
+  ADVANCE_LEVELS, BRANCHES, BranchDef, PASSIVE, PASSIVES, PSpecial, PassiveDef, RunRarity, SHRINE_BOONS, SHRINE_RADIUS, SHRINE_TIME, STAT_LABEL, WEAPON, WSTAT_NAME, WSTAT_STEP, WStat,
   WeaponDef, enemyHpScale, fmtStat, rollRarity, spawnRate, xpToNext,
 } from './data';
 
@@ -117,7 +117,7 @@ export interface Telegraph {
 }
 
 export interface Fx {
-  kind: 'arc' | 'ring' | 'zap' | 'boom' | 'nova' | 'text' | 'pickup' | 'land';
+  kind: 'arc' | 'ring' | 'zap' | 'boom' | 'nova' | 'text' | 'pickup' | 'land' | 'beam';
   x: number;
   y: number;
   t: number;
@@ -131,6 +131,29 @@ export interface Fx {
   slow?: number;
   dmg?: number;
   w?: number;
+  /** beam half width */
+  width?: number;
+}
+
+/** Summoned helper (Wolf Pack). */
+export interface Ally {
+  w: number;
+  x: number;
+  y: number;
+  cd: number;
+  angle: number;
+  moving: boolean;
+}
+
+/** A meteor on its way down. */
+export interface Falling {
+  x: number;
+  y: number;
+  t: number;
+  dur: number;
+  r: number;
+  dmg: number;
+  w: number;
 }
 
 export interface OwnedWeapon {
@@ -163,7 +186,7 @@ export interface OwnedPassive {
 }
 
 export interface Choice {
-  kind: 'weapon' | 'newWeapon' | 'passive' | 'newPassive' | 'boon' | 'gold';
+  kind: 'weapon' | 'newWeapon' | 'passive' | 'newPassive' | 'boon' | 'gold' | 'advance';
   id: string;
   name: string;
   icon: string;
@@ -290,6 +313,16 @@ export class Run {
   stats!: RunStats;
   weapons: OwnedWeapon[] = [];
   passives: OwnedPassive[] = [];
+  /** job advancement: chosen branch and how many tiers are unlocked (0-3) */
+  branch: BranchDef | null = null;
+  tier = 0;
+  allies: Ally[] = [];
+  falling: Falling[] = [];
+  private leechLeft = 0;
+  private leechT = 0;
+  rampage = 0;
+  private rampageUntil = 0;
+  private combustDepth = 0;
   /** special passive amounts, rebuilt in recalc() */
   special: Partial<Record<PSpecial, number>> = {};
   items: ItemDef[] = [];
@@ -445,6 +478,50 @@ export class Run {
     return out;
   }
 
+  /** Class passives plus the ones your job advancements have unlocked. */
+  passivePool(): PassiveDef[] {
+    const out = [...PASSIVES[this.job]];
+    if (this.branch) for (let i = 0; i < this.tier; i++) out.push(...this.branch.tiers[i].passives);
+    return out;
+  }
+  /** Current job title. */
+  get title(): string {
+    return this.branch && this.tier > 0 ? this.branch.tiers[this.tier - 1].title : this.hero.name;
+  }
+
+  /** Level 10: pick a branch. Level 15 / 25: the next tier of it. */
+  private checkAdvance(): boolean {
+    if (!this.branch) {
+      if (this.level < ADVANCE_LEVELS[0]) return false;
+      this.choiceTitle = 'Job advancement';
+      this.choices = BRANCHES[this.job].map((b) => ({
+        kind: 'advance', id: b.id, name: b.name, icon: b.icon, rarity: { ...RUN_RARITIES[3], color: b.color, name: 'Job' }, level: 0,
+        lines: [b.desc, ...b.tiers.map((t, i) => `Lv ${ADVANCE_LEVELS[i]}: ${t.title}, ${WEAPON[t.ability].icon} ${WEAPON[t.ability].name}`)],
+        apply: () => {
+          this.branch = b;
+          this.advance();
+        },
+      }));
+      return true;
+    }
+    if (this.tier >= 3 || this.level < ADVANCE_LEVELS[this.tier]) return false;
+    const t = this.branch.tiers[this.tier];
+    const ab = WEAPON[t.ability];
+    this.choiceTitle = 'Job advancement';
+    this.choices = [{
+      kind: 'advance', id: this.branch.id, name: t.title, icon: this.branch.icon, rarity: { ...RUN_RARITIES[4], color: this.branch.color, name: `Tier ${this.tier + 1}` }, level: 0,
+      lines: [`New ability: ${ab.icon} ${ab.name}`, ab.desc, `New passives: ${t.passives.map((p) => p.name).join(', ')}`],
+      apply: () => this.advance(),
+    }];
+    return true;
+  }
+  private advance() {
+    const t = this.branch!.tiers[this.tier];
+    this.tier++;
+    this.addWeapon(t.ability);
+    this.notice(`You are now a ${t.title}!`, this.branch!.color, this.branch!.icon);
+  }
+
   /** Card text for one pick of a passive at a rarity multiplier. */
   passiveLines(d: PassiveDef, mult: number): string[] {
     const out = Object.entries(d.stats ?? {}).map(([k, v]) => `${fmtStat(k as PStat, v! * mult)} ${STAT_LABEL[k as PStat]}`);
@@ -494,7 +571,7 @@ export class Run {
         },
       };
     };
-    for (const d of PASSIVES[this.job]) {
+    for (const d of this.passivePool()) {
       const owned = this.passives.find((p) => p.id === d.id);
       if (owned && owned.level >= d.max) continue;
       cands.push({ w: owned ? 2.2 : 1.6, make: () => pick(d, owned) });
@@ -534,7 +611,7 @@ export class Run {
     if (!c) return;
     c.apply();
     this.choices = null;
-    if (this.pendingLevels > 0) this.openLevelUp();
+    if (!this.checkAdvance() && this.pendingLevels > 0) this.openLevelUp();
   }
   reroll(): boolean {
     if (!this.choices || this.rerolls <= 0 || this.choiceTitle !== 'Level up!') return false;
@@ -566,6 +643,8 @@ export class Run {
     this.updateWeapons(dt);
     this.updateShots(dt);
     this.updatePools(dt);
+    this.updateFalling(dt);
+    this.updateAllies(dt);
     this.updateTelegraphs(dt);
     this.updatePickups(dt);
     this.updateObjects(dt);
@@ -573,7 +652,7 @@ export class Run {
     this.input.jump = false;
     this.input.interact = false;
     if (this.hp <= 0) this.die();
-    if (!this.choices && this.pendingLevels > 0) this.openLevelUp();
+    if (!this.choices && !this.checkAdvance() && this.pendingLevels > 0) this.openLevelUp();
   }
 
   private notice(text: string, color = '#ffd166', icon?: string) {
@@ -648,6 +727,12 @@ export class Run {
   taken = { contact: 0, shot: 0, slam: 0 };
   hurt(dmg: number, from?: Enemy, src: 'contact' | 'shot' | 'slam' = 'contact') {
     if (this.iframes > 0 || this.ended) return;
+    const block = this.sp('block');
+    if (block && this.rand() < Math.min(0.6, block)) {
+      this.iframes = RUN.contactIframes;
+      this.fx.push({ kind: 'text', x: this.x, y: this.y, t: 0, dur: 0.6, r: 0, color: '#9fb4d0', text: 'Block' });
+      return;
+    }
     let d = dmg * (1 - this.stats.armor);
     this.lastHurt = this.t;
     if (this.shield > 0) {
@@ -1011,6 +1096,13 @@ export class Run {
     }
     const fb = this.sp('frostbite');
     if (fb && e.slowUntil > this.t) dmg *= 1 + fb;
+    const def = w >= 0 ? this.weapons[w]?.def : undefined;
+    const hs = this.sp('headshot');
+    if (hs && def?.shot && !e.boss && this.rand() < hs) {
+      dmg *= 3;
+      crit = true;
+    }
+    if (def?.slow) e.slowUntil = Math.max(e.slowUntil, this.t + 1);
     const sharp = this.sp('sharpshot');
     if (sharp && dist2(e.x, e.y, this.x, this.y) > 380 * 380) dmg *= 1 + sharp;
     if (canCrit && this.rand() < this.stats.crit) {
@@ -1031,10 +1123,31 @@ export class Run {
     }
     if (this.fx.length < 220 && (crit || this.rand() < 0.6))
       this.fx.push({ kind: 'text', x: e.x + (this.rand() - 0.5) * 20, y: e.y, t: 0, dur: 0.6, r: 0, color: crit ? '#ffd166' : '#ffffff', text: String(Math.round(dmg)), crit });
-    const ign = this.sp('ignite');
-    if (ign && w >= 0 && this.weapons[w]?.def.id === 'ember') {
-      e.burnDps = Math.max(e.burnUntil > this.t ? e.burnDps : 0, (dmg * ign) / 3);
+    // burning: fire abilities with Ignite / Kindling, or a built-in burn
+    const burn = def?.fire ? (def.burn ?? 0) + this.sp('ignite') : 0;
+    if (burn > 0) {
+      e.burnDps = Math.max(e.burnUntil > this.t ? e.burnDps : 0, (dmg * burn) / 3);
       e.burnUntil = this.t + 3;
+    }
+    // life drain (capped so it can't make you unkillable)
+    const leech = (def?.leech ?? 0) + this.sp('leech');
+    if (leech > 0 && w >= 0) {
+      if (this.t > this.leechT) {
+        this.leechT = this.t + 1;
+        this.leechLeft = this.stats.maxHp * 0.05;
+      }
+      const h = Math.min(this.leechLeft, dmg * leech);
+      this.leechLeft -= h;
+      this.heal(h);
+    }
+    // Static: a spark jumps to a nearby foe
+    const st = this.sp('static');
+    if (st && w >= 0 && this.rand() < st) {
+      const o = this.nearest(e.x, e.y, 260, new Set([e.id]));
+      if (o && o !== e) {
+        this.fx.push({ kind: 'zap', x: o.x, y: o.y, t: 0, dur: 0.25, r: 30, color: '#8fd3ff', text: 'bolt' });
+        this.hitEnemy(o, dmg * 0.5, -2, false);
+      }
     }
     const ex = this.sp('execute');
     if (ex && !e.boss && e.hp > 0 && e.hp < e.maxHp * ex) {
@@ -1054,6 +1167,20 @@ export class Run {
     this.kills++;
     const bl = this.sp('bloodlust');
     if (bl) this.heal(bl);
+    if (this.sp('rampage')) {
+      if (this.t > this.rampageUntil) this.rampage = 0;
+      this.rampage = Math.min(30, this.rampage + 1);
+      this.rampageUntil = this.t + 3;
+    }
+    // Combustion: burning foes blow up (limited chain depth)
+    const cb = this.sp('combust');
+    if (cb && e.burnUntil > this.t && this.combustDepth < 3 && !e.boss) {
+      this.combustDepth++;
+      const R = 100 * (1 + this.stats.area);
+      this.fx.push({ kind: 'boom', x: e.x, y: e.y, t: 0, dur: 0.3, r: R, color: '#ff7b2e' });
+      this.forEnemiesIn(e.x, e.y, R, (o) => o !== e && this.hitEnemy(o, e.maxHp * cb, -2, false));
+      this.combustDepth--;
+    }
     const s = this.stats;
     const xpv = e.xp * (1 + s.xp) * (1 + s.curse);
     this.dropXp(e.x, e.y, xpv);
@@ -1096,10 +1223,12 @@ export class Run {
     const berserk = this.sp('berserk') * (1 - this.hp / s.maxHp);
     const kite = this.moving ? this.sp('kite') : 0;
     const momentum = this.moving ? this.sp('momentum') : 0;
+    const steady = this.moving ? 0 : this.sp('steady');
+    const ramp = this.t < this.rampageUntil ? this.rampage * this.sp('rampage') : 0;
     return {
-      dmg: w.dmg * (1 + s.dmg + momentum) * (1 + (this.level - 1) * 0.015),
+      dmg: w.dmg * Math.max(0.1, 1 + s.dmg + momentum + steady + ramp) * (1 + (this.level - 1) * 0.015),
       cd: w.cd / (1 + w.haste + s.cd + frenzy + berserk + kite),
-      count: w.count + s.count,
+      count: w.count + s.count + (w.def.kind === 'summon' ? this.sp('pack') : 0),
       area: w.area * (1 + s.area),
       duration: w.duration * (1 + s.duration),
     };
@@ -1133,11 +1262,12 @@ export class Run {
         }
         return;
       }
+      if (kind === 'summon') return; // wolves act on their own in updateAllies
       if (kind === 'aura') {
         w.timer -= dt;
         if (w.timer <= 0) {
           w.timer = st.cd;
-          this.forEnemiesIn(this.x, this.y, 105 * st.area, (e) => this.hitEnemy(e, st.dmg, i, true, 60));
+          this.forEnemiesIn(this.x, this.y, 105 * st.area, (e) => this.hitEnemy(e, st.dmg, i, true, w.def.slow ? 0 : 60));
         }
         return;
       }
@@ -1187,7 +1317,7 @@ export class Run {
       const tgt = this.nearest(this.x, this.y, 320 * st.area);
       let a = tgt ? Math.atan2(tgt.y - this.y, tgt.x - this.x) : this.angle;
       if (n % 2 === 1) a += Math.PI; // every other sweep covers your back
-      if (n >= 2) a += (n >> 1) * 0.6;
+      if (n >= 2) a += (n >> 1) * (st.count >= 4 ? Math.PI / 2 : 0.6);
       const R = 165 * st.area;
       const half = 1.15;
       this.fx.push({ kind: 'arc', x: this.x, y: this.y, t: 0, dur: 0.22, r: R, a, color: w.def.color });
@@ -1197,7 +1327,7 @@ export class Run {
         if (Math.abs(da) <= half || dist2(e.x, e.y, this.x, this.y) < (e.r + 40) ** 2) this.hitEnemy(e, st.dmg, i, true, 380);
       });
     } else if (kind === 'arrow') {
-      const tgt = this.nearest(this.x, this.y, 900);
+      const tgt = w.def.id === 'snipe' ? this.toughest(900) : this.nearest(this.x, this.y, 900);
       let a = tgt ? Math.atan2(tgt.y - this.y, tgt.x - this.x) : this.angle;
       a += (n % 2 ? 1 : -1) * Math.ceil(n / 2) * 0.12;
       const arrow = (ang: number) =>
@@ -1231,11 +1361,11 @@ export class Run {
       const e = this.randomNear(this.x, this.y, 620);
       if (!e) return;
       const R = 70 * st.area;
-      const style = w.def.id === 'rain' ? 'arrows' : 'bolt';
+      const style = w.def.shock ? 'bolt' : w.def.id === 'judgment' ? 'pillar' : 'arrows';
       this.fx.push({ kind: 'zap', x: e.x, y: e.y, t: 0, dur: 0.3, r: R, color: w.def.color, text: style });
       this.forEnemiesIn(e.x, e.y, R, (o) => this.hitEnemy(o, st.dmg, i, true, 120, e.x, e.y));
       // Overload: the spark jumps on to more foes
-      const chain = w.def.id === 'spark' ? this.sp('chain') : 0;
+      const chain = w.def.shock ? this.sp('chain') : 0;
       let from = e;
       const hit = new Set([e.id]);
       for (let c = 0; c < chain; c++) {
@@ -1258,7 +1388,92 @@ export class Run {
       const x = e ? e.x : this.x + Math.cos(a) * 200;
       const y = e ? e.y : this.y + Math.sin(a) * 200;
       this.pools.push({ x, y, r: 80 * st.area, dmg: st.dmg, until: this.t + st.duration, tick: 0, w: i });
+    } else if (kind === 'beam') {
+      // a straight line through everything toward the nearest foe
+      const tgt = this.nearest(this.x, this.y, 900);
+      let a = tgt ? Math.atan2(tgt.y - this.y, tgt.x - this.x) : this.angle;
+      a += (n % 2 ? 1 : -1) * Math.ceil(n / 2) * 0.35;
+      const len = 760;
+      const hw = 22 * st.area;
+      const dx = Math.cos(a);
+      const dy = Math.sin(a);
+      this.fx.push({ kind: 'beam', x: this.x, y: this.y, t: 0, dur: 0.3, r: len, a, color: w.def.color, width: hw });
+      const mx = this.x + dx * len * 0.5;
+      const my = this.y + dy * len * 0.5;
+      this.forEnemiesIn(mx, my, len * 0.5 + hw, (e) => {
+        const ox = e.x - this.x;
+        const oy = e.y - this.y;
+        const along = ox * dx + oy * dy;
+        if (along < -e.r || along > len + e.r) return;
+        if (Math.abs(ox * -dy + oy * dx) > hw + e.r) return;
+        this.hitEnemy(e, st.dmg, i, true, 200);
+      });
+    } else if (kind === 'meteor') {
+      const e = this.randomNear(this.x, this.y, 600);
+      if (!e) return;
+      this.falling.push({ x: e.x, y: e.y, t: 0, dur: 0.7, r: 110 * st.area, dmg: st.dmg, w: i });
     }
+  }
+
+  /** The foe with the most HP within range (Snipe). */
+  private toughest(range: number): Enemy | null {
+    let best: Enemy | null = null;
+    this.forEnemiesIn(this.x, this.y, range, (e) => {
+      if (e.spawnT > 0.2) return;
+      if (!best || e.hp > best.hp) best = e;
+    });
+    return (best as Enemy | null) ?? this.nearest(this.x, this.y, range);
+  }
+
+  private updateFalling(dt: number) {
+    for (const f of this.falling) {
+      f.t += dt;
+      if (f.t >= f.dur) {
+        this.fx.push({ kind: 'boom', x: f.x, y: f.y, t: 0, dur: 0.4, r: f.r, color: this.weapons[f.w]?.def.color ?? '#ff7b2e' });
+        this.forEnemiesIn(f.x, f.y, f.r, (e) => this.hitEnemy(e, f.dmg, f.w, true, 300, f.x, f.y));
+      }
+    }
+    this.falling = this.falling.filter((f) => f.t < f.dur);
+  }
+
+  /** Wolves: keep the pack the right size, hunt foes near the hero, come back when it's quiet. */
+  private updateAllies(dt: number) {
+    this.weapons.forEach((w, i) => {
+      if (w.def.kind !== 'summon') return;
+      const st = this.weaponStats(w);
+      const want = Math.round(st.count);
+      const mine = this.allies.filter((a) => a.w === i);
+      for (let k = mine.length; k < want; k++) this.allies.push({ w: i, x: this.x, y: this.y, cd: 0, angle: 0, moving: false });
+      for (const a of mine) {
+        a.cd -= dt;
+        const tgt = this.nearest(a.x, a.y, 420);
+        const homeD = Math.hypot(this.x - a.x, this.y - a.y);
+        let gx = this.x + Math.cos(i + this.allies.indexOf(a) * 2) * 60;
+        let gy = this.y + Math.sin(i + this.allies.indexOf(a) * 2) * 60;
+        if (tgt && homeD < 650 && Math.hypot(tgt.x - this.x, tgt.y - this.y) < 600) {
+          gx = tgt.x;
+          gy = tgt.y;
+          if (Math.hypot(tgt.x - a.x, tgt.y - a.y) < tgt.r + 26 && a.cd <= 0) {
+            a.cd = st.cd;
+            this.hitEnemy(tgt, st.dmg, i, true, 180, a.x, a.y);
+          }
+        }
+        if (homeD > 1100) {
+          a.x = this.x;
+          a.y = this.y;
+        }
+        const dx = gx - a.x;
+        const dy = gy - a.y;
+        const d = Math.hypot(dx, dy);
+        a.moving = d > 18;
+        if (a.moving) {
+          const sp = Math.min(d, w.speed * (homeD > 400 ? 1.4 : 1) * dt);
+          a.angle = Math.atan2(dy, dx);
+          a.x += (dx / d) * sp;
+          a.y += (dy / d) * sp;
+        }
+      }
+    });
   }
 
   private updateShots(dt: number) {
@@ -1545,7 +1760,7 @@ export class Run {
   autoPick() {
     if (!this.choices) return;
     const score = (c: Choice) =>
-      (c.kind === 'newWeapon' ? 5 : c.kind === 'weapon' ? 4 : c.kind === 'newPassive' ? 3.5 : 3) + RUN_RARITIES.indexOf(c.rarity) * 0.8 + (c.id === 'glass' ? -2 : 0);
+      (c.kind === 'advance' ? 20 + this.rand() : c.kind === 'newWeapon' ? 5 : c.kind === 'weapon' ? 4 : c.kind === 'newPassive' ? 3.5 : 3) + RUN_RARITIES.indexOf(c.rarity) * 0.8 + (c.id === 'glass' ? -2 : 0);
     let best = 0;
     this.choices.forEach((c, i) => {
       if (score(c) > score(this.choices![best])) best = i;

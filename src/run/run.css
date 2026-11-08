@@ -133,3 +133,14 @@ body.runmode { overflow: hidden; }
   .card-icon { font-size: 28px; }
   .dmg-row { grid-template-columns: 120px 1fr 48px; }
 }
+
+/* job advancement */
+.hc-branch { font-size: 12px; }
+#advnext { font-size: 11px; color: var(--muted); min-height: 0; }
+#advnext:empty { display: none; }
+#wslots { flex-wrap: wrap; max-width: 152px; }
+.card.adv { width: 300px; min-height: 250px; }
+.card.adv .card-lines div { color: var(--text); }
+.card.adv .card-lines div:first-child { color: #fff; margin-bottom: 4px; }
+.card.adv .card-icon { font-size: 52px; }
+.card.adv .card-name { font-size: 22px; }

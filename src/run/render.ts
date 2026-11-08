@@ -301,6 +301,45 @@ export class RunRenderer {
         f.fill();
       }
     }
+    // meteors: a shadow that darkens until it lands
+    for (const m of run.falling) {
+      const p = m.t / m.dur;
+      f.globalAlpha = 0.15 + 0.45 * p;
+      f.fillStyle = '#1b0f08';
+      f.beginPath();
+      f.arc(m.x, m.y, m.r * (0.4 + 0.6 * p), 0, Math.PI * 2);
+      f.fill();
+      f.globalAlpha = 0.7;
+      f.strokeStyle = '#ff7b2e';
+      f.lineWidth = 5;
+      f.beginPath();
+      f.arc(m.x, m.y, m.r, 0, Math.PI * 2);
+      f.stroke();
+    }
+    // beams (Piercing Shot, Lightning Lance, Stampede)
+    for (const e of run.fx) {
+      if (e.kind !== 'beam') continue;
+      const p = e.t / e.dur;
+      const hw = (e.width ?? 20) * (1 - p * 0.6);
+      const dx = Math.cos(e.a!);
+      const dy = Math.sin(e.a!);
+      const quad = (w: number) => {
+        f.beginPath();
+        f.moveTo(e.x - dy * w, e.y + dx * w);
+        f.lineTo(e.x - dy * w + dx * e.r, e.y + dx * w + dy * e.r);
+        f.lineTo(e.x + dy * w + dx * e.r, e.y - dx * w + dy * e.r);
+        f.lineTo(e.x + dy * w, e.y - dx * w);
+        f.closePath();
+      };
+      f.globalAlpha = 0.55 * (1 - p);
+      f.fillStyle = e.color;
+      quad(hw);
+      f.fill();
+      f.globalAlpha = 0.9 * (1 - p);
+      f.fillStyle = '#ffffff';
+      quad(hw * 0.3);
+      f.fill();
+    }
     // weapon swings, nova rings, explosions on the ground
     for (const e of run.fx) {
       const p = e.t / e.dur;
@@ -480,6 +519,16 @@ export class RunRenderer {
           f.lineWidth = B;
           f.stroke();
         }
+      } else if (e.kind === 'zap' && e.text === 'pillar') {
+        // a column of light from the sky
+        const sx = this.px(e.x, e.y);
+        const sy = this.py(e.x, e.y);
+        const wdt = Math.max(4, e.r * this.k * 0.6) * (1 - p * 0.7);
+        f.globalAlpha = 0.8 * (1 - p);
+        f.fillStyle = e.color;
+        f.fillRect(sx - wdt, sy - 140 * B, wdt * 2, 140 * B);
+        f.fillStyle = '#ffffff';
+        f.fillRect(sx - wdt * 0.35, sy - 140 * B, wdt * 0.7, 140 * B);
       } else if (e.kind === 'zap') {
         const sx = this.px(e.x, e.y);
         const sy = this.py(e.x, e.y);
@@ -547,6 +596,23 @@ export class RunRenderer {
         const sy = this.py(bx, by, 26);
         ctx.drawImage(img, Math.round(sx / B - (img.width * sc) / 2) * B, Math.round(sy / B - (img.height * sc) / 2) * B, img.width * B * sc, img.height * B * sc);
       }
+    }
+
+    // meteor rocks in the air
+    for (const m of run.falling) {
+      const p = m.t / m.dur;
+      const sx = this.px(m.x, m.y) + (1 - p) * 60 * B;
+      const sy = this.py(m.x, m.y, (1 - p) * 520);
+      const img = SP.bolt();
+      ctx.drawImage(img, Math.round(sx / B - img.width) * B, Math.round(sy / B - img.height) * B, img.width * 2 * B, img.height * 2 * B);
+    }
+    // wolves
+    for (const a of run.allies) {
+      const sx = this.px(a.x, a.y);
+      const sy = this.py(a.x, a.y);
+      const img = PX.spirit(run.weapons[a.w]?.def.color ?? '#b9c7d6', Math.floor(time * 6 + a.x) % 3);
+      this.blit(ctx, PX.shadowSprite(10), sx, sy + B, 5, 3);
+      this.blit(ctx, img, sx, sy - (a.moving ? Math.abs(Math.sin(time * 14 + a.x)) * 2 * B : 0), img.width >> 1, img.height - 1);
     }
 
     // ---- overlay: damage numbers, elite bars ----

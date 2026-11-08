@@ -31,5 +31,5 @@ for (let r = 0; r < runs; r++) {
     }
   }
   const dmg = run.weapons.map((w) => `${w.def.id} ${Math.round(w.total / 1000)}k`).join(', ');
-  console.log(`run ${r}: ${run.ended || 'timeout'} at ${Math.floor(run.t / 60)}:${String(Math.floor(run.t % 60)).padStart(2, '0')} lv${run.level} kills ${run.kills} bossTime ${Math.round(bossT)}s boss ${run.boss ? Math.round((run.boss.hp / run.boss.maxHp) * 100) + '%' : '-'} | taken c${Math.round(run.taken.contact)} s${Math.round(run.taken.shot)} b${Math.round(run.taken.slam)} | ${dmg} | ${(Date.now() - t0) / 1000}s`);
+  console.log(`run ${r} [${run.title}]: ${run.ended || 'timeout'} at ${Math.floor(run.t / 60)}:${String(Math.floor(run.t % 60)).padStart(2, '0')} lv${run.level} kills ${run.kills} bossTime ${Math.round(bossT)}s boss ${run.boss ? Math.round((run.boss.hp / run.boss.maxHp) * 100) + '%' : '-'} | taken c${Math.round(run.taken.contact)} s${Math.round(run.taken.shot)} b${Math.round(run.taken.slam)} | ${dmg} | ${(Date.now() - t0) / 1000}s`);
 }
