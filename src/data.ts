@@ -445,6 +445,16 @@ export const SPLIT = {
   hopTime: 0.75, // seconds in the air (the landing circle shows for this long)
   hopRadius: 80, // landing splash radius (scaled by attackSize)
   hopPct: 0.05, // landing hit, % of max HP (bosses' scaling applies)
+  /** Phases 1-2: the main slime hops after you; each landing slams and sends out slime waves with gaps. */
+  mainHopEvery: [1.1, 1.7] as [number, number],
+  mainHopTime: 0.9,
+  mainSlamRadius: 125,
+  waveSpeed: 270,
+  waveWidth: 34,
+  waveMaxR: 950,
+  waveGaps: 3,
+  waveGapHalf: 0.3, // radians each side of a gap's centre
+  wavePct: 0.25,
   /** Last phase: the main slime leaps to the middle and drops globes in a checkerboard (alternating each volley). */
   globeEvery: [3.6, 4.6] as [number, number],
   globeCell: 128, // checkerboard square size (2x2 floor tiles); each volley hits every other square
@@ -484,7 +494,7 @@ export function bossPctScale(bossLevel: number, playerLevel: number): number {
 export const ZONES: ZoneDef[] = [
   {
     name: 'Sprout Meadow', minLevel: 1, maxLevel: 10, bossLevel: 12, chapter: 0, offering: [],
-    bossKit: [['slam', 'cone', 'charge'], ['slam', 'chase', 'cone', 'cutoff'], ['globes']], // last phase: sits in the middle
+    bossKit: [['cutoff', 'charge', 'cone'], ['cutoff', 'charge', 'chase', 'cone'], ['globes']], // last phase: sits in the middle
     bossSplit: true,
     phaseAt: [0.8, 0.5], // splits early: the four-slime phase is the long one
   },

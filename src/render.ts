@@ -412,6 +412,33 @@ export class Renderer {
   /** Slime goo puddles (fade out near the end of their 7 seconds) and the hero stuck in it. */
   private drawGoo(g: Game, time: number) {
     const ctx = this.ctx;
+    // slime waves: a thick band with clear gaps
+    for (const w of g.waves) {
+      if (w.r <= 0) continue;
+      const fade = Math.min(1, (950 - w.r) / 200);
+      const gh = 0.3;
+      const sorted = [...w.gaps].sort((a, b) => a - b);
+      ctx.lineWidth = 34;
+      ctx.strokeStyle = `rgba(120,200,70,${0.75 * fade})`;
+      for (let i = 0; i < sorted.length; i++) {
+        const a0 = sorted[i] + gh;
+        const a1 = (i + 1 < sorted.length ? sorted[i + 1] : sorted[0] + Math.PI * 2) - gh;
+        if (a1 <= a0) continue;
+        ctx.beginPath();
+        ctx.arc(w.x, w.y, w.r, a0, a1);
+        ctx.stroke();
+      }
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = `rgba(200,30,30,${0.8 * fade})`;
+      for (let i = 0; i < sorted.length; i++) {
+        const a0 = sorted[i] + gh;
+        const a1 = (i + 1 < sorted.length ? sorted[i + 1] : sorted[0] + Math.PI * 2) - gh;
+        if (a1 <= a0) continue;
+        ctx.beginPath();
+        ctx.arc(w.x, w.y, w.r + 17, a0, a1);
+        ctx.stroke();
+      }
+    }
     for (const o of g.goo) {
       const a = Math.min(1, o.life / 1.2) * 0.55;
       ctx.fillStyle = `rgba(110,190,70,${a})`;

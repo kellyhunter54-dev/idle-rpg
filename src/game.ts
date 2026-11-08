@@ -87,6 +87,19 @@ export interface Mob extends MobStats {
   gooDist: number;
 }
 
+/** An expanding ring of slime from a main-slime slam. Gaps (angles) are safe; it hits once. */
+export interface Wave {
+  x: number;
+  y: number;
+  r: number;
+  gaps: number[];
+  hit: boolean;
+  ownerId: number;
+  level: number;
+  damage: number;
+  pct: number;
+}
+
 /** A sticky puddle left by split slimes. */
 export interface Goo {
   x: number;
@@ -288,6 +301,7 @@ export class Game {
   enraged = false;
   /** Slime goo on the ground, and when the hero is rooted / immune to roots. */
   goo: Goo[] = [];
+  waves: Wave[] = [];
   /** Space ability: cooldown left, and when parry / sprint end. */
   evadeCd = 0;
   parryUntil = 0;
@@ -766,6 +780,7 @@ export class Game {
 
   private resetTransient() {
     this.goo = [];
+    this.waves = [];
     this.rootedUntil = 0;
     if (this.deadeye) this.endDeadeye();
     this.telegraphs = [];
@@ -857,6 +872,7 @@ export class Game {
     this.updateMobs(dt);
     this.updateTelegraphs(dt);
     this.updateGoo(dt);
+    this.updateWaves(dt);
     if (this.deadTimer > 0) {
       inp.skills = inp.skills.map(() => false);
       return;
@@ -1098,6 +1114,8 @@ export class Game {
       const spot = this.safeSpots.reduce((a, b) => (dist(a, p) < dist(b, p) ? a : b));
       if (dist(spot, p) > 25) return this.avoidGoo(this.walkTo(spot, dt));
     }
+    const wd = this.waveDodge();
+    if (wd && !threats.some((t) => this.inTelegraph(t, p, p.r + 8))) return wd;
     if (threats.some((t) => this.inTelegraph(t, p, p.r + 8))) {
       const dir = this.dodge(threats);
       this.autoEvade(dir, threats);
@@ -1399,6 +1417,10 @@ export class Game {
       }
 
       // split-off slimes don't walk: they hop around you, leaving goo
+      if (m.boss && m.group && this.isMainSlime(m) && m.phase < 2) {
+        this.updateMainHopper(m, dt);
+        continue;
+      }
       if (m.boss && !this.isMainSlime(m)) {
         this.updateHopper(m, dt);
         continue;
@@ -1549,6 +1571,92 @@ export class Game {
     let len = 0;
     while (len + 16 <= max && fits(this.map, m.x + Math.cos(a) * (len + 16), m.y + Math.sin(a) * (len + 16), m.r * 0.8, true)) len += 16;
     return Math.max(80, len);
+  }
+
+  /** Phases 1-2: the crowned slime follows you by hopping; every landing slams and sends out waves. */
+  private updateMainHopper(m: Mob, dt: number) {
+    const p = this.player;
+    if (m.hop) {
+      const h = m.hop;
+      h.t += dt;
+      const f = Math.min(1, h.t / h.dur);
+      m.x = h.fx + (h.tx - h.fx) * f;
+      m.y = h.fy + (h.ty - h.fy) * f;
+      m.angle = Math.atan2(h.ty - h.fy, h.tx - h.fx);
+      m.moving = true;
+      if (f >= 1) {
+        m.hop = null;
+        m.hopTimer = SPLIT.mainHopEvery[0] + this.rand() * (SPLIT.mainHopEvery[1] - SPLIT.mainHopEvery[0]);
+        this.effect('ring', m.x, m.y, SPLIT.mainSlamRadius * SPLIT.attackSize[m.gen], m.color, 0.4);
+        // phase 1: one wave; phase 2: two waves, the second with its gaps shifted
+        const base = this.rand() * Math.PI * 2;
+        const step = (Math.PI * 2) / SPLIT.waveGaps;
+        for (let w = 0; w <= m.phase; w++) {
+          const off = base + (w % 2) * step * 0.5;
+          this.waves.push({
+            x: m.x, y: m.y, r: m.r - w * 160, gaps: Array.from({ length: SPLIT.waveGaps }, (_, i) => off + i * step),
+            hit: false, ownerId: m.id, level: m.level, damage: m.atk * COMBAT.telegraphDamageMult * 0.6,
+            pct: SPLIT.wavePct * (this.enraged ? BALANCE.bossEnrageDamage : 1),
+          });
+        }
+      }
+      return;
+    }
+    m.hopTimer -= dt;
+    if (m.hopTimer > 0 || this.telegraphs.some((t) => t.ownerId === m.id)) return;
+    // land on you (leading a little if you're running)
+    const raw = { x: p.x + this.pVel.x * 0.35, y: p.y + this.pVel.y * 0.35 };
+    const to = this.clampArena(raw, m.r * 0.8 + 2);
+    const dur = SPLIT.mainHopTime * (this.enraged ? 0.8 : 1);
+    m.hop = { fx: m.x, fy: m.y, tx: to.x, ty: to.y, t: 0, dur };
+    this.telegraphs.push({
+      kind: 'circle', x: to.x, y: to.y, r: SPLIT.mainSlamRadius * SPLIT.attackSize[m.gen], inner: 0, angle: 0, width: 0,
+      time: dur, total: dur, damage: m.atk * COMBAT.telegraphDamageMult, boss: true, ownerId: m.id, wait: 0, follow: false,
+      pct: BOSS_MOVE_PCT.slam * SPLIT.damage[m.gen] * (this.enraged ? BALANCE.bossEnrageDamage : 1),
+    });
+  }
+
+  /** Is this angle (from a wave's centre) inside one of its gaps? */
+  private inGap(w: Wave, a: number, pad: number): boolean {
+    return w.gaps.some((g) => Math.abs(angDiff(g, a)) <= SPLIT.waveGapHalf - pad);
+  }
+
+  private updateWaves(dt: number) {
+    if (!this.waves.length) return;
+    const p = this.player;
+    for (const w of this.waves) {
+      w.r += SPLIT.waveSpeed * dt;
+      if (w.hit || w.r < 0 || this.deadTimer > 0) continue;
+      const d = dist(w, p);
+      if (Math.abs(d - w.r) > SPLIT.waveWidth / 2 + p.r * 0.6) continue;
+      const pad = Math.atan2(p.r * 0.6, Math.max(1, d));
+      if (this.inGap(w, angleTo(w, p), pad)) continue;
+      w.hit = true;
+      this.hurtPlayer(w.damage, w.level, w.pct);
+    }
+    this.waves = this.waves.filter((w) => w.r < SPLIT.waveMaxR && this.mobs.some((m) => m.id === w.ownerId));
+  }
+
+  /** AUTO: if a wave is about to reach you outside a gap, slide sideways toward the nearest gap. */
+  private waveDodge(): Vec | null {
+    const p = this.player;
+    for (const w of this.waves) {
+      if (w.hit) continue;
+      const d = dist(w, p);
+      const gapAhead = d - w.r;
+      if (gapAhead < -SPLIT.waveWidth || gapAhead > 160) continue;
+      const a = angleTo(w, p);
+      if (this.inGap(w, a, 0.08)) return { x: 0, y: 0 }; // hold still in the gap
+      const g = w.gaps.reduce((b, c) => (Math.abs(angDiff(c, a)) < Math.abs(angDiff(b, a)) ? c : b));
+      // move tangentially toward the gap, and a bit away from the wave
+      const sign = angDiff(a, g) > 0 ? 1 : -1;
+      const tx = -Math.sin(a) * sign;
+      const ty = Math.cos(a) * sign;
+      const v = { x: tx * 0.85 + Math.cos(a) * 0.3, y: ty * 0.85 + Math.sin(a) * 0.3 };
+      const l = Math.hypot(v.x, v.y) || 1;
+      return { x: v.x / l, y: v.y / l };
+    }
+    return null;
   }
 
   /** King Jelly's last phase: leap to the middle, then bounce in place and rain globes. */
@@ -2615,6 +2723,7 @@ export class Game {
       this.hp = this.stats.maxHp;
       this.telegraphs = [];
       this.goo = [];
+    this.waves = [];
       this.rootedUntil = 0;
     }
     this.dirty = true;
@@ -2665,6 +2774,7 @@ export class Game {
   /** Removes the boss (lost or left the fight). It can be retried right away. */
   private endBoss() {
     this.goo = [];
+    this.waves = [];
     this.rootedUntil = 0;
     const ids = this.mobs.filter((m) => m.boss).map((m) => m.id);
     this.mobs = this.mobs.filter((m) => !m.boss);
