@@ -4,7 +4,7 @@ import { JobId } from '../data';
 import { GameMap, TILE, Tile, fits, moveCircle } from '../map';
 import {
   BossDef, ELITE, ENEMIES, EnemyDef, FINAL_BOSS, HEROES, HeroDef, ITEM, ITEMS, ItemDef, MINI_BOSS, PStat, RUN, RUN_RARITIES,
-  ADVANCE_LEVELS, BRANCHES, BranchDef, PASSIVE, PASSIVES, PSpecial, PassiveDef, RunRarity, SHRINE_BOONS, SHRINE_RADIUS, SHRINE_TIME, STAT_LABEL, WEAPON, WSTAT_NAME, WSTAT_STEP, WStat,
+  ABILITY_LEVELS, ADVANCE_LEVELS, BRANCHES, BranchDef, PASSIVE, PASSIVES, PSpecial, PassiveDef, RunRarity, SHRINE_BOONS, SHRINE_RADIUS, SHRINE_TIME, STAT_LABEL, WEAPON, WSTAT_NAME, WSTAT_STEP, WStat,
   WeaponDef, enemyHpScale, fmtStat, rollRarity, spawnRate, xpToNext,
 } from './data';
 
@@ -103,6 +103,10 @@ export interface Pool {
   until: number;
   tick: number;
   w: number;
+  /** seconds between damage ticks */
+  every: number;
+  /** 'rain': arrows falling on the spot instead of a puddle */
+  style: 'pool' | 'rain';
 }
 
 export interface Telegraph {
@@ -311,7 +315,10 @@ export class Run {
   revives = 0;
 
   stats!: RunStats;
+  /** slot 0 is the auto attack, then the base abilities in unlock order */
   weapons: OwnedWeapon[] = [];
+  /** abilities replaced by a job advancement (end screen) */
+  retired: OwnedWeapon[] = [];
   passives: OwnedPassive[] = [];
   /** job advancement: chosen branch and how many tiers are unlocked (0-3) */
   branch: BranchDef | null = null;
@@ -366,7 +373,7 @@ export class Run {
     this.y = this.map.entrances[0].y;
     this.recalc();
     this.hp = this.stats.maxHp;
-    this.addWeapon(this.hero.abilities[0]);
+    this.addWeapon(this.hero.basic);
     this.placeObjects();
   }
 
@@ -489,6 +496,42 @@ export class Run {
     return this.branch && this.tier > 0 ? this.branch.tiers[this.tier - 1].title : this.hero.name;
   }
 
+  /** Base abilities unlock on their own at ABILITY_LEVELS. */
+  private checkUnlocks() {
+    const have = this.weapons.length - 1;
+    for (let k = have; k < ABILITY_LEVELS.length && this.level >= ABILITY_LEVELS[k]; k++) {
+      const d = WEAPON[this.hero.abilities[k]];
+      this.addWeapon(d.id);
+      this.notice(`New ability: ${d.name}`, '#ffd166', d.icon);
+    }
+  }
+
+  /** A job advancement swaps an ability for its new form, keeping the upgrades you put into it. */
+  private replaceWeapon(from: string, to: string) {
+    const i = this.weapons.findIndex((w) => w.def.id === from);
+    const nd = WEAPON[to];
+    if (i < 0) {
+      this.addWeapon(to);
+      return;
+    }
+    const o = this.weapons[i];
+    const od = o.def;
+    const ratio = (cur: number, base: number) => (base > 0 ? cur / base : 1);
+    this.weapons[i] = {
+      def: nd, level: o.level,
+      dmg: nd.dmg * ratio(o.dmg, od.dmg),
+      cd: nd.cd,
+      count: Math.max(1, nd.count + (o.count - od.count)),
+      area: nd.area + (o.area - od.area),
+      pierce: nd.pierce + (o.pierce - od.pierce),
+      speed: nd.speed * ratio(o.speed, od.speed),
+      duration: nd.duration * ratio(o.duration, od.duration),
+      haste: o.haste, timer: 0.4, burst: 0, burstT: 0, burstDir: 0, orbitUntil: 0, orbitA: 0, total: 0,
+    };
+    this.retired.push(o);
+    this.allies = this.allies.filter((a) => a.w !== i);
+  }
+
   /** Level 10: pick a branch. Level 15 / 25: the next tier of it. */
   private checkAdvance(): boolean {
     if (!this.branch) {
@@ -496,7 +539,7 @@ export class Run {
       this.choiceTitle = 'Job advancement';
       this.choices = BRANCHES[this.job].map((b) => ({
         kind: 'advance', id: b.id, name: b.name, icon: b.icon, rarity: { ...RUN_RARITIES[3], color: b.color, name: 'Job' }, level: 0,
-        lines: [b.desc, ...b.tiers.map((t, i) => `Lv ${ADVANCE_LEVELS[i]}: ${t.title}, ${WEAPON[t.ability].icon} ${WEAPON[t.ability].name}`)],
+        lines: [b.desc, ...b.tiers.map((t, i) => `Lv ${ADVANCE_LEVELS[i]} ${t.title}: ${t.swaps.map(([, to]) => `${WEAPON[to].icon} ${WEAPON[to].name}`).join(', ')}`)],
         apply: () => {
           this.branch = b;
           this.advance();
@@ -506,11 +549,10 @@ export class Run {
     }
     if (this.tier >= 3 || this.level < ADVANCE_LEVELS[this.tier]) return false;
     const t = this.branch.tiers[this.tier];
-    const ab = WEAPON[t.ability];
     this.choiceTitle = 'Job advancement';
     this.choices = [{
       kind: 'advance', id: this.branch.id, name: t.title, icon: this.branch.icon, rarity: { ...RUN_RARITIES[4], color: this.branch.color, name: `Tier ${this.tier + 1}` }, level: 0,
-      lines: [`New ability: ${ab.icon} ${ab.name}`, ab.desc, `New passives: ${t.passives.map((p) => p.name).join(', ')}`],
+      lines: [...t.swaps.map(([from, to]) => `${WEAPON[from].name} becomes ${WEAPON[to].icon} ${WEAPON[to].name}`), `New passives: ${t.passives.map((p) => p.name).join(', ')}`],
       apply: () => this.advance(),
     }];
     return true;
@@ -518,7 +560,7 @@ export class Run {
   private advance() {
     const t = this.branch!.tiers[this.tier];
     this.tier++;
-    this.addWeapon(t.ability);
+    for (const [from, to] of t.swaps) this.replaceWeapon(from, to);
     this.notice(`You are now a ${t.title}!`, this.branch!.color, this.branch!.icon);
   }
 
@@ -550,11 +592,6 @@ export class Run {
           return { kind: 'weapon', id: w.def.id, name: w.def.name, icon: w.def.icon, rarity: rar, level: w.level + 1, lines: this.upgradeLines(st, rar), apply: () => this.weaponUpgrade(w, st, rar) };
         },
       });
-    }
-    for (const id of this.hero.abilities) {
-      if (this.weapons.some((w) => w.def.id === id)) continue;
-      const d = WEAPON[id];
-      cands.push({ w: 1.8, make: () => ({ kind: 'newWeapon', id: d.id, name: d.name, icon: d.icon, rarity: RUN_RARITIES[0], level: 1, lines: ['New ability', d.desc], apply: () => this.addWeapon(d.id) }) });
     }
     const pick = (d: PassiveDef, owned: OwnedPassive | undefined): Choice => {
       const rar = d.flat ? RUN_RARITIES[0] : rollRarity(luck, this.rand);
@@ -611,6 +648,7 @@ export class Run {
     if (!c) return;
     c.apply();
     this.choices = null;
+    this.checkUnlocks();
     if (!this.checkAdvance() && this.pendingLevels > 0) this.openLevelUp();
   }
   reroll(): boolean {
@@ -652,6 +690,7 @@ export class Run {
     this.input.jump = false;
     this.input.interact = false;
     if (this.hp <= 0) this.die();
+    this.checkUnlocks();
     if (!this.choices && !this.checkAdvance() && this.pendingLevels > 0) this.openLevelUp();
   }
 
@@ -1281,7 +1320,7 @@ export class Run {
           return;
         }
         w.timer = st.cd;
-        w.burst = kind === 'nova' ? 1 + Math.floor((st.count - 1) / 2) : st.count;
+        w.burst = kind === 'nova' ? 1 + Math.floor((st.count - 1) / 2) : w.def.spread ? 1 : st.count;
         // Echo: sometimes the whole cast happens twice
         if (this.sp('echo') && this.rand() < this.sp('echo')) w.burst *= 2;
         w.burstT = 0;
@@ -1336,9 +1375,12 @@ export class Run {
           kind: 'arrow', x: this.x, y: this.y, vx: Math.cos(ang) * w.speed, vy: Math.sin(ang) * w.speed, dmg: st.dmg, pierce: w.pierce + this.stats.pierce, r: 10 * Math.sqrt(st.area),
           life: 1.1, hit: new Set(), w: i, enemy: false, target: 0, area: st.area, dist: 0, back: false, range: 0, color: w.def.color,
         });
-      arrow(a);
-      // Volley: every 5th cast adds a fan of arrows
-      const vol = this.sp('volley');
+      if (w.def.spread) {
+        // a fan: every arrow leaves at once
+        for (let k = 0; k < st.count; k++) arrow(a + (k - (st.count - 1) / 2) * w.def.spread);
+      } else arrow(a);
+      // Volley: every 5th auto attack adds a fan of arrows
+      const vol = i === 0 ? this.sp('volley') : 0;
       if (vol && n === 0 && ++this.volleyN % 5 === 0) {
         const extra = 2 + vol * 2;
         for (let k = 1; k <= extra; k++) arrow(a + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 0.16);
@@ -1388,7 +1430,13 @@ export class Run {
       const a = this.rand() * Math.PI * 2;
       const x = e ? e.x : this.x + Math.cos(a) * 200;
       const y = e ? e.y : this.y + Math.sin(a) * 200;
-      this.pools.push({ x, y, r: 80 * st.area, dmg: st.dmg, until: this.t + st.duration, tick: 0, w: i });
+      this.pools.push({ x, y, r: 80 * st.area, dmg: st.dmg, until: this.t + st.duration, tick: 0, w: i, every: 0.45, style: 'pool' });
+    } else if (kind === 'rain') {
+      // arrows keep falling on a patch of foes for the whole duration
+      const e = this.randomNear(this.x, this.y, 560) ?? this.nearest(this.x, this.y, 800);
+      if (!e) return;
+      const j = n ? 90 : 0;
+      this.pools.push({ x: e.x + (this.rand() - 0.5) * j, y: e.y + (this.rand() - 0.5) * j, r: 95 * st.area, dmg: st.dmg, until: this.t + st.duration, tick: 0.15, w: i, every: 0.25, style: 'rain' });
     } else if (kind === 'beam') {
       // a straight line through everything toward the nearest foe
       const tgt = this.nearest(this.x, this.y, 900);
@@ -1548,7 +1596,7 @@ export class Run {
     for (const p of this.pools) {
       p.tick -= dt;
       if (p.tick <= 0) {
-        p.tick = 0.45;
+        p.tick = p.every;
         this.forEnemiesIn(p.x, p.y, p.r, (e) => this.hitEnemy(e, p.dmg, p.w, true));
       }
     }

@@ -21,6 +21,8 @@ body.runmode { overflow: hidden; }
 .hc-pass { font-size: 13px; color: var(--muted); min-height: 36px; }
 .hc-abs { display: flex; gap: 4px; }
 .hc-ab { width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; font-size: 16px; border-image: var(--f-slot) 3 fill / 9px / 0 stretch; opacity: 0.6; }
+.hc-ab { position: relative; }
+.hc-ab b { position: absolute; right: 0; bottom: -3px; font-size: 10px; color: #fff; text-shadow: 1px 1px 0 #000, -1px -1px 0 #000; }
 .hc-ab.start { opacity: 1; box-shadow: inset 0 0 0 2px var(--trim-hi); }
 .hc-more { font-size: 12px; color: var(--trim-hi); }
 .hc-best { font-size: 12px; color: #8fd3ff; }
@@ -138,7 +140,7 @@ body.runmode { overflow: hidden; }
 .hc-branch { font-size: 12px; }
 #advnext { font-size: 11px; color: var(--muted); min-height: 0; }
 #advnext:empty { display: none; }
-#wslots { flex-wrap: wrap; max-width: 152px; }
+#wslots { flex-wrap: nowrap; }
 .card.adv { width: 300px; min-height: 250px; }
 .card.adv .card-lines div { color: var(--text); }
 .card.adv .card-lines div:first-child { color: #fff; margin-bottom: 4px; }

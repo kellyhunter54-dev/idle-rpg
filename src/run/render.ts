@@ -224,6 +224,21 @@ export class RunRenderer {
     // poison pools
     for (const p of run.pools) {
       const left = Math.min(1, (p.until - run.t) * 2);
+      if (p.style === 'rain') {
+        // the patch the arrows are falling on
+        f.globalAlpha = 0.16 * left;
+        f.fillStyle = run.weapons[p.w]?.def.color ?? '#e0c08a';
+        f.beginPath();
+        f.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+        f.fill();
+        f.globalAlpha = 0.5 * left;
+        f.strokeStyle = run.weapons[p.w]?.def.color ?? '#e0c08a';
+        f.lineWidth = 4;
+        f.setLineDash([14, 12]);
+        f.stroke();
+        f.setLineDash([]);
+        continue;
+      }
       const pc = run.weapons[p.w]?.def.color ?? '#6fbf3a';
       const spikes = run.weapons[p.w]?.def.id === 'traps';
       f.globalAlpha = 0.45 * left;
@@ -496,6 +511,39 @@ export class RunRenderer {
         f.stroke();
         f.fillStyle = '#ffffff';
         f.fillRect(sx + d.dx * L * 0.4 - B, sy + d.dy * L * 0.4 - B, 2 * B, 2 * B);
+      }
+    }
+    // rain zones: arrows dropping all over the patch, each on its own timing
+    for (const pz of run.pools) {
+      if (pz.style !== 'rain') continue;
+      const col = run.weapons[pz.w]?.def.color ?? '#e0c08a';
+      const left = Math.min(1, (pz.until - run.t) * 3);
+      for (let k = 0; k < 10; k++) {
+        const cyc = time * 2.6 + k * 0.137 + pz.x * 0.001;
+        const ph = cyc % 1;
+        const seed = Math.floor(cyc) * 7919 + k * 104729 + Math.floor(pz.x);
+        const ang = ((seed % 628) / 100);
+        const rad = pz.r * Math.sqrt(((seed >> 3) % 100) / 100);
+        const wx = pz.x + Math.cos(ang) * rad;
+        const wy = pz.y + Math.sin(ang) * rad;
+        const ax = this.px(wx, wy);
+        const gy = this.py(wx, wy);
+        const ay = gy - (1 - ph) * 70 * B;
+        f.globalAlpha = left;
+        f.strokeStyle = '#1b1410';
+        f.lineWidth = 3 * B;
+        f.beginPath();
+        f.moveTo(ax - 2 * B, ay - 9 * B);
+        f.lineTo(ax, ay);
+        f.stroke();
+        f.strokeStyle = col;
+        f.lineWidth = B;
+        f.stroke();
+        if (ph > 0.85) {
+          f.fillStyle = '#e8d7a9';
+          f.fillRect(ax - 2 * B, gy - B, B, B);
+          f.fillRect(ax + B, gy - B, B, B);
+        }
       }
     }
     f.globalAlpha = 1;
