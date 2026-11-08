@@ -5,17 +5,25 @@ export type Slot = 'weapon' | 'armor' | 'accessory';
 
 export const BALANCE = {
   killsPerStage: 15,
-  bossTimeLimit: 60, // seconds
-  bossHpMult: 14,
+  bossTimeLimit: 180, // seconds until the boss enrages (faster, harder hits)
+  bossActionEvery: [2.6, 2.0, 1.5], // seconds between special attacks per phase
+  bossEnragedEvery: 1.05,
+  bossEnrageDamage: 1.5,
+  bossPhaseAt: [0.6, 0.25],
+  bossMeleePct: 0.22,
+  flaskCharges: 3,
+  flaskHeal: 0.45,
+  flaskRegen: 45, // seconds per charge while out in the world
+  bossHpMult: 200,
   bossRespawn: 30, // seconds before a beaten boss can be fought again
   bossLeash: 900, // boss resets if you run this far from its altar
   bossAtkMult: 1.6,
   bossGoldMult: 10,
   bossExpMult: 10,
 
-  mobHpBase: 40,
+  mobHpBase: 3000,
   mobHpGrowth: 1.25, // per monster level
-  mobAtkBase: 3,
+  mobAtkBase: 45,
   mobAtkGrowth: 1.22,
   goldBase: 3,
   goldGrowth: 1.22,
@@ -71,7 +79,7 @@ export function rarityIndex(r: Rarity): number {
 
 // ---------- Player level ----------
 export function expToNext(level: number): number {
-  return Math.floor(300 * Math.pow(1.18, level - 1));
+  return Math.floor(650 * Math.pow(1.18, level - 1));
 }
 export function levelBaseAtk(level: number): number {
   return 10 + 3 * (level - 1);
@@ -377,12 +385,45 @@ export interface ZoneDef {
   chapter: number; // index into CHAPTERS for colors, monsters and boss name
   /** Items you must bring to summon the boss in its lair. Empty = free (for now). */
   offering: { item: string; count: number }[];
+  /** The boss's moves in each phase (phase 2 at 60% HP, phase 3 at 25%). */
+  bossKit: BossMove[][];
+}
+
+/**
+ * Boss attacks. All are telegraphed on the ground first.
+ *  slam: circle under you        chase: 3 slams that follow you      cone: breath in front of the boss
+ *  charge: line, boss rushes it   nova: ring around the boss (hug it)  rain: scattered circles near you
+ *  cross: two lines crossing at your position                         adds: calls minions
+ */
+export type BossMove = 'slam' | 'chase' | 'cone' | 'charge' | 'nova' | 'rain' | 'cross' | 'adds';
+
+/** Share of your max HP each boss attack takes at equal level (before your job's damage reduction). */
+export const BOSS_MOVE_PCT: Record<BossMove, number> = {
+  slam: 0.45, chase: 0.3, cone: 0.4, charge: 0.5, nova: 0.4, rain: 0.3, cross: 0.4, adds: 0,
+};
+
+/**
+ * How much of that %HP damage still lands when you out-level (or under-level) the boss.
+ * Equal level = 100%, +6 levels = ~55%, +10 = ~25%, below the boss it gets worse.
+ */
+export function bossPctScale(bossLevel: number, playerLevel: number): number {
+  const d = playerLevel - bossLevel;
+  return Math.max(0.12, Math.min(1.3, 1 - 0.075 * d));
 }
 
 export const ZONES: ZoneDef[] = [
-  { name: 'Sprout Meadow', minLevel: 1, maxLevel: 10, bossLevel: 12, chapter: 0, offering: [] },
-  { name: 'Whisper Woods', minLevel: 10, maxLevel: 20, bossLevel: 22, chapter: 1, offering: [] },
-  { name: 'Ember Canyon', minLevel: 20, maxLevel: 30, bossLevel: 32, chapter: 2, offering: [] },
+  {
+    name: 'Sprout Meadow', minLevel: 1, maxLevel: 10, bossLevel: 12, chapter: 0, offering: [],
+    bossKit: [['slam', 'cone', 'charge'], ['slam', 'chase', 'cone', 'adds'], ['chase', 'nova', 'rain', 'charge']],
+  },
+  {
+    name: 'Whisper Woods', minLevel: 10, maxLevel: 20, bossLevel: 22, chapter: 1, offering: [],
+    bossKit: [['cross', 'nova', 'slam'], ['cross', 'rain', 'adds', 'nova'], ['cross', 'chase', 'rain', 'nova']],
+  },
+  {
+    name: 'Ember Canyon', minLevel: 20, maxLevel: 30, bossLevel: 32, chapter: 2, offering: [],
+    bossKit: [['charge', 'rain', 'slam'], ['charge', 'nova', 'rain', 'cross', 'adds'], ['chase', 'charge', 'rain', 'cross', 'nova']],
+  },
 ];
 
 export function bossName(z: number): string {
@@ -394,6 +435,11 @@ export function zoneLabel(z: number): string {
   return `${d.name} (Lv ${d.minLevel}-${d.maxLevel})`;
 }
 
+/** Brand new heroes are weak, so the first few monster levels are much softer. */
+function earlyRamp(level: number): number {
+  return Math.min(1, 0.02 * Math.pow(1.9, level - 1));
+}
+
 /** Monster stats for a level in a zone. Bosses use the zone's boss. */
 export function mobForZone(zone: number, level: number, boss: boolean, rand = Math.random): MobStats {
   const B = BALANCE;
@@ -401,8 +447,8 @@ export function mobForZone(zone: number, level: number, boss: boolean, rand = Ma
   const c = CHAPTERS[z.chapter];
   const pick = c.mobs[Math.floor(rand() * c.mobs.length)];
   const n = level - 1;
-  const hp = B.mobHpBase * Math.pow(B.mobHpGrowth, n);
-  const atk = B.mobAtkBase * Math.pow(B.mobAtkGrowth, n);
+  const hp = B.mobHpBase * Math.pow(B.mobHpGrowth, n) * earlyRamp(level);
+  const atk = B.mobAtkBase * Math.pow(B.mobAtkGrowth, n) * Math.sqrt(earlyRamp(level));
   const gold = B.goldBase * Math.pow(B.goldGrowth, n);
   const exp = B.expBase * Math.pow(B.expGrowth, n);
   if (!boss) return { level, name: pick.name, color: pick.color, hp, atk, gold, exp, boss };

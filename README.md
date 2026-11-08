@@ -49,6 +49,14 @@ One connected world split into zones (`ZONES` in `src/data.ts`): Sprout Meadow (
 - Summoning offerings: `ZONES[z].offering` lists the items needed to summon each boss. They are empty for now; the check (`Game.summonCheck`) and the item bag (`state.items`) are already wired up.
 - AUTO farms the zone you are in, preferring monsters near your level. The World tab can send AUTO to another zone or to a boss.
 
+## Bosses (hard by design)
+
+- Boss attacks take a share of your **max HP** (`BOSS_MOVE_PCT`), so HP stacking can't trivialize them; only out-levelling the boss shrinks it (`bossPctScale`).
+- Each boss has its own moveset per phase (`ZONES[z].bossKit`): slam, chase, cone, charge, nova, rain, cross, adds. Phases at 60% and 25% HP; enrage after 3 minutes.
+- Healing flasks (R): 3 charges, refilled when entering a lair and slowly in the world.
+- AUTO dodges like a distracted average player (`aiReaction`, `aiJitter`, `aiMiss`). It needs to out-level a boss by about 8-9 levels to win. The final zone boss can't be out-levelled that far, so it needs a real player.
+- `npx tsx tools/bosstrial.ts <job>` levels a character and fights every boss at several levels with AUTO and a skilled profile, printing win rates.
+
 ## Characters and jobs
 
 Three character slots, each with its own save. Jobs: **Warrior** (melee, tanky, takes 35% less damage), **Archer** (ranged arrows, keeps its distance on AUTO), **Mage** (exploding spells, fragile). Job stats and skills live in `JOBS` in `src/data.ts`.

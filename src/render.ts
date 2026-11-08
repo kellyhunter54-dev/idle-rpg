@@ -236,14 +236,18 @@ export class Renderer {
       ctx.font = 'bold 14px Georgia, serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'bottom';
-      outlineText(ctx, `${boss.name}`, w / 2, 58);
+      outlineText(ctx, `${boss.name}  ·  Lv ${boss.level}`, w / 2, 58);
       bar(ctx, x, 62, bw, 12, boss.hp / boss.maxHp, '#a4161a', '#c9a227');
-      const t = g.bossTimer / BALANCE.bossTimeLimit;
-      bar(ctx, x, 77, bw, 5, t, t < 0.3 ? '#ef4444' : '#c9a227');
+      // phase marks at 60% and 25%
+      ctx.fillStyle = '#e8d7a9';
+      for (const f of BALANCE.bossPhaseAt) ctx.fillRect(x + bw * f - 1, 60, 2, 16);
+      const t = Math.max(0, g.bossTimer / BALANCE.bossTimeLimit);
+      bar(ctx, x, 77, bw, 5, g.enraged ? 1 : t, g.enraged ? '#ff0000' : t < 0.3 ? '#ef4444' : '#c9a227');
       ctx.font = '11px Georgia, serif';
       ctx.textBaseline = 'top';
-      ctx.fillStyle = '#e8d7a9';
-      outlineText(ctx, `${Math.ceil(g.bossTimer)}s`, w / 2, 85);
+      ctx.fillStyle = g.enraged ? '#ff4d4d' : '#e8d7a9';
+      const phaseTxt = ['', 'Phase 2', 'Phase 3'][boss.phase];
+      outlineText(ctx, g.enraged ? 'ENRAGED' : `Enrage in ${Math.ceil(g.bossTimer)}s${phaseTxt ? '  ·  ' + phaseTxt : ''}`, w / 2, 85);
     }
 
     if (g.deadTimer > 0) {
@@ -259,6 +263,7 @@ export class Renderer {
 
   // ---------------- Ground layer ----------------
   private drawTelegraph(t: Telegraph) {
+    if (t.wait > 0) return;
     const ctx = this.ctx;
     const prog = 1 - t.time / t.total;
     const base = t.boss ? 'rgba(200,30,30,' : 'rgba(230,120,40,';

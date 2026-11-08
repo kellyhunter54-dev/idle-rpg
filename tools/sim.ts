@@ -24,6 +24,7 @@ let nextReport = 0;
 let nextDecision = 0;
 const milestones: string[] = [];
 let lastCleared = 0;
+let lastBossTry = -1e9;
 
 while (t < hours * 3600) {
   game.update(dt);
@@ -49,18 +50,18 @@ while (t < hours * 3600) {
     game.autoParty();
   }
 
-  // Decisions a player would make every 30s
+  // Decisions a player would make every 30s. AUTO can only beat a boss once it clearly
+  // out-levels it, so this "player" waits until then and farms the next zone meanwhile.
   if (t >= nextDecision && !game.inBossFight && !game.travelGoal && game.inLair < 0 && game.deadTimer <= 0) {
     nextDecision = t + 30;
     const lvl = game.state.level;
     const cleared = game.state.bossesCleared;
-    if (cleared < ZONES.length && lvl >= ZONES[cleared].bossLevel - 1 && game.zone === cleared && game.bossStatus(cleared) === 'ready') {
+    let want = 0;
+    for (let z = 0; z < ZONES.length; z++) if (lvl >= ZONES[z].minLevel + 1) want = z;
+    if (cleared < ZONES.length && lvl >= ZONES[cleared].bossLevel + 8 && t - lastBossTry > 1200 && game.bossStatus(cleared) === 'ready') {
+      lastBossTry = t;
       game.goToBoss(cleared);
-    } else {
-      let want = 0;
-      for (let z = 0; z < ZONES.length; z++) if (lvl >= ZONES[z].minLevel && z <= cleared) want = z;
-      if (want !== game.zone) game.travelToZone(want);
-    }
+    } else if (want !== game.zone) game.travelToZone(want);
   }
   if (game.state.bossesCleared > lastCleared) {
     lastCleared = game.state.bossesCleared;
@@ -68,7 +69,7 @@ while (t < hours * 3600) {
   }
 
   if (t >= nextReport) {
-    nextReport += 900;
+    nextReport += 3600;
     const s = game.state;
     console.log(
       `${(t / 60).toFixed(0).padStart(4)}m  zone ${game.zone} lv ${String(s.level).padStart(3)}  exp/h ${Math.round(game.expPerHour()).toExponential(1)}  ` +

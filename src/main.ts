@@ -1,4 +1,5 @@
 import { showCharacterSelect } from './charselect';
+import { BALANCE } from './data';
 import { Game } from './game';
 import { setupInput } from './input';
 import { Renderer } from './render';
@@ -24,7 +25,9 @@ function startGame(slot: number) {
   const game = new Game(state);
 
   // Skill buttons for this job (built before input setup so they get listeners)
-  document.getElementById('skillbar')!.innerHTML = game.job.skills
+  document.getElementById('skillbar')!.innerHTML =
+    `<button class="skillbtn flask" id="flaskbtn" title="Healing flask (R): heals ${Math.round(BALANCE.flaskHeal * 100)}%">🧪<span class="key">R</span><div class="count" id="flaskcount"></div></button>` +
+    game.job.skills
     .map(
       (sk, i) => `<button class="skillbtn" data-skill="${i}" title="${sk.name} (${i + 1}), unlocks at Lv ${sk.unlock}">
     ${sk.icon}<div class="cd"></div><span class="key">${i + 1}</span><div class="lock hidden">Lv${sk.unlock}</div>
@@ -40,12 +43,17 @@ function startGame(slot: number) {
     ui.toast(game.auto ? 'AUTO on: your hero plays itself.' : 'AUTO off: full manual control.', '#c9a227');
   };
   document.getElementById('autobtn')!.addEventListener('click', toggleAuto);
+  document.getElementById('flaskbtn')!.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    game.drinkFlask();
+  });
   const pollInput = setupInput(game.input, canvas, (x, y) => renderer.screenToWorld(x, y), toggleAuto);
 
   window.addEventListener('keydown', (e) => {
     const t = e.target as HTMLElement | null;
     if (t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT')) return;
     if (e.code === 'KeyE' && !e.repeat && game.inLair >= 0) ui.trySummon();
+    if (e.code === 'KeyR' && !e.repeat) game.drinkFlask();
   });
 
   const switchCharacter = () => {

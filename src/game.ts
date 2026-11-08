@@ -1,6 +1,6 @@
 import {
   BALANCE, COMPANION, COMPANIONS, GROWTH, GrowthKey, JobDef, MobStats, RARITIES, Rarity, SLOTS,
-  Slot, TIERS, TIER_WEIGHTS, ZONES, bossName, jobOf, companionHitMult, dealtLevelMult, enhanceCopies,
+  Slot, TIERS, TIER_WEIGHTS, ZONES, BOSS_MOVE_PCT, BossMove, bossName, bossPctScale, jobOf, companionHitMult, dealtLevelMult, enhanceCopies,
   expLevelMult, expToNext, gearId, gearScore, mobForZone, parseGear, takenLevelMult,
 } from './data';
 import {
@@ -43,6 +43,8 @@ type MobState = 'idle' | 'chase' | 'windup' | 'recover' | 'charge';
 
 export interface Mob extends MobStats {
   id: number;
+  /** Spawn camp it belongs to (-1 for boss adds). */
+  camp: number;
   zone: number;
   maxHp: number;
   x: number;
@@ -60,6 +62,8 @@ export interface Mob extends MobStats {
   spawnAnim: number;
   moving: boolean;
   actionTimer: number; // boss: time until next special
+  phase: number; // boss: 0, 1, 2
+  invuln: number; // boss: phase-change roar
   chargeTo: Vec | null;
 }
 
@@ -74,6 +78,15 @@ export interface Telegraph {
   time: number;
   total: number;
   damage: number;
+  /** Boss attacks: share of your max HP they take (whichever is bigger: this or `damage`). */
+  pct: number;
+  /** Seconds before it appears (for attack sequences). */
+  wait: number;
+  /** When it appears, re-centre it on the hero (chasing slams). */
+  follow: boolean;
+  /** AUTO only: seconds after it appears before AUTO reacts, and whether AUTO misses it entirely. */
+  noticeAt?: number;
+  unnoticed?: boolean;
   boss: boolean;
   ownerId: number;
 }
@@ -179,7 +192,7 @@ export const COMBAT = {
   mobReach: 26, // beyond touching
   bossActionEvery: 2.3,
   telegraphDamageMult: 2.2,
-  aiReaction: 0.3, // seconds before AUTO starts dodging a telegraph
+  aiReaction: 0.35, // seconds before AUTO starts dodging a telegraph
 };
 
 // ---------------- Game ----------------
@@ -208,7 +221,8 @@ export class Game {
   private blasts: PendingBlast[] = [];
   projectiles: Projectile[] = [];
   private nextMobId = 1;
-  private spawnTimer = 0;
+  /** Fixed spawn camps spread evenly through each zone; each respawns its own monster. */
+  private camps: { x: number; y: number; zone: number; mob: number | null; timer: number }[] = [];
   private bossCooldown: number[] = ZONES.map(() => 0);
   private bossZone = -1;
   private lockedToastAt = -99;
@@ -217,6 +231,19 @@ export class Game {
   /** Rolling EXP log for the EXP/hour readout. */
   private expLog: { t: number; exp: number }[] = [];
   private aimHold = 0;
+  /** Healing flasks. Refill when you enter a lair and slowly out in the world. */
+  flasks = BALANCE.flaskCharges;
+  private flaskRegen = 0;
+  private flaskCd = 0;
+  enraged = false;
+  /**
+   * How AUTO handles boss telegraphs: base reaction time, random extra delay, and the chance
+   * it doesn't notice one at all. Tuned to play like a distracted average player; the boss
+   * trial tool sets these lower to imitate a skilled one.
+   */
+  aiReaction = COMBAT.aiReaction;
+  aiJitter = 0.6;
+  aiMiss = 0.2;
   bossTimer = 0;
   deadTimer = 0;
   playerTimer = 0;
@@ -286,7 +313,8 @@ export class Game {
     else Object.assign(this.player, this.map.entrances[0]);
     this.zone = zoneAtX(this.map, this.player.x);
     // populate every zone so the world feels alive
-    for (let z = 0; z < ZONES.length; z++) for (let i = 0; i < PHYS.mobsPerZone; i++) this.spawnMob(z);
+    this.buildCamps();
+    for (const c of this.camps) this.spawnAtCamp(c);
   }
 
   /** Monster level at a spot: rises from the zone's min level at the entrance to its max at the far end. */
@@ -372,6 +400,19 @@ export class Game {
     return null;
   }
 
+  /** Drink a healing flask. Returns false if none are left (or you just drank). */
+  drinkFlask(): boolean {
+    if (this.flasks <= 0 || this.flaskCd > 0 || this.deadTimer > 0 || this.hp >= this.stats.maxHp) return false;
+    this.flasks--;
+    this.flaskCd = 1.2;
+    const heal = this.stats.maxHp * BALANCE.flaskHeal;
+    this.hp = Math.min(this.stats.maxHp, this.hp + heal);
+    this.float(this.player.x, this.player.y, 50, '+' + fmtDmg(heal), '#4caf50', 16);
+    this.effect('ring', this.player.x, this.player.y, 60, '#4caf50', 0.5);
+    this.dirty = true;
+    return true;
+  }
+
   private enterLair(z: number) {
     if (!this.lairs.has(z)) this.lairs.set(z, generateLair(ZONES[z].chapter));
     this.worldMobs = this.mobs;
@@ -383,7 +424,8 @@ export class Game {
     Object.assign(this.player, { ...this.map.entrances[0], angle: -2.36 });
     for (const c of this.party) Object.assign(c, { x: this.player.x, y: this.player.y });
     this.lairDoneAt = -1;
-    this.onToast(`You enter ${bossName(z)}'s lair.`, '#c9a227');
+    this.flasks = BALANCE.flaskCharges;
+    this.onToast(`You enter ${bossName(z)}'s lair. Flasks refilled.`, '#c9a227');
     this.dirty = true;
   }
 
@@ -456,6 +498,16 @@ export class Game {
     }
 
     this.aimHold -= dt;
+    this.flaskCd -= dt;
+    if (this.inLair < 0 && this.flasks < BALANCE.flaskCharges) {
+      this.flaskRegen += dt;
+      if (this.flaskRegen >= BALANCE.flaskRegen) {
+        this.flaskRegen = 0;
+        this.flasks++;
+      }
+    }
+    // AUTO drinks when low (it waits a little longer outside boss fights)
+    if (this.auto && this.hp < this.stats.maxHp * (this.inBossFight ? 0.38 : 0.25)) this.drinkFlask();
     for (let z = 0; z < this.bossCooldown.length; z++) this.bossCooldown[z] -= dt;
     if (this.inLair < 0) this.updateSpawning(dt);
     this.movePlayer(dt);
@@ -477,7 +529,12 @@ export class Game {
 
     if (this.inBossFight) {
       this.bossTimer -= dt;
-      if (this.bossTimer <= 0) this.failBoss('Time ran out!');
+      if (this.bossTimer <= 0 && !this.enraged) {
+        this.enraged = true;
+        this.anim.flash = 1;
+        this.anim.flashColor = '#ff0000';
+        this.onToast('The boss is ENRAGED! Finish it fast.', '#ff3b3b');
+      }
     }
     // Saved position is always a world spot (inside a lair we save the spot outside its door)
     const spot = this.inLair >= 0 ? this.outsideDoorCached() : this.player;
@@ -549,6 +606,7 @@ export class Game {
     boss.actionTimer = 3;
     this.mobs.push(boss);
     this.bossZone = z;
+    this.enraged = false;
     this.bossTimer = BALANCE.bossTimeLimit;
     this.target = boss;
     this.lairDoneAt = -1;
@@ -576,44 +634,53 @@ export class Game {
   }
 
   // ---------------- Spawning ----------------
-  private updateSpawning(dt: number) {
-    this.spawnTimer -= dt;
-    if (this.spawnTimer > 0) return;
-    this.spawnTimer = PHYS.mobSpawnInterval;
-    // top up the zone with the fewest monsters (the boss arena stays clear during a fight)
-    let best = -1;
-    let fewest = PHYS.mobsPerZone;
+  private buildCamps() {
+    const m = this.map;
     for (let z = 0; z < ZONES.length; z++) {
-      const n = this.mobs.filter((m) => m.zone === z && !m.boss).length;
-      if (n < fewest) {
-        fewest = n;
-        best = z;
+      const tiles = m.zoneFloor[z];
+      const slices = PHYS.mobsPerZone;
+      for (let k = 0; k < slices; k++) {
+        // one camp per slice of the zone (west to east) so every monster level is represented
+        const lo = (z * m.zoneW + 5 + ((m.zoneW - 9) * k) / slices) * TILE;
+        const hi = (z * m.zoneW + 5 + ((m.zoneW - 9) * (k + 1)) / slices) * TILE;
+        const pool = tiles.filter((i) => {
+          const x = ((i % m.w) + 0.5) * TILE;
+          return x >= lo && x < hi;
+        });
+        for (let tries = 0; tries < 20 && pool.length; tries++) {
+          const i = pool[Math.floor(this.rand() * pool.length)];
+          const tx = i % m.w;
+          const p = { x: (tx + 0.5) * TILE, y: ((i - tx) / m.w + 0.5) * TILE };
+          if (dist(p, m.altars[z]) < 300) continue;
+          this.camps.push({ ...p, zone: z, mob: null, timer: 0 });
+          break;
+        }
       }
     }
-    if (best >= 0) this.spawnMob(best);
   }
 
-  private spawnMob(z: number) {
-    const tiles = this.map.zoneFloor[z];
-    if (!tiles?.length) return;
-    for (let tries = 0; tries < 25; tries++) {
-      const i = tiles[Math.floor(this.rand() * tiles.length)];
-      const tx = i % this.map.w;
-      const p = { x: (tx + 0.5) * TILE, y: ((i - tx) / this.map.w + 0.5) * TILE };
-      if (dist(p, this.player) < 420) continue;
-      const altar = this.map.altars[z];
-      if (altar && dist(p, altar) < (this.bossZone === z ? 700 : 260)) continue;
-      const stats = mobForZone(z, this.levelAt(p.x), false, this.rand);
-      this.mobs.push(this.makeMob(stats, p, PHYS.mobRadius, z));
-      return;
+  private updateSpawning(dt: number) {
+    for (const c of this.camps) {
+      if (c.mob !== null) continue;
+      c.timer -= dt;
+      if (c.timer > 0 || dist(c, this.player) < 380) continue;
+      this.spawnAtCamp(c);
     }
+  }
+
+  private spawnAtCamp(c: { x: number; y: number; zone: number; mob: number | null; timer: number }) {
+    const stats = mobForZone(c.zone, this.levelAt(c.x), false, this.rand);
+    const mob = this.makeMob(stats, c, PHYS.mobRadius, c.zone);
+    mob.camp = this.camps.indexOf(c);
+    c.mob = mob.id;
+    this.mobs.push(mob);
   }
 
   private makeMob(stats: MobStats, p: Vec, r: number, zone: number): Mob {
     return {
       ...stats, id: this.nextMobId++, zone, maxHp: stats.hp, x: p.x, y: p.y, r, angle: this.rand() * 6.28,
       state: 'idle', timer: 0, homeX: p.x, homeY: p.y, wander: { x: 0, y: 0 }, path: null, pathTimer: 0,
-      hitFlash: 0, spawnAnim: 1, moving: false, actionTimer: 0, chargeTo: null,
+      hitFlash: 0, spawnAnim: 1, moving: false, actionTimer: 0, chargeTo: null, phase: 0, invuln: 0, camp: -1,
     };
   }
 
@@ -663,12 +730,16 @@ export class Game {
     const p = this.player;
     const zero = { x: 0, y: 0 };
 
-    // 1. Dodge
-    for (const t of this.telegraphs) {
-      if (!t.boss || t.total - t.time < COMBAT.aiReaction) continue;
-      if (!this.inTelegraph(t, p, p.r + 10)) continue;
-      return this.escapeDir(t);
-    }
+    // 1. Dodge boss telegraphs (after a human-ish reaction delay)
+    const threats = this.telegraphs.filter((t) => {
+      if (!t.boss || t.wait > 0) return false;
+      if (t.noticeAt === undefined) {
+        t.noticeAt = this.aiReaction + this.rand() * this.aiJitter;
+        t.unnoticed = this.rand() < this.aiMiss;
+      }
+      return !t.unnoticed && t.total - t.time >= t.noticeAt;
+    });
+    if (threats.some((t) => this.inTelegraph(t, p, p.r + 8))) return this.dodge(threats);
 
     // 2. Inside a lair with no boss: AUTO runs summon (if it came for the boss) or waits
     if (this.inLair >= 0 && !this.inBossFight) {
@@ -705,7 +776,7 @@ export class Game {
       this.path = null;
     }
     const t = this.target;
-    if (!t) return zero;
+    if (!t) return this.roam(dt);
 
     const d = dist(p, t);
     const basic = this.job.basic;
@@ -745,6 +816,25 @@ export class Game {
     return dir;
   }
 
+  private roamGoal: Vec | null = null;
+  private roamUntil = 0;
+
+  /** Nothing to fight nearby: head for the camps that match your level. */
+  private roam(dt: number): Vec {
+    const p = this.player;
+    if (!this.roamGoal || this.time > this.roamUntil || dist(p, this.roamGoal) < 60) {
+      const lvl = this.state.level;
+      const camps = this.camps.filter((c) => c.zone === this.zone);
+      if (!camps.length) return { x: 0, y: 0 };
+      // camp whose monster level is closest to (just under) yours
+      camps.sort((a, b) => Math.abs(this.levelAt(a.x) - (lvl - 1)) - Math.abs(this.levelAt(b.x) - (lvl - 1)) || dist(a, p) - dist(b, p));
+      const pick = camps[Math.floor(this.rand() * Math.min(3, camps.length))];
+      this.roamGoal = { x: pick.x, y: pick.y };
+      this.roamUntil = this.time + 20;
+    }
+    return this.walkTo(this.roamGoal, dt);
+  }
+
   /** One step toward a point: straight if clear, otherwise along an A* path. */
   private walkTo(goal: Vec, dt: number): Vec {
     const p = this.player;
@@ -770,6 +860,47 @@ export class Game {
     return { x: (wp.x - p.x) / wd, y: (wp.y - p.y) / wd };
   }
 
+  /**
+   * Picks the direction that gets out of every threatening telegraph soonest, preferring
+   * spots that keep the current target in reach.
+   */
+  private dodge(threats: Telegraph[]): Vec {
+    const p = this.player;
+    const reach = this.job.basic.kind === 'melee' ? this.job.basic.range + 60 : this.job.basic.range * 0.8;
+    const t = this.target && this.mobs.includes(this.target) ? this.target : null;
+    let best: Vec = { x: 0, y: 0 };
+    let bestScore = -Infinity;
+    for (let i = 0; i < 16; i++) {
+      const a = (i / 16) * Math.PI * 2;
+      const dx = Math.cos(a);
+      const dy = Math.sin(a);
+      let score = 0;
+      let blocked = false;
+      // check a few points along the way
+      for (const step of [35, 70, 110, 150]) {
+        const x = p.x + dx * step;
+        const y = p.y + dy * step;
+        if (!fits(this.map, x, y, p.r)) {
+          blocked = true;
+          break;
+        }
+        const hits = threats.filter((th) => this.inTelegraph(th, { x, y }, p.r + 6)).length;
+        // being safe sooner is worth more
+        score += hits === 0 ? (200 - step) / 10 : -hits * 6;
+      }
+      if (blocked) continue;
+      if (t) {
+        const end = { x: p.x + dx * 110, y: p.y + dy * 110 };
+        if (dist(end, t) < reach + t.r) score += 3;
+      }
+      if (score > bestScore) {
+        bestScore = score;
+        best = { x: dx, y: dy };
+      }
+    }
+    return best;
+  }
+
   /** Direction away from a monster, if there is room to move that way. */
   private escapeFrom(m: Mob): Vec | null {
     const p = this.player;
@@ -783,37 +914,6 @@ export class Game {
     return null;
   }
 
-  private escapeDir(t: Telegraph): Vec {
-    const p = this.player;
-    let ax: number;
-    let ay: number;
-    if (t.kind === 'circle') {
-      ax = p.x - t.x;
-      ay = p.y - t.y;
-    } else if (t.kind === 'ring') {
-      // ring: get inside the safe middle
-      ax = t.x - p.x;
-      ay = t.y - p.y;
-    } else {
-      // cone / line: step sideways off the axis
-      const side = Math.sign(angDiff(t.angle, angleTo(t, p))) || 1;
-      ax = Math.cos(t.angle + (Math.PI / 2) * side);
-      ay = Math.sin(t.angle + (Math.PI / 2) * side);
-    }
-    const l = Math.hypot(ax, ay) || 1;
-    ax /= l;
-    ay /= l;
-    // if that direction is blocked, try rotating it
-    for (const rot of [0, 0.7, -0.7, 1.4, -1.4, Math.PI]) {
-      const c = Math.cos(rot);
-      const s = Math.sin(rot);
-      const dx = ax * c - ay * s;
-      const dy = ax * s + ay * c;
-      if (fits(this.map, p.x + dx * 30, p.y + dy * 30, p.r)) return { x: dx, y: dy };
-    }
-    return { x: ax, y: ay };
-  }
-
   private pickTarget(): Mob | null {
     const p = this.player;
     let best: Mob | null = null;
@@ -821,6 +921,8 @@ export class Game {
     for (const m of this.mobs) {
       if ((this.ignore.get(m.id) ?? 0) > this.time) continue;
       if (m.zone !== this.zone) continue;
+      // don't pick fights with monsters far above you (unless they're already after you)
+      if (!m.boss && m.level - this.state.level >= 4 && m.state !== 'chase') continue;
       let cost = dist(p, m);
       // prefer monsters near your level: low ones give little EXP, high ones are dangerous
       const diff = m.level - this.state.level;
@@ -849,7 +951,10 @@ export class Game {
       const touch = m.r + p.r + COMBAT.mobReach;
       const speed = m.boss ? PHYS.bossSpeed : PHYS.mobSpeed;
       m.moving = false;
-      if (m.boss) m.actionTimer -= dt;
+      if (m.boss) {
+        m.actionTimer -= dt;
+        m.invuln -= dt;
+      }
 
       if (m.state === 'charge' && m.chargeTo) {
         const step = 900 * dt;
@@ -884,8 +989,8 @@ export class Game {
 
       // Boss specials
       if (m.boss) {
-        if (m.actionTimer <= 0 && !this.telegraphs.some((t) => t.ownerId === m.id && t.boss)) {
-          m.actionTimer = COMBAT.bossActionEvery + this.rand() * 0.8;
+        if (m.actionTimer <= 0 && m.invuln <= 0 && !this.telegraphs.some((t) => t.ownerId === m.id && t.boss)) {
+          m.actionTimer = (this.enraged ? BALANCE.bossEnragedEvery : BALANCE.bossActionEvery[m.phase]) + this.rand() * 0.6;
           this.bossSpecial(m);
           continue;
         }
@@ -896,11 +1001,12 @@ export class Game {
       if (aggro && d < touch) {
         // melee windup: a short cone telegraph the player can step out of
         m.state = 'windup';
-        m.timer = COMBAT.mobWindup;
+        m.timer = COMBAT.mobWindup * (m.boss ? 1.3 : 1);
         m.angle = angleTo(m, p);
         this.telegraphs.push({
           kind: 'cone', x: m.x, y: m.y, r: m.r + COMBAT.mobReach + p.r + 22, inner: 0, angle: m.angle,
-          width: 0.9, time: COMBAT.mobWindup, total: COMBAT.mobWindup, damage: m.atk, boss: false, ownerId: m.id,
+          width: 0.9, time: COMBAT.mobWindup * (m.boss ? 1.3 : 1), total: COMBAT.mobWindup * (m.boss ? 1.3 : 1), damage: m.atk, boss: m.boss, ownerId: m.id,
+          pct: m.boss ? BALANCE.bossMeleePct : 0, wait: 0, follow: false,
         });
         continue;
       }
@@ -969,39 +1075,82 @@ export class Game {
   private bossSpecial(m: Mob) {
     const p = this.player;
     this.telegraphs = this.telegraphs.filter((t) => t.ownerId !== m.id);
-    const dmg = m.atk * COMBAT.telegraphDamageMult;
-    const roll = this.rand();
-    const base = { inner: 0, damage: dmg, boss: true, ownerId: m.id };
-    const hard = m.zone >= 1;
-    if (roll < 0.33) {
-      // slam where the player stands
-      this.telegraphs.push({ ...base, kind: 'circle', x: p.x, y: p.y, r: 115, angle: 0, width: 0, time: 1.2, total: 1.2 });
-      if (hard) {
-        const a = this.rand() * 6.28;
-        this.telegraphs.push({ ...base, kind: 'circle', x: p.x + Math.cos(a) * 170, y: p.y + Math.sin(a) * 170, r: 100, angle: 0, width: 0, time: 1.5, total: 1.5 });
+    const kit = ZONES[m.zone].bossKit[m.phase] ?? ZONES[m.zone].bossKit[0];
+    const move = kit[Math.floor(this.rand() * kit.length)];
+    const dmg = m.atk * COMBAT.telegraphDamageMult * (this.enraged ? BALANCE.bossEnrageDamage : 1);
+    const speed = this.enraged ? 0.8 : m.phase === 2 ? 0.88 : 1; // later phases telegraph a bit faster
+    const tele = (o: Partial<Telegraph> & Pick<Telegraph, 'kind' | 'x' | 'y' | 'r' | 'time'>, mv: BossMove) => {
+      const time = o.time * speed;
+      this.telegraphs.push({
+        inner: 0, angle: 0, width: 0, damage: dmg, boss: true, ownerId: m.id, wait: 0, follow: false,
+        pct: BOSS_MOVE_PCT[mv] * (this.enraged ? BALANCE.bossEnrageDamage : 1), ...o, time, total: time,
+      });
+    };
+    const busy = (t: number) => {
+      m.state = 'windup';
+      m.timer = t * speed;
+    };
+    switch (move) {
+      case 'slam':
+        tele({ kind: 'circle', x: p.x, y: p.y, r: 120, time: 1.2 }, move);
+        break;
+      case 'chase':
+        // three slams, each landing where you are when it appears
+        for (let i = 0; i < 3; i++) tele({ kind: 'circle', x: p.x, y: p.y, r: 100, time: 0.95, wait: i * 0.65, follow: true }, move);
+        break;
+      case 'cone': {
+        const a = angleTo(m, p);
+        m.angle = a;
+        tele({ kind: 'cone', x: m.x, y: m.y, r: 320, angle: a, width: 0.6, time: 1.1 }, move);
+        busy(1.1);
+        break;
       }
-    } else if (roll < 0.6) {
-      // breath cone
-      const a = angleTo(m, p);
-      m.angle = a;
-      this.telegraphs.push({ ...base, kind: 'cone', x: m.x, y: m.y, r: 300, angle: a, width: 0.55, time: 1.1, total: 1.1 });
-      m.state = 'windup';
-      m.timer = 1.1;
-    } else if (roll < 0.85) {
-      // charge across the arena
-      const a = angleTo(m, p);
-      const len = 420;
-      m.angle = a;
-      this.telegraphs.push({ ...base, kind: 'line', x: m.x, y: m.y, r: len, angle: a, width: 80, time: 1.0, total: 1.0 });
-      m.state = 'windup';
-      m.timer = 1.0;
-      m.chargeTo = { x: m.x + Math.cos(a) * len, y: m.y + Math.sin(a) * len };
-    } else {
-      // nova: everything around the boss except right next to it
-      this.telegraphs.push({ ...base, kind: 'ring', x: m.x, y: m.y, r: 260, inner: m.r + 35, angle: 0, width: 0, time: 1.4, total: 1.4 });
-      m.state = 'windup';
-      m.timer = 1.4;
+      case 'charge': {
+        const a = angleTo(m, p);
+        const len = 460;
+        m.angle = a;
+        tele({ kind: 'line', x: m.x, y: m.y, r: len, angle: a, width: 90, time: 1.0 }, move);
+        busy(1.0);
+        m.chargeTo = { x: m.x + Math.cos(a) * len, y: m.y + Math.sin(a) * len };
+        break;
+      }
+      case 'nova':
+        tele({ kind: 'ring', x: m.x, y: m.y, r: 300, inner: m.r + 40, time: 1.4 }, move);
+        busy(1.4);
+        break;
+      case 'rain':
+        for (let i = 0; i < 6; i++) {
+          const a = this.rand() * Math.PI * 2;
+          const d = i === 0 ? 0 : 60 + this.rand() * 220;
+          tele({ kind: 'circle', x: p.x + Math.cos(a) * d, y: p.y + Math.sin(a) * d, r: 85, time: 1.2, wait: i * 0.18 }, move);
+        }
+        break;
+      case 'cross': {
+        const a = this.rand() * Math.PI;
+        for (const ang of [a, a + Math.PI / 2]) {
+          const half = 520;
+          tele({ kind: 'line', x: p.x - Math.cos(ang) * half, y: p.y - Math.sin(ang) * half, r: half * 2, angle: ang, width: 75, time: 1.3 }, move);
+        }
+        break;
+      }
+      case 'adds':
+        this.spawnAdds(m, 3);
+        break;
     }
+  }
+
+  private spawnAdds(boss: Mob, n: number) {
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2 + this.rand();
+      const pos = { x: boss.x + Math.cos(a) * 150, y: boss.y + Math.sin(a) * 150 };
+      if (!fits(this.map, pos.x, pos.y, PHYS.mobRadius, true)) continue;
+      const stats = mobForZone(boss.zone, Math.max(1, ZONES[boss.zone].bossLevel - 3), false, this.rand);
+      const add = this.makeMob(stats, pos, PHYS.mobRadius, boss.zone);
+      add.state = 'chase';
+      this.mobs.push(add);
+      this.effect('poof', pos.x, pos.y, 40, '#a4161a', 0.5);
+    }
+    this.onToast(`${boss.name} calls for help!`, '#ff8c3b');
   }
 
   /** Is point p (with radius pr) inside telegraph t? */
@@ -1032,12 +1181,20 @@ export class Game {
         continue;
       }
       // mob swings track the mob's position
-      if (!t.boss) {
+      if (!t.boss && t.wait <= 0) {
         t.x = owner.x;
         t.y = owner.y;
       } else if (t.kind === 'cone' || t.kind === 'ring') {
         t.x = owner.x;
         t.y = owner.y;
+      }
+      if (t.wait > 0) {
+        t.wait -= dt;
+        if (t.wait <= 0 && t.follow) {
+          t.x = p.x;
+          t.y = p.y;
+        }
+        continue;
       }
       t.time -= dt;
       if (t.time > 0) continue;
@@ -1047,16 +1204,22 @@ export class Game {
         owner.state = 'charge';
       }
       if (this.inTelegraph(t, p, p.r * 0.7)) {
-        this.hurtPlayer(t.damage, owner.level);
+        this.hurtPlayer(t.damage, owner.level, t.pct);
         if (this.deadTimer > 0) return;
       }
     }
     if (done.length) this.telegraphs = this.telegraphs.filter((t) => !done.includes(t));
   }
 
-  private hurtPlayer(amount: number, fromLevel: number) {
+  /**
+   * Damage to the hero. Boss attacks also have a %-of-max-HP part, so stacking HP can't
+   * trivialize them; only out-levelling the boss shrinks it.
+   */
+  private hurtPlayer(amount: number, fromLevel: number, pct = 0) {
     const p = this.player;
-    amount *= this.job.damageTaken * takenLevelMult(fromLevel, this.state.level);
+    const flat = amount * takenLevelMult(fromLevel, this.state.level);
+    const share = pct > 0 ? this.stats.maxHp * pct * bossPctScale(fromLevel, this.state.level) : 0;
+    amount = Math.max(flat, share) * this.job.damageTaken;
     this.hp -= amount;
     this.anim.playerHit = 1;
     this.float(p.x, p.y, 40, '-' + fmtDmg(amount), '#ff6b6b', 15);
@@ -1284,7 +1447,7 @@ export class Game {
   }
 
   private standingInBossTelegraph(): boolean {
-    return this.telegraphs.some((t) => t.boss && this.inTelegraph(t, this.player, this.player.r));
+    return this.telegraphs.some((t) => t.boss && t.wait <= 0 && this.inTelegraph(t, this.player, this.player.r));
   }
 
   private startSkill(id: string, cd: number, color: string) {
@@ -1346,6 +1509,10 @@ export class Game {
 
   private damage(m: Mob, base: number, label?: string, color?: string) {
     if (!this.mobs.includes(m)) return;
+    if (m.invuln > 0) {
+      this.float(m.x, m.y, m.r * 2 + 16, 'Immune', '#9a9a9a', 13);
+      return;
+    }
     const crit = this.rand() < this.stats.critRate;
     const dmg = base * (crit ? this.stats.critDmg : 1) * (0.9 + this.rand() * 0.2) * dealtLevelMult(m.level, this.state.level);
     m.hp -= dmg;
@@ -1353,7 +1520,26 @@ export class Game {
     if (m.state === 'idle') m.state = 'chase';
     const text = (label ? label + ' ' : '') + fmtDmg(dmg) + (crit ? '!' : '');
     this.float(m.x + (this.rand() - 0.5) * 20, m.y, m.r * 2 + 16, text, color ?? (crit ? '#ffb703' : '#ffffff'), crit ? 19 : label ? 17 : 14);
+    if (m.boss && m.hp > 0) this.checkPhase(m);
     if (m.hp <= 0) this.killMob(m);
+  }
+
+  /** Bosses get faster and learn new moves at 60% and 25% HP. */
+  private checkPhase(m: Mob) {
+    const frac = m.hp / m.maxHp;
+    const want = frac <= BALANCE.bossPhaseAt[1] ? 2 : frac <= BALANCE.bossPhaseAt[0] ? 1 : 0;
+    if (want <= m.phase) return;
+    m.phase = want;
+    m.invuln = 1.4;
+    m.actionTimer = 1.6;
+    m.state = 'recover';
+    m.timer = 1.4;
+    this.telegraphs = this.telegraphs.filter((t) => t.ownerId !== m.id);
+    this.anim.flash = 1;
+    this.anim.flashColor = '#a4161a';
+    this.effect('ring', m.x, m.y, 260, '#a4161a', 0.8);
+    this.onToast(want === 1 ? `${m.name} grows furious!` : `${m.name} is desperate. Its attacks come faster!`, '#f72585');
+    if (ZONES[m.zone].bossKit[want]?.includes('adds')) this.spawnAdds(m, 2);
   }
 
   private effect(
@@ -1372,6 +1558,11 @@ export class Game {
   private killMob(m: Mob) {
     const s = this.state;
     this.mobs = this.mobs.filter((x) => x !== m);
+    const camp = this.camps[m.camp];
+    if (camp && camp.mob === m.id) {
+      camp.mob = null;
+      camp.timer = 10 + this.rand() * 8;
+    }
     this.telegraphs = this.telegraphs.filter((t) => t.ownerId !== m.id);
     if (this.target === m) this.target = null;
     this.effect('poof', m.x, m.y, m.r * 1.4, m.color, 0.4);
@@ -1400,6 +1591,10 @@ export class Game {
         this.onToast(`${m.name} defeated again!`, '#ffc23d');
       }
       this.bossCooldown[z] = BALANCE.bossRespawn;
+      this.enraged = false;
+      // the boss's minions crumble with it
+      for (const a of this.mobs.filter((x) => x.zone === z && this.inLair >= 0)) this.effect('poof', a.x, a.y, 30, '#ffffff', 0.4);
+      if (this.inLair >= 0) this.mobs = [];
       this.lairDoneAt = this.time;
       this.bossZone = -1;
       this.hp = this.stats.maxHp;
@@ -1454,6 +1649,7 @@ export class Game {
     this.mobs = this.mobs.filter((m) => !m.boss);
     this.telegraphs = this.telegraphs.filter((t) => !ids.includes(t.ownerId));
     this.bossZone = -1;
+    this.enraged = false;
     this.target = null;
   }
 
