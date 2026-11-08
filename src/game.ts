@@ -590,7 +590,7 @@ export class Game {
   }
 
   /** Summon the lair's boss (you must be inside its lair). Returns a reason if it can't. */
-  summonBoss(): string | null {
+  summonBoss(phase = 0): string | null {
     const z = this.inLair;
     if (z < 0) return 'You need to be inside a boss lair.';
     const st = this.bossStatus(z);
@@ -601,6 +601,7 @@ export class Game {
     if (!chk.ok) return `You need to offer: ${chk.missing.join(', ')}.`;
     for (const o of ZONES[z].offering) this.state.items[o.item] -= o.count;
     this.startBoss(z);
+    this.skipToPhase(phase);
     return null;
   }
 
@@ -761,15 +762,17 @@ export class Game {
     }
     this.bossCooldown[z] = 0;
     this.startBoss(z);
-    if (phase > 0) {
-      // start at that phase: health just under its threshold (splits and all)
-      const boss = this.mobs.find((m) => m.boss);
-      if (boss) {
-        boss.hp = boss.maxHp * phaseAt(z)[Math.min(1, phase - 1)] - 1;
-        this.checkPhase(boss);
-        for (const b of this.mobs) if (b.boss) b.hp = boss.hp;
-      }
-    }
+    this.skipToPhase(phase);
+  }
+
+  /** Testing: start the boss fight in phase 2 or 3 (health just under that threshold, splits and all). */
+  private skipToPhase(phase: number) {
+    if (phase <= 0) return;
+    const boss = this.mobs.find((m) => m.boss);
+    if (!boss) return;
+    boss.hp = boss.maxHp * phaseAt(boss.zone)[Math.min(1, phase - 1)] - 1;
+    this.checkPhase(boss);
+    for (const b of this.mobs) if (b.boss) b.hp = boss.hp;
   }
 
   /** Drink a healing flask. Returns false if none are left (or you just drank). */
@@ -1696,6 +1699,19 @@ export class Game {
     return this.clampArena({ x: c.x, y: c.y }, m.r * 0.8 + 2);
   }
 
+  /** One Slimed stack (any hit from the crowned slime). Returns true if it killed you. */
+  private addSlime(): boolean {
+    const p = this.player;
+    this.slimeStacks++;
+    if (this.slimeStacks >= SPLIT.waveLethal) {
+      this.float(p.x, p.y, 60, 'Drowned in slime!', '#7bc950', 20);
+      this.playerDie();
+      return true;
+    }
+    this.float(p.x, p.y, 45, `Slimed ${this.slimeStacks}/${SPLIT.waveLethal}`, '#7bc950', 16);
+    return false;
+  }
+
   /** Is this angle (from a wave's centre) inside one of its gaps? */
   private inGap(w: Wave, a: number, pad: number): boolean {
     return w.gaps.some((g) => Math.abs(angDiff(g, a)) <= SPLIT.waveGapHalf - pad);
@@ -1716,13 +1732,7 @@ export class Game {
       this.hurtPlayer(w.damage, w.level, w.pct);
       if (!parried && this.deadTimer <= 0) {
         this.slowUntil = this.time + SPLIT.waveSlowTime;
-        this.slimeStacks++;
-        if (this.slimeStacks >= SPLIT.waveLethal) {
-          this.float(p.x, p.y, 60, 'Drowned in slime!', '#7bc950', 20);
-          this.playerDie();
-          return;
-        }
-        this.float(p.x, p.y, 45, `Slimed ${this.slimeStacks}/${SPLIT.waveLethal}`, '#7bc950', 16);
+        if (this.addSlime()) return;
       }
     }
     this.waves = this.waves.filter((w) => w.r < SPLIT.waveMaxR && this.mobs.some((m) => m.id === w.ownerId));
@@ -2088,7 +2098,9 @@ export class Game {
       }
       if (this.inTelegraph(t, p, p.r * 0.7) && !(t.volley && this.volleyHit.has(t.volley))) {
         if (t.volley) this.volleyHit.add(t.volley);
+        const parried = this.parrying;
         this.hurtPlayer(t.damage, owner.level, t.pct);
+        if (owner.group && this.isMainSlime(owner) && !parried && this.deadTimer <= 0 && this.addSlime()) return;
         if (this.deadTimer > 0) return;
       }
     }

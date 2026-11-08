@@ -442,7 +442,7 @@ export const SPLIT = {
   /** Split-off slimes hop around instead of walking, and use this kit (lots of charges and circles). */
   kit: ['charge', 'rain', 'charge', 'slam', 'cutoff'] as BossMove[],
   hopEvery: [0.9, 1.7] as [number, number], // seconds on the ground between hops
-  hopTime: 0.75, // seconds in the air (the landing circle shows for this long)
+  hopTime: 1.0, // seconds in the air (the landing circle shows for this long)
   hopRadius: 80, // landing splash radius (scaled by attackSize)
   hopPct: 0.05, // landing hit, % of max HP (bosses' scaling applies)
   /** Phases 1-2: the main slime hops after you; each landing slams and sends out slime waves with gaps. */
@@ -457,7 +457,7 @@ export const SPLIT = {
   waveGaps: 5,
   waveGapHalf: 0.24, // radians each side of a gap's centre
   wavePct: 0.32,
-  waveLethal: 5, // ring hits in one fight that kill you outright (Slimed stacks)
+  waveLethal: 10, // Slimed stacks (any hit from the crowned slime) that kill you outright
   waveRest: 0.55, // the crowned slime won't jump again until its last ring is this far across (of waveMaxR)
   waveSlow: 0.5, // getting hit by a wave slows you to this speed...
   waveSlowTime: 2, // ...for this long

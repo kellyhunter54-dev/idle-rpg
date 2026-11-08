@@ -74,6 +74,12 @@ export class UI {
       else if (this.open) this.closeWindow();
     });
 
+    document.querySelectorAll<HTMLElement>('[data-summon-phase]').forEach((b) =>
+      b.addEventListener('click', () => {
+        const why = this.game.summonBoss(Number(b.dataset.summonPhase));
+        if (why) this.toast(why, '#ff8c3b');
+      }),
+    );
     $('bossbtn').addEventListener('click', () => {
       const g = this.game;
       if (g.travelGoal) g.cancelTravel();
@@ -309,6 +315,7 @@ export class UI {
       }
     }
     bb.classList.toggle('hidden', !show);
+    el('phasepick').classList.toggle('hidden', !(show && inLair && !g.travelGoal));
     bb.classList.toggle('boss', !g.travelGoal);
     bb.classList.toggle('alt', !!g.travelGoal);
     el('leavebtn').classList.toggle('hidden', !inLair && !g.inCave);
@@ -713,7 +720,7 @@ export class UI {
       </div>
       <button class="btn wide" style="background:#7f1d1d;margin-top:12px" data-action="reset">Reset this character to Lv 1</button>
       <p class="small" style="text-align:center;margin-top:16px"><a href="./side/">Play the classic side-scroller version</a></p>
-      <p class="muted small" style="text-align:center">v0.19.2</p>`;
+      <p class="muted small" style="text-align:center">v0.20.0</p>`;
   }
 
   // ---------------- Modals & toasts ----------------

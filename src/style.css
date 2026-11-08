@@ -554,3 +554,7 @@ a { color: var(--trim-hi); }
 #deathbox .death-title { color: #c9a227; font: bold 18px Georgia, serif; margin-bottom: 10px; }
 #deathbox .death-btns { display: flex; gap: 8px; justify-content: center; align-items: center; flex-wrap: wrap; }
 #deathbox .death-label { color: #e8d7a9; font: 13px Georgia, serif; }
+
+#phasepick { display: inline-flex; gap: 4px; }
+#phasepick.hidden { display: none; }
+#phasepick .btn { padding: 6px 8px; }
