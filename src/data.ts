@@ -421,6 +421,13 @@ export const SPLIT = {
   hopTime: 0.75, // seconds in the air (the landing circle shows for this long)
   hopRadius: 80, // landing splash radius (scaled by attackSize)
   hopPct: 0.05, // landing hit, % of max HP (bosses' scaling applies)
+  /** Last phase: the main slime leaps to the middle and rains globes over the arena with a few safe spots. */
+  globeEvery: [3.6, 4.6] as [number, number],
+  globeSpacing: 150,
+  globeRadius: 88,
+  globeTime: 1.7,
+  globeSafeSpots: 3,
+  globeSafeRadius: 90,
   /** Slime goo: landing puddles and trails. Standing in it or bumping a split-off roots you. */
   gooLife: 7,
   gooPuddle: 62,
@@ -437,11 +444,11 @@ export const SPLIT = {
  *  charge: line, boss rushes it   nova: ring around the boss (hug it)  rain: scattered circles near you
  *  cross: two lines crossing at your position                         adds: calls minions
  */
-export type BossMove = 'slam' | 'chase' | 'cone' | 'charge' | 'nova' | 'rain' | 'cross' | 'adds' | 'cutoff';
+export type BossMove = 'slam' | 'chase' | 'cone' | 'charge' | 'nova' | 'rain' | 'cross' | 'adds' | 'cutoff' | 'globes';
 
 /** Share of your max HP each boss attack takes at equal level (before your job's damage reduction). */
 export const BOSS_MOVE_PCT: Record<BossMove, number> = {
-  slam: 0.45, chase: 0.3, cone: 0.4, charge: 0.5, nova: 0.4, rain: 0.3, cross: 0.4, adds: 0, cutoff: 0.35,
+  slam: 0.45, chase: 0.3, cone: 0.4, charge: 0.5, nova: 0.4, rain: 0.3, cross: 0.4, adds: 0, cutoff: 0.35, globes: 0.4,
 };
 
 /**
@@ -456,7 +463,7 @@ export function bossPctScale(bossLevel: number, playerLevel: number): number {
 export const ZONES: ZoneDef[] = [
   {
     name: 'Sprout Meadow', minLevel: 1, maxLevel: 10, bossLevel: 12, chapter: 0, offering: [],
-    bossKit: [['slam', 'cone', 'charge'], ['slam', 'chase', 'cone', 'cutoff'], ['chase', 'cutoff', 'charge', 'cone']],
+    bossKit: [['slam', 'cone', 'charge'], ['slam', 'chase', 'cone', 'cutoff'], ['globes']], // last phase: sits in the middle
     bossSplit: true,
     phaseAt: [0.8, 0.5], // splits early: the four-slime phase is the long one
   },

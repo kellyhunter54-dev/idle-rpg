@@ -111,6 +111,8 @@ export interface Telegraph {
   wait: number;
   /** When it appears, re-centre it on the hero (chasing slams). */
   follow: boolean;
+  /** Telegraphs from one volley share this id and hit you at most once. */
+  volley?: number;
   /** AUTO only: seconds after it appears before AUTO reacts, and whether AUTO misses it entirely. */
   noticeAt?: number;
   unnoticed?: boolean;
@@ -285,6 +287,11 @@ export class Game {
   enraged = false;
   /** Slime goo on the ground, and when the hero is rooted / immune to roots. */
   goo: Goo[] = [];
+  /** Last phase globes: the clear spots and when they expire (AUTO heads for one). */
+  safeSpots: Vec[] = [];
+  safeUntil = 0;
+  private volleyHit = new Set<number>();
+  private nextVolley = 1;
   rootedUntil = 0;
   rootImmuneUntil = 0;
   get rooted(): boolean {
@@ -995,6 +1002,11 @@ export class Game {
       }
       return !t.unnoticed && t.total - t.time >= t.noticeAt;
     });
+    if (this.safeSpots.length && this.time < this.safeUntil && threats.some((t) => t.volley)) {
+      // globes: run to the nearest clear spot
+      const spot = this.safeSpots.reduce((a, b) => (dist(a, p) < dist(b, p) ? a : b));
+      if (dist(spot, p) > 25) return this.avoidGoo(this.walkTo(spot, dt));
+    }
     if (threats.some((t) => this.inTelegraph(t, p, p.r + 8))) return this.dodge(threats);
 
     // 2. Inside a lair with no boss: AUTO runs summon (if it came for the boss) or waits
@@ -1274,7 +1286,7 @@ export class Game {
 
       // Boss specials
       if (m.boss) {
-        if (m.actionTimer <= 0 && m.invuln <= 0 && !m.hop && !this.telegraphs.some((t) => t.ownerId === m.id && t.boss)) {
+        if (m.actionTimer <= 0 && m.invuln <= 0 && !m.hop && !(m.group && this.isMainSlime(m) && m.phase === 2) && !this.telegraphs.some((t) => t.ownerId === m.id && t.boss)) {
           const slimes = m.group ? this.splitGroup(m).length : 1;
           m.actionTimer =
             (this.isMainSlime(m) ? 1 : 0.75 + this.rand() * 0.6) *
@@ -1283,6 +1295,12 @@ export class Game {
           this.bossSpecial(m);
           continue;
         }
+      }
+
+      // last phase: the main slime sits in the middle of the arena raining globes
+      if (m.boss && m.group && this.isMainSlime(m) && m.phase === 2) {
+        this.updateAnchored(m, dt);
+        continue;
       }
 
       // split-off slimes don't walk: they hop around you, leaving goo
@@ -1436,6 +1454,88 @@ export class Game {
     let len = 0;
     while (len + 16 <= max && fits(this.map, m.x + Math.cos(a) * (len + 16), m.y + Math.sin(a) * (len + 16), m.r * 0.8, true)) len += 16;
     return Math.max(80, len);
+  }
+
+  /** King Jelly's last phase: leap to the middle, then bounce in place and rain globes. */
+  private updateAnchored(m: Mob, dt: number) {
+    const c = this.map.altars[0] ?? { x: m.x, y: m.y };
+    if (m.hop) {
+      const h = m.hop;
+      h.t += dt;
+      const f = Math.min(1, h.t / h.dur);
+      m.x = h.fx + (h.tx - h.fx) * f;
+      m.y = h.fy + (h.ty - h.fy) * f;
+      m.moving = true;
+      if (f >= 1) {
+        m.hop = null;
+        if (h.fx !== h.tx || h.fy !== h.ty) {
+          // the big landing
+          this.effect('ring', m.x, m.y, 220, m.color, 0.6);
+          this.anim.flash = 0.6;
+          this.anim.flashColor = '#7bc950';
+        }
+      }
+      return;
+    }
+    if (Math.hypot(m.x - c.x, m.y - c.y) > 20) {
+      // leap to the middle (the landing is marked; don't be there)
+      const dur = 1.1;
+      m.hop = { fx: m.x, fy: m.y, tx: c.x, ty: c.y, t: 0, dur };
+      this.telegraphs = this.telegraphs.filter((t) => t.ownerId !== m.id);
+      this.telegraphs.push({
+        kind: 'circle', x: c.x, y: c.y, r: 160, inner: 0, angle: 0, width: 0, time: dur, total: dur,
+        damage: m.atk * COMBAT.telegraphDamageMult, boss: true, ownerId: m.id, wait: 0, follow: false, pct: BOSS_MOVE_PCT.slam,
+      });
+      m.actionTimer = 1.6;
+      return;
+    }
+    // bounce in place
+    m.hop = { fx: m.x, fy: m.y, tx: m.x, ty: m.y, t: 0, dur: 0.55 };
+    if (m.actionTimer <= 0 && m.invuln <= 0 && !this.telegraphs.some((t) => t.ownerId === m.id)) {
+      m.actionTimer = (SPLIT.globeEvery[0] + this.rand() * (SPLIT.globeEvery[1] - SPLIT.globeEvery[0])) * (this.enraged ? 0.75 : 1);
+      this.globeRain(m);
+    }
+  }
+
+  /** Globes over the whole arena, except a few clear spots (one always within reach). */
+  private globeRain(m: Mob) {
+    const p = this.player;
+    const safe: Vec[] = [];
+    for (let tries = 0; safe.length < SPLIT.globeSafeSpots && tries < 200; tries++) {
+      // first safe spot is close enough to reach in time; the rest are anywhere
+      const near = safe.length === 0;
+      const a = this.rand() * Math.PI * 2;
+      const d = near ? 140 + this.rand() * 160 : this.rand() * 900;
+      const q = near ? { x: p.x + Math.cos(a) * d, y: p.y + Math.sin(a) * d } : { x: m.x + Math.cos(a) * d, y: m.y + Math.sin(a) * d };
+      if (!fits(this.map, q.x, q.y, 40, true)) continue;
+      if (safe.some((s2) => dist(s2, q) < SPLIT.globeSafeRadius * 2.5)) continue;
+      safe.push(q);
+    }
+    const sp = SPLIT.globeSpacing;
+    const r = SPLIT.globeRadius;
+    const time = SPLIT.globeTime * (this.enraged ? 0.85 : 1);
+    const dmg = m.atk * COMBAT.telegraphDamageMult * (this.enraged ? BALANCE.bossEnrageDamage : 1);
+    const pct = BOSS_MOVE_PCT.globes * (this.enraged ? BALANCE.bossEnrageDamage : 1);
+    const volley = this.nextVolley++;
+    this.safeSpots = safe;
+    this.safeUntil = this.time + time + 0.3;
+    const W = this.map.w * TILE;
+    const H = this.map.h * TILE;
+    let row = 0;
+    for (let y = sp / 2; y < H; y += sp * 0.87, row++) {
+      for (let x = (row % 2 ? sp : sp / 2); x < W; x += sp) {
+        const jx = x + (this.rand() - 0.5) * 30;
+        const jy = y + (this.rand() - 0.5) * 30;
+        if (!walkablePoint(this.map, jx, jy, true)) continue;
+        if (safe.some((s2) => dist(s2, { x: jx, y: jy }) < SPLIT.globeSafeRadius + r)) continue;
+        this.telegraphs.push({
+          kind: 'circle', x: jx, y: jy, r, inner: 0, angle: 0, width: 0, time, total: time, damage: dmg, boss: true,
+          ownerId: m.id, wait: this.rand() * 0.25, follow: false, pct, volley,
+        });
+      }
+    }
+    for (const s2 of safe) this.effect('ring', s2.x, s2.y, SPLIT.globeSafeRadius, '#7df9ff', time + 0.3);
+    this.float(m.x, m.y, m.r * 2 + 50, 'Globes!', '#7bc950', 18);
   }
 
   /** Split-off slime: waits a moment, then leaps to a spot near (or ahead of) you. */
@@ -1689,7 +1789,8 @@ export class Game {
       if (t.kind === 'line' && owner.chargeTo) {
         owner.state = 'charge';
       }
-      if (this.inTelegraph(t, p, p.r * 0.7)) {
+      if (this.inTelegraph(t, p, p.r * 0.7) && !(t.volley && this.volleyHit.has(t.volley))) {
+        if (t.volley) this.volleyHit.add(t.volley);
         this.hurtPlayer(t.damage, owner.level, t.pct);
         if (this.deadTimer > 0) return;
       }
@@ -2308,7 +2409,9 @@ export class Game {
     this.anim.flashColor = '#a4161a';
     this.effect('ring', m.x, m.y, 260, '#a4161a', 0.8);
     if (m.group) {
-      for (const b of group) this.splitSlime(b, want);
+      // one huge hit can skip a threshold: still do every split it skipped
+      const from = group.reduce((a, b) => Math.max(a, b.gen), 0);
+      for (let gen = from + 1; gen <= want; gen++) for (const b of this.splitGroup(m)) if (b.gen < gen) this.splitSlime(b, gen);
       this.onToast(want === 1 ? `${m.name} splits in two!` : `${m.name} splits again! Smaller, faster...`, '#f72585');
       return;
     }
