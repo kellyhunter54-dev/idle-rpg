@@ -454,10 +454,10 @@ export const SPLIT = {
     chargeLen: 3000, // charges run wall to wall (they stop at the wall)
     chargeSpeed: 800,
     /** The crowned slime's slime rain: a constant drizzle of globs all over the room (no goo; each hit = Slimed). */
-    rainEvery: [0.12, 0.28] as [number, number], // seconds between globs
+    rainEvery: [0.05, 0.12] as [number, number], // seconds between globs (about 12 a second)
     rainNearPlayer: 0.2, // share of globs aimed near you
-    spoutRadius: 70,
-    spoutTime: 1.3,
+    spoutRadius: 45,
+    spoutTime: 2.0, // slow fall: plenty of time to see each one coming
     spoutPct: 0.2,
     globes: false, // the checkerboard globes (off: phase 3 is all about the minis)
   },
