@@ -195,6 +195,14 @@ export class Renderer {
     shadow(p.x, p.y, p.r * 1.1);
     for (const m of g.mobs) shadow(m.x, m.y, m.r * 1.05 * (1 - m.spawnAnim));
     for (const m of g.mobs) {
+      if (!m.group || m.id === m.group || m.phase !== 2 || m.hop) continue;
+      // wild phase: the minis are powered up
+      ctx.fillStyle = `rgba(255,60,60,${0.18 + 0.12 * Math.sin(time * 8 + m.id)})`;
+      ctx.beginPath();
+      ctx.arc(m.x, m.y, m.r * 1.6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    for (const m of g.mobs) {
       if (!m.group || m.id !== m.group || !g.mobs.some((o) => o.group === m.group && o !== m)) continue;
       ctx.strokeStyle = 'rgba(255,209,102,0.75)';
       ctx.lineWidth = 4;

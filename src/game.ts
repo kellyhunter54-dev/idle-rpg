@@ -1434,7 +1434,7 @@ export class Game {
       }
 
       if (m.state === 'charge' && m.chargeTo) {
-        const step = 900 * dt;
+        const step = (m.group && m.phase === 2 && !this.isMainSlime(m) ? SPLIT.wild.chargeSpeed : 900) * dt;
         const cd = dist(m, m.chargeTo);
         const a = angleTo(m, m.chargeTo);
         const np = moveCircle(this.map, m.x, m.y, Math.cos(a) * Math.min(step, cd), Math.sin(a) * Math.min(step, cd), m.r * 0.8, true);
@@ -1868,8 +1868,12 @@ export class Game {
     m.hopTimer -= dt;
     if (m.hopTimer > 0) return;
     // land near you, ahead of you, or somewhere random in the arena
-    const raw = this.rand() < 0.75 ? this.chaosPoint(SPLIT.hopTime) : { x: p.x + (this.rand() - 0.5) * 700, y: p.y + (this.rand() - 0.5) * 700 };
-    const to = this.clampArena(raw, m.r * 0.8 + 2);
+    let to: Vec;
+    if (m.phase === 2) to = this.roomSpot(m, 0); // wild phase: anywhere in the room
+    else {
+      const raw = this.rand() < 0.75 ? this.chaosPoint(SPLIT.hopTime) : { x: p.x + (this.rand() - 0.5) * 700, y: p.y + (this.rand() - 0.5) * 700 };
+      to = this.clampArena(raw, m.r * 0.8 + 2);
+    }
     const dur = SPLIT.hopTime * (this.enraged ? 0.8 : 1);
     m.hop = { fx: m.x, fy: m.y, tx: to.x, ty: to.y, t: 0, dur };
     this.telegraphs.push({
@@ -1924,7 +1928,9 @@ export class Game {
 
   private bossSpecial(m: Mob) {
     const main = this.isMainSlime(m);
-    const p: Vec = main ? this.player : this.chaosPoint(1.1);
+    // wild phase: the minis ignore you and go anywhere in the room
+    const wildMini = !main && !!m.group && m.phase === 2;
+    const p: Vec = main ? this.player : wildMini ? this.roomSpot(m, 0) : this.chaosPoint(1.1);
     this.telegraphs = this.telegraphs.filter((t) => t.ownerId !== m.id);
     const kit = main ? ZONES[m.zone].bossKit[m.phase] ?? ZONES[m.zone].bossKit[0] : m.phase === 2 ? SPLIT.wild.kit : SPLIT.kit;
     const move = kit[Math.floor(this.rand() * kit.length)];
@@ -1970,7 +1976,7 @@ export class Game {
       }
       case 'charge': {
         const a = angleTo(m, p);
-        const len = this.chargeLength(m, a, 460); // stops at walls instead of running off the map
+        const len = this.chargeLength(m, a, wildMini ? SPLIT.wild.chargeLen : 460); // stops at walls instead of running off the map
         m.angle = a;
         tele({ kind: 'line', x: m.x, y: m.y, r: len, angle: a, width: 90, time: 1.0 }, move);
         busy(1.0);
