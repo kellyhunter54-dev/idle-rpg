@@ -79,7 +79,7 @@ A cave mouth in Sprout Meadow leads to a separate cave map (`generateCave`). AUT
 - Each boss has its own moveset per phase (`ZONES[z].bossKit`): slam, chase, cone, charge, nova, rain, cross, adds. Phases at 60% and 25% HP; enrage after 3 minutes.
 - Healing flasks (R): 3 charges, refilled when entering a lair and slowly in the world.
 - AUTO dodges like a distracted average player (`aiReaction`, `aiJitter`, `aiMiss`). It needs to out-level a boss by about 8-9 levels to win. The final zone boss can't be out-levelled that far, so it needs a real player.
-- `npx tsx tools/bosstrial.ts <job>` levels a character and fights every boss at several levels with AUTO and a skilled profile, printing win rates.
+- `npx tsx tools/bosstrial.ts <job> [zone]` levels a character and fights every boss (or just one zone's boss) at several levels with AUTO and a skilled profile, printing win rates.
 
 ## Characters and jobs
 

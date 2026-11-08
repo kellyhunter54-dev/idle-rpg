@@ -259,6 +259,29 @@ export function lineOfSight(m: GameMap, x1: number, y1: number, x2: number, y2: 
 }
 
 /** A* on the tile grid (8 directions, no corner cutting). Returns world waypoints, smoothed. */
+/** Scratch buffers shared by every findPath call (the game is single threaded). */
+const pf = {
+  n: 0,
+  gen: 0,
+  g: new Float32Array(0),
+  came: new Int32Array(0),
+  stamp: new Uint32Array(0),
+  closed: new Uint32Array(0),
+  heapI: new Int32Array(8192),
+  heapF: new Float32Array(8192),
+};
+const growI = (a: Int32Array) => {
+  const b = new Int32Array(a.length * 2);
+  b.set(a);
+  return b;
+};
+const growF = (a: Float32Array) => {
+  const b = new Float32Array(a.length * 2);
+  b.set(a);
+  return b;
+};
+const findPathRetry = (m: GameMap, sx: number, sy: number, gx: number, gy: number, r: number, mob: boolean) => findPath(m, sx, sy, gx, gy, r, mob);
+
 export function findPath(m: GameMap, sx: number, sy: number, gx: number, gy: number, r: number, mob = false): { x: number; y: number }[] | null {
   const start = [Math.floor(sx / TILE), Math.floor(sy / TILE)];
   let goal = [Math.floor(gx / TILE), Math.floor(gy / TILE)];
@@ -279,30 +302,78 @@ export function findPath(m: GameMap, sx: number, sy: number, gx: number, gy: num
     goal = best;
   }
   const W = m.w;
+  const N = m.w * m.h;
   const si = start[1] * W + start[0];
   const gi = goal[1] * W + goal[0];
   if (si === gi) return [{ x: gx, y: gy }];
 
-  const g = new Float32Array(m.w * m.h).fill(Infinity);
-  const came = new Int32Array(m.w * m.h).fill(-1);
-  const closed = new Uint8Array(m.w * m.h);
-  const open: { i: number; f: number }[] = [{ i: si, f: 0 }];
-  g[si] = 0;
+  // Reused buffers: a generation stamp marks which cells were touched by this search, so nothing
+  // needs clearing or reallocating between calls.
+  if (pf.n !== N) {
+    pf.n = N;
+    pf.g = new Float32Array(N);
+    pf.came = new Int32Array(N);
+    pf.stamp = new Uint32Array(N);
+    pf.closed = new Uint32Array(N);
+    pf.gen = 0;
+  }
+  const gen = ++pf.gen;
+  const G = pf.g, came = pf.came, stamp = pf.stamp, closed = pf.closed;
+  const gx0 = goal[0], gy0 = goal[1];
   const hfn = (i: number) => {
     const x = i % W;
-    const y = (i - x) / W;
-    const dx = Math.abs(x - goal[0]);
-    const dy = Math.abs(y - goal[1]);
+    const dx = Math.abs(x - gx0);
+    const dy = Math.abs((i - x) / W - gy0);
     return Math.max(dx, dy) + 0.41 * Math.min(dx, dy);
   };
+  // binary min-heap of (f, cell)
+  const hi = pf.heapI, hf = pf.heapF;
+  let hn = 0;
+  const push = (i: number, f: number) => {
+    let k = hn++;
+    hi[k] = i;
+    hf[k] = f;
+    while (k > 0) {
+      const p = (k - 1) >> 1;
+      if (hf[p] <= hf[k]) break;
+      [hi[p], hi[k]] = [hi[k], hi[p]];
+      [hf[p], hf[k]] = [hf[k], hf[p]];
+      k = p;
+    }
+  };
+  const pop = () => {
+    const top = hi[0];
+    hn--;
+    hi[0] = hi[hn];
+    hf[0] = hf[hn];
+    let k = 0;
+    for (;;) {
+      const l = k * 2 + 1;
+      const r2 = l + 1;
+      let s = k;
+      if (l < hn && hf[l] < hf[s]) s = l;
+      if (r2 < hn && hf[r2] < hf[s]) s = r2;
+      if (s === k) break;
+      [hi[s], hi[k]] = [hi[k], hi[s]];
+      [hf[s], hf[k]] = [hf[k], hf[s]];
+      k = s;
+    }
+    return top;
+  };
+  stamp[si] = gen;
+  G[si] = 0;
+  came[si] = -1;
+  push(si, 0);
+  let found = false;
   let iterations = 0;
-  while (open.length && iterations++ < 6000) {
-    let bi = 0;
-    for (let k = 1; k < open.length; k++) if (open[k].f < open[bi].f) bi = k;
-    const cur = open.splice(bi, 1)[0].i;
-    if (cur === gi) break;
-    if (closed[cur]) continue;
-    closed[cur] = 1;
+  while (hn > 0 && iterations++ < 6000) {
+    const cur = pop();
+    if (cur === gi) {
+      found = true;
+      break;
+    }
+    if (closed[cur] === gen) continue;
+    closed[cur] = gen;
     const cx = cur % W;
     const cy = (cur - cx) / W;
     for (let dy = -1; dy <= 1; dy++)
@@ -313,15 +384,21 @@ export function findPath(m: GameMap, sx: number, sy: number, gx: number, gy: num
         if (!walkableTile(m, nx, ny, mob)) continue;
         if (dx && dy && (!walkableTile(m, cx + dx, cy, mob) || !walkableTile(m, cx, cy + dy, mob))) continue;
         const ni = ny * W + nx;
-        const cost = g[cur] + (dx && dy ? 1.41 : 1);
-        if (cost < g[ni]) {
-          g[ni] = cost;
+        const cost = G[cur] + (dx && dy ? 1.41 : 1);
+        if (stamp[ni] !== gen || cost < G[ni]) {
+          stamp[ni] = gen;
+          G[ni] = cost;
           came[ni] = cur;
-          open.push({ i: ni, f: cost + hfn(ni) });
+          if (hn >= hi.length) {
+            pf.heapI = growI(hi);
+            pf.heapF = growF(hf);
+            return findPathRetry(m, sx, sy, gx, gy, r, mob);
+          }
+          push(ni, cost + hfn(ni));
         }
       }
   }
-  if (came[gi] === -1) return null;
+  if (!found && stamp[gi] !== gen) return null;
 
   const cells: { x: number; y: number }[] = [];
   for (let i = gi; i !== si && i !== -1; i = came[i]) {
@@ -337,12 +414,11 @@ export function findPath(m: GameMap, sx: number, sy: number, gx: number, gy: num
   let ay = sy;
   let k = 0;
   while (k < cells.length) {
+    // walk forward while the straight line stays clear (linear, not quadratic, in path length)
     let far = k;
-    for (let j = cells.length - 1; j > k; j--) {
-      if (lineOfSight(m, ax, ay, cells[j].x, cells[j].y, r, mob)) {
-        far = j;
-        break;
-      }
+    for (let j = k + 1; j < cells.length && j - k < 24; j++) {
+      if (lineOfSight(m, ax, ay, cells[j].x, cells[j].y, r, mob)) far = j;
+      else break;
     }
     out.push(cells[far]);
     ax = cells[far].x;

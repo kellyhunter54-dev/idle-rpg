@@ -20,7 +20,7 @@ export const BALANCE = {
   flaskCharges: 3,
   flaskHeal: 0.45,
   flaskRegen: 45, // seconds per charge while out in the world
-  bossHpMult: [80, 200, 500] as number[], // per zone (later bosses expect more talent points)
+  bossHpMult: [100, 200, 500] as number[], // per zone (later bosses expect more talent points)
   bossRespawn: 30, // seconds before a beaten boss can be fought again
   bossLeash: 900, // boss resets if you run this far from its altar
   bossAtkMult: 1.6,
@@ -399,7 +399,21 @@ export interface ZoneDef {
   offering: { item: string; count: number }[];
   /** The boss's moves in each phase (phase 2 at 60% HP, phase 3 at 25%). */
   bossKit: BossMove[][];
+  /** Slime boss: splits in two at each phase (1, 2, then 4 slimes sharing one health pool). */
+  bossSplit?: boolean;
 }
+
+/** Split slimes per generation (0 = the original): smaller, faster, softer hits, smaller attacks. */
+export const SPLIT = {
+  radius: [1, 0.74, 0.55],
+  speed: [1, 1.3, 1.65],
+  damage: [1, 0.8, 0.65],
+  attackSize: [1, 0.85, 0.72],
+  /** Each slime attacks less often when there are more of them (the group still attacks more). */
+  actionSlowPerExtra: 0.4,
+  /** Hitting several slimes at once: each hit counts 1/sqrt(slimes hit in the last 0.5 s). */
+  multiHitWindow: 0.5,
+};
 
 /**
  * Boss attacks. All are telegraphed on the ground first.
@@ -426,7 +440,8 @@ export function bossPctScale(bossLevel: number, playerLevel: number): number {
 export const ZONES: ZoneDef[] = [
   {
     name: 'Sprout Meadow', minLevel: 1, maxLevel: 10, bossLevel: 12, chapter: 0, offering: [],
-    bossKit: [['slam', 'cone', 'charge'], ['slam', 'chase', 'cone', 'adds'], ['chase', 'nova', 'rain', 'charge']],
+    bossKit: [['slam', 'cone', 'charge'], ['slam', 'chase', 'cone'], ['chase', 'slam', 'charge', 'cone']],
+    bossSplit: true,
   },
   {
     name: 'Whisper Woods', minLevel: 10, maxLevel: 20, bossLevel: 22, chapter: 1, offering: [],

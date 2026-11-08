@@ -95,15 +95,26 @@ function startGame(slot: number) {
   let last = performance.now();
   let hiddenAt = 0;
   let errors = 0;
+  const perf = { game: 0, ui: 0, draw: 0, worst: 0 };
+  (window as unknown as { __perf: typeof perf }).__perf = perf;
   function frame(now: number) {
     requestAnimationFrame(frame); // schedule first so one bad frame can never freeze the game
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
     try {
+      const t0 = performance.now();
       pollInput();
       game.update(dt);
+      const t1 = performance.now();
       ui.update(dt);
+      const t2 = performance.now();
       renderer.draw(game, now / 1000);
+      const t3 = performance.now();
+      // rolling frame cost, readable from the console as __perf
+      perf.game += (t1 - t0 - perf.game) * 0.05;
+      perf.ui += (t2 - t1 - perf.ui) * 0.05;
+      perf.draw += (t3 - t2 - perf.draw) * 0.05;
+      perf.worst = Math.max(perf.worst * 0.999, t3 - t0);
     } catch (e) {
       if (errors++ < 5) console.error(e);
     }

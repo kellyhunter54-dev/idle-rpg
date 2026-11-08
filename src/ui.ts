@@ -11,6 +11,36 @@ import { talentBlocked, talentsAvailable, talentsSpent } from './stats';
 type Tab = 'growth' | 'world' | 'talents' | 'gear' | 'companions' | 'summon' | 'info';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
+
+// ---- per-frame HUD helpers: cache elements and only touch the DOM when a value changes ----
+const elCache = new Map<string, HTMLElement>();
+const el = (id: string): HTMLElement => {
+  let e = elCache.get(id);
+  if (!e || !e.isConnected) {
+    e = document.getElementById(id) as HTMLElement;
+    elCache.set(id, e);
+  }
+  return e;
+};
+const lastVal = new WeakMap<HTMLElement, Record<string, string>>();
+const changed = (e: HTMLElement, key: string, v: string) => {
+  let rec = lastVal.get(e);
+  if (!rec) lastVal.set(e, (rec = {}));
+  if (rec[key] === v) return false;
+  rec[key] = v;
+  return true;
+};
+const setText = (e: HTMLElement, v: string) => {
+  if (changed(e, 'text', v)) e.textContent = v;
+};
+const setStyle = (e: HTMLElement, prop: 'width' | 'height' | 'background', v: string) => {
+  if (changed(e, prop, v)) e.style[prop] = v;
+};
+let skillBtnList: HTMLElement[] = [];
+const skillBtns = () => {
+  if (!skillBtnList.length || !skillBtnList[0].isConnected) skillBtnList = [...document.querySelectorAll<HTMLElement>('.skillbtn[data-skill]')];
+  return skillBtnList;
+};
 const esc = (t: string) => t.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
 export class UI {
@@ -218,100 +248,100 @@ export class UI {
   update(dt: number) {
     const g = this.game;
     const s = g.state;
-    $('lvl').textContent = `${s.name}  ·  Lv. ${s.level} ${g.job.name}`;
-    $('expfill').style.width = `${Math.min(100, (s.exp / expToNext(s.level)) * 100)}%`;
-    $('gold').textContent = fmt(s.gold);
-    $('gems').textContent = fmt(s.gems);
-    $('power').textContent = fmt(g.stats.power);
+    setText(el('lvl'), `${s.name}  ·  Lv. ${s.level} ${g.job.name}`);
+    setStyle(el('expfill'), 'width', `${Math.min(100, (s.exp / expToNext(s.level)) * 100)}%`);
+    setText(el('gold'), fmt(s.gold));
+    setText(el('gems'), fmt(s.gems));
+    setText(el('power'), fmt(g.stats.power));
     const zd = ZONES[g.zone] ?? ZONES[0];
     const inLair = g.inLair >= 0;
-    $('stagename').textContent = g.inCave
+    setText(el('stagename'), g.inCave
       ? `${CAVE.name}  ·  manual only  ·  ${BALANCE.caveExpMult}x EXP`
       : inLair
       ? `${bossName(g.inLair)}'s Lair  (boss Lv ${zd.bossLevel})`
-      : `${zd.name}  (Lv ${zd.minLevel}-${zd.maxLevel})` + (g.travelGoal ? `  ·  walking to ${g.travelGoal.label}...` : '');
+      : `${zd.name}  (Lv ${zd.minLevel}-${zd.maxLevel})` + (g.travelGoal ? `  ·  walking to ${g.travelGoal.label}...` : ''));
 
-    const kf = $('killfill');
-    const kt = $('killtext');
+    const kf = el('killfill');
+    const kt = el('killtext');
     if (g.inBossFight) {
-      kf.style.width = '100%';
-      kf.style.background = '#a4161a';
-      kt.textContent = 'BOSS FIGHT';
+      setStyle(kf, 'width', '100%');
+      setStyle(kf, 'background', '#a4161a');
+      setText(kt, 'BOSS FIGHT');
     } else if (g.inCave) {
       const eph = g.expPerHour();
-      kf.style.width = '100%';
-      kf.style.background = '#4a2d73';
-      kt.textContent = eph > 0 ? `EXP/hr ${fmt(eph)} (${BALANCE.caveExpMult}x bonus)  ·  exit portal is at the west end` : 'Monsters match your level. Exit portal at the west end.';
+      setStyle(kf, 'width', '100%');
+      setStyle(kf, 'background', '#4a2d73');
+      setText(kt, eph > 0 ? `EXP/hr ${fmt(eph)} (${BALANCE.caveExpMult}x bonus)  ·  exit portal is at the west end` : 'Monsters match your level. Exit portal at the west end.');
     } else if (inLair) {
       const st = g.bossStatus(g.inLair);
       const offer = zd.offering.length ? zd.offering.map((o) => `${o.count}× ${o.item}`).join(', ') : 'nothing (for now)';
-      kf.style.width = st === 'cooldown' ? `${(1 - g.bossCooldownLeft(g.inLair) / BALANCE.bossRespawn) * 100}%` : '100%';
-      kf.style.background = st === 'ready' ? '#6b1a12' : '#5a4a2a';
-      kt.textContent = st === 'ready' ? `Summoning circle ready · offering: ${offer}` : `Boss returns in ${Math.ceil(g.bossCooldownLeft(g.inLair))}s`;
+      setStyle(kf, 'width', st === 'cooldown' ? `${(1 - g.bossCooldownLeft(g.inLair) / BALANCE.bossRespawn) * 100}%` : '100%');
+      setStyle(kf, 'background', st === 'ready' ? '#6b1a12' : '#5a4a2a');
+      setText(kt, st === 'ready' ? `Summoning circle ready · offering: ${offer}` : `Boss returns in ${Math.ceil(g.bossCooldownLeft(g.inLair))}s`);
     } else {
       // EXP/hour compared to farming monsters at your own level
       const eph = g.expPerHour();
       const ideal = mobForZone(g.zone, s.level, false).exp * 1300;
       const ratio = Math.max(0, Math.min(1, eph / ideal));
-      kf.style.width = `${ratio * 100}%`;
-      kf.style.background = ratio > 0.6 ? '#4f772d' : ratio > 0.25 ? '#b08d1e' : '#8b2e1f';
-      if (eph <= 0) kt.textContent = 'EXP/hr: measuring...';
+      setStyle(kf, 'width', `${ratio * 100}%`);
+      setStyle(kf, 'background', ratio > 0.6 ? '#4f772d' : ratio > 0.25 ? '#b08d1e' : '#8b2e1f');
+      if (eph <= 0) setText(kt, 'EXP/hr: measuring...');
       else {
         const toNext = expToNext(s.level) - s.exp;
         const mins = (toNext / eph) * 60;
-        kt.textContent = `EXP/hr ${fmt(eph)}  ·  next level in ${mins > 600 ? 'ages' : fmtTime(mins * 60)}`;
+        setText(kt, `EXP/hr ${fmt(eph)}  ·  next level in ${mins > 600 ? 'ages' : fmtTime(mins * 60)}`);
       }
     }
-    const bb = $('bossbtn');
+    const bb = el('bossbtn');
     let show = false;
     if (!g.inBossFight) {
       if (g.travelGoal) {
         show = true;
-        bb.textContent = 'Cancel travel';
+        setText(bb, 'Cancel travel');
       } else if (g.inCave) {
         show = false;
       } else if (inLair) {
         show = g.bossStatus(g.inLair) === 'ready';
-        bb.textContent = '🔥 Summon boss (E)';
+        setText(bb, '🔥 Summon boss (E)');
       } else if (g.bossStatus(g.zone) === 'ready') {
         show = true;
-        bb.textContent = `⚔ Fight boss (Lv ${zd.bossLevel})`;
+        setText(bb, `⚔ Fight boss (Lv ${zd.bossLevel})`);
       }
     }
     bb.classList.toggle('hidden', !show);
     bb.classList.toggle('boss', !g.travelGoal);
     bb.classList.toggle('alt', !!g.travelGoal);
-    $('leavebtn').classList.toggle('hidden', !inLair && !g.inCave);
-    $('leavebtn').textContent = g.inCave ? 'Leave cave' : 'Leave lair';
+    el('leavebtn').classList.toggle('hidden', !inLair && !g.inCave);
+    setText(el('leavebtn'), g.inCave ? 'Leave cave' : 'Leave lair');
 
-    $('talentdot').classList.toggle('hidden', talentsAvailable(s) <= 0);
+    el('talentdot').classList.toggle('hidden', talentsAvailable(s) <= 0);
 
     // Battle HUD
-    const ab = $('autobtn');
+    const ab = el('autobtn');
     ab.classList.toggle('on', g.auto);
-    ab.textContent = g.inCave ? 'AUTO 🔒' : g.auto ? 'AUTO ✓' : 'AUTO ✗';
-    $('modebadge').classList.toggle('hidden', g.inCave ? false : !g.auto || !g.manualActive);
+    setText(ab, g.inCave ? 'AUTO 🔒' : g.auto ? 'AUTO ✓' : 'AUTO ✗');
+    el('modebadge').classList.toggle('hidden', g.inCave ? false : !g.auto || !g.manualActive);
     const de = document.getElementById('deadeyebtn');
     if (de) {
       const ff = document.getElementById('focusfill')!;
       const frac = g.deadeye ? (g.stats.t.trueshot ? g.focus / 100 : Math.max(0, (g.deadeyeEnd - g.time) / (6 + g.stats.t.deadeyeDur))) : g.focus / 100;
-      ff.style.height = `${Math.max(0, Math.min(1, frac)) * 100}%`;
+      setStyle(ff, 'height', `${Math.max(0, Math.min(1, frac)) * 100}%`);
       de.classList.toggle('ready', !g.deadeye && g.focus >= 100);
       de.classList.toggle('active', g.deadeye);
     }
     const fc = document.getElementById('flaskcount');
     if (fc) {
-      fc.textContent = String(g.flasks);
+      setText(fc, String(g.flasks));
       document.getElementById('flaskbtn')!.classList.toggle('locked', g.flasks <= 0);
     }
-    document.querySelectorAll<HTMLElement>('.skillbtn[data-skill]').forEach((el, i) => {
+    skillBtns().forEach((el, i) => {
       const sk = g.job.skills[i];
       if (!sk) return;
       const locked = s.level < sk.unlock;
       el.classList.toggle('locked', locked);
       el.querySelector('.lock')!.classList.toggle('hidden', !locked);
       const frac = locked ? 0 : Math.max(0, Math.min(1, g.skillCd[sk.id] / sk.cd));
-      (el.querySelector('.cd') as HTMLElement).style.height = `${frac * 100}%`;
+      setStyle((el.querySelector('.cd') as HTMLElement), 'height', `${frac * 100}%`);
     });
 
     this.panelTimer -= dt;
@@ -677,7 +707,7 @@ export class UI {
       </div>
       <button class="btn wide" style="background:#7f1d1d;margin-top:12px" data-action="reset">Reset this character to Lv 1</button>
       <p class="small" style="text-align:center;margin-top:16px"><a href="./side/">Play the classic side-scroller version</a></p>
-      <p class="muted small" style="text-align:center">v0.11.0</p>`;
+      <p class="muted small" style="text-align:center">v0.12.0</p>`;
   }
 
   // ---------------- Modals & toasts ----------------

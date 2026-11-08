@@ -18,9 +18,13 @@ export class Renderer {
   private camX = 0;
   private camY = 0;
   private camInit = false;
+  private touch = false;
+  private vignette: HTMLCanvasElement | null = null;
+  private vignetteKey = '';
+  private lastTime = 0;
   /** Phones and narrow screens use a stacked HUD layout. */
   private get compact(): boolean {
-    return (typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches) || this.w < 720;
+    return this.touch || this.w < 720;
   }
 
   constructor(private canvas: HTMLCanvasElement) {
@@ -41,6 +45,30 @@ export class Renderer {
     this.h = r.height;
     this.canvas.width = Math.round(r.width * this.dpr);
     this.canvas.height = Math.round(r.height * this.dpr);
+    this.touch = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches;
+    this.vignetteKey = '';
+  }
+
+  /** The darkened screen edges, pre-rendered once per size instead of a gradient every frame. */
+  private getVignette(lair: boolean): HTMLCanvasElement {
+    const key = `${this.w}x${this.h}:${lair}`;
+    if (this.vignette && this.vignetteKey === key) return this.vignette;
+    const c = this.vignette ?? document.createElement('canvas');
+    // half resolution is plenty for a soft gradient
+    c.width = Math.max(1, Math.round(this.w / 2));
+    c.height = Math.max(1, Math.round(this.h / 2));
+    const x = c.getContext('2d')!;
+    const w = c.width;
+    const h = c.height;
+    const vg = x.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.35, w / 2, h / 2, Math.max(w, h) * 0.75);
+    vg.addColorStop(0, 'rgba(0,0,0,0)');
+    vg.addColorStop(1, lair ? 'rgba(0,0,0,0.85)' : 'rgba(0,0,0,0.6)');
+    x.clearRect(0, 0, w, h);
+    x.fillStyle = vg;
+    x.fillRect(0, 0, w, h);
+    this.vignette = c;
+    this.vignetteKey = key;
+    return c;
   }
 
   // ---- projection ----
@@ -81,17 +109,20 @@ export class Renderer {
       CHAPTERS[g.map.palette ?? ZONES[Math.min(ZONES.length - 1, Math.floor(tx / g.map.zoneW))].chapter];
     const p = g.player;
 
-    // zoom: about 11-14 tiles across, never too tiny on phones
-    this.k = Math.max(0.42, Math.min(0.78, w / 1250));
+    // zoom: scales with the screen but stays close, about 8-10 tiles across
+    this.k = Math.max(0.55, Math.min(1.05, Math.min(w / 1050, h / 640)));
     if (!this.camInit || Math.hypot(p.x - this.camX, p.y - this.camY) > 900) {
       this.camX = p.x;
       this.camY = p.y;
       this.camInit = true;
     }
-    this.camX += (p.x - this.camX) * 0.12;
-    this.camY += (p.y - this.camY) * 0.12;
-    const touch = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches;
-    const centerY = touch ? h * 0.42 : h * 0.52;
+    // frame-rate independent smoothing, so the camera never judders when frame times vary
+    const fdt = Math.min(0.1, Math.max(0, time - this.lastTime));
+    this.lastTime = time;
+    const follow = 1 - Math.exp(-fdt * 9);
+    this.camX += (p.x - this.camX) * follow;
+    this.camY += (p.y - this.camY) * follow;
+    const centerY = this.touch ? h * 0.42 : h * 0.52;
     this.ox = w / 2 - (this.camX - this.camY) * this.k;
     this.oy = centerY - (this.camX + this.camY) * this.k * 0.5;
 
@@ -100,11 +131,15 @@ export class Renderer {
     ctx.fillRect(0, 0, w, h);
 
     // ---- visible tile range ----
-    const corners = [this.screenToWorld(0, -80), this.screenToWorld(w, -80), this.screenToWorld(0, h + 120), this.screenToWorld(w, h + 120)];
-    const minTx = Math.max(0, Math.floor(Math.min(...corners.map((c) => c.x)) / TILE) - 1);
-    const maxTx = Math.min(g.map.w - 1, Math.ceil(Math.max(...corners.map((c) => c.x)) / TILE) + 1);
-    const minTy = Math.max(0, Math.floor(Math.min(...corners.map((c) => c.y)) / TILE) - 1);
-    const maxTy = Math.min(g.map.h - 1, Math.ceil(Math.max(...corners.map((c) => c.y)) / TILE) + 1);
+    // x is smallest at the top-left corner and largest at the bottom-right; y is smallest top-right
+    const tl = this.screenToWorld(0, -80);
+    const tr = this.screenToWorld(w, -80);
+    const bl = this.screenToWorld(0, h + 120);
+    const br = this.screenToWorld(w, h + 120);
+    const minTx = Math.max(0, Math.floor(tl.x / TILE) - 1);
+    const maxTx = Math.min(g.map.w - 1, Math.ceil(br.x / TILE) + 1);
+    const minTy = Math.max(0, Math.floor(tr.y / TILE) - 1);
+    const maxTy = Math.min(g.map.h - 1, Math.ceil(bl.y / TILE) + 1);
 
     // ---- floor ----
     this.groundTransform();
@@ -174,7 +209,7 @@ export class Renderer {
         // fade obstacles that stand in front of the hero
         const sxp = this.px(cx, cy);
         const syp = this.py(cx, cy);
-        const front = cx + cy > p.x + p.y && Math.abs(sxp - this.px(p.x, p.y)) < 70 && syp - this.py(p.x, p.y) < 140;
+        const front = cx + cy > p.x + p.y && Math.abs(sxp - this.px(p.x, p.y)) < 90 * this.k && syp - this.py(p.x, p.y) < 180 * this.k;
         list.push({
           depth: cx + cy,
           draw: () => {
@@ -218,11 +253,7 @@ export class Renderer {
     ctx.globalAlpha = 1;
 
     // ---- mood: vignette + skill flash ----
-    const vg = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.35, w / 2, h / 2, Math.max(w, h) * 0.75);
-    vg.addColorStop(0, 'rgba(0,0,0,0)');
-    vg.addColorStop(1, lair ? 'rgba(0,0,0,0.85)' : 'rgba(0,0,0,0.6)');
-    ctx.fillStyle = vg;
-    ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(this.getVignette(lair), 0, 0, w, h);
     if (g.anim.flash > 0) {
       ctx.fillStyle = hexA(g.anim.flashColor, g.anim.flash * 0.12);
       ctx.fillRect(0, 0, w, h);
@@ -246,7 +277,8 @@ export class Renderer {
       ctx.font = 'bold 14px Georgia, serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'bottom';
-      outlineText(ctx, `${boss.name}  ·  Lv ${boss.level}`, w / 2, 58 + o);
+      const slimes = boss.group ? g.splitGroup(boss).length : 1;
+      outlineText(ctx, `${boss.name}${slimes > 1 ? `  ×${slimes}` : ''}  ·  Lv ${boss.level}`, w / 2, 58 + o);
       bar(ctx, x, 62 + o, bw, 12, boss.hp / boss.maxHp, '#a4161a', '#c9a227');
       // phase marks at 60% and 25%
       ctx.fillStyle = '#e8d7a9';

@@ -1,6 +1,6 @@
 // Boss difficulty harness. Levels a character with the normal sim policy, snapshots it at
 // a few levels around each boss, then fights the boss many times with AUTO-like and
-// skilled reaction times. Run with: npx tsx tools/bosstrial.ts <job>
+// skilled reaction times. Run with: npx tsx tools/bosstrial.ts <job> [zone]
 import { JobId, ZONES } from '../src/data';
 import { Game } from '../src/game';
 import { GameState, migrate, newState } from '../src/state';
@@ -11,6 +11,7 @@ const rand = () => {
   return seed / 4294967296;
 };
 const job = (process.argv[2] ?? 'warrior') as JobId;
+const onlyZone = process.argv[3] !== undefined ? Number(process.argv[3]) : -1;
 
 function spend(game: Game) {
   game.autoAssignTalents();
@@ -34,7 +35,9 @@ function spend(game: Game) {
 // 1. progress and snapshot
 const snaps = new Map<number, GameState>();
 const want = new Set<number>();
-for (const z of ZONES) for (const d of [0, 3, 6]) want.add(z.bossLevel + d);
+ZONES.forEach((z, i) => {
+  if (onlyZone < 0 || onlyZone === i) for (const d of [0, 3, 6]) want.add(z.bossLevel + d);
+});
 const g = new Game(newState('T', job), rand);
 g.summonGear(10);
 g.summonCompanions(10);
@@ -83,6 +86,7 @@ function fight(state: GameState, zone: number, skilled: boolean): { win: boolean
 }
 
 for (let z = 0; z < ZONES.length; z++) {
+  if (onlyZone >= 0 && z !== onlyZone) continue;
   for (const d of [0, 3, 6]) {
     const lvl = ZONES[z].bossLevel + d;
     const snap = snaps.get(lvl);

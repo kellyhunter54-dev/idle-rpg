@@ -1,6 +1,6 @@
 import {
   BALANCE, COMPANION, COMPANIONS, GROWTH, GrowthKey, JobDef, MobStats, RARITIES, Rarity, SLOTS,
-  Slot, TALENT_TREES, TIERS, TIER_WEIGHTS, ZONES, CAVE, FOCUS, MANA, BOSS_MOVE_PCT, SkillDef, BossMove, bossName, bossPctScale, jobOf, companionHitMult, dealtLevelMult, enhanceCopies,
+  Slot, TALENT_TREES, TIERS, TIER_WEIGHTS, ZONES, CAVE, FOCUS, MANA, BOSS_MOVE_PCT, SPLIT, SkillDef, BossMove, bossName, bossPctScale, jobOf, companionHitMult, dealtLevelMult, enhanceCopies,
   expLevelMult, expToNext, gearId, gearScore, mobForZone, parseGear, takenLevelMult,
 } from './data';
 import {
@@ -76,6 +76,10 @@ export interface Mob extends MobStats {
   staggers: number;
   invuln: number; // boss: phase-change roar
   chargeTo: Vec | null;
+  /** Split bosses: id of the original (0 = not split-capable), generation and last time it was hit. */
+  group: number;
+  gen: number;
+  lastHitAt: number;
 }
 
 export interface Telegraph {
@@ -804,6 +808,7 @@ export class Game {
     const stats = mobForZone(z, ZONES[z].bossLevel, true, this.rand);
     const boss = this.makeMob(stats, { x: a.x, y: a.y }, PHYS.bossRadius, z);
     boss.actionTimer = 3;
+    if (ZONES[z].bossSplit) boss.group = boss.id;
     this.mobs.push(boss);
     this.bossZone = z;
     this.enraged = false;
@@ -887,6 +892,7 @@ export class Game {
       state: 'idle', timer: 0, homeX: p.x, homeY: p.y, wander: { x: 0, y: 0 }, path: null, pathTimer: 0,
       hitFlash: 0, spawnAnim: 1, moving: false, actionTimer: 0, chargeTo: null, phase: 0, invuln: 0, camp: -1,
       bleeds: [], bleedTimer: 0, shred: 0, shredPct: 0, shredTimer: 0, stagger: 0, staggerUntil: 0, staggers: 0,
+      group: 0, gen: 0, lastHitAt: -1e9,
     };
   }
 
@@ -1159,7 +1165,7 @@ export class Game {
         continue;
       }
       const touch = m.r + p.r + COMBAT.mobReach;
-      const speed = m.boss ? PHYS.bossSpeed : PHYS.mobSpeed;
+      const speed = m.boss ? PHYS.bossSpeed * SPLIT.speed[m.gen] : PHYS.mobSpeed;
       m.moving = false;
       if (m.boss) {
         m.actionTimer -= dt;
@@ -1200,7 +1206,10 @@ export class Game {
       // Boss specials
       if (m.boss) {
         if (m.actionTimer <= 0 && m.invuln <= 0 && !this.telegraphs.some((t) => t.ownerId === m.id && t.boss)) {
-          m.actionTimer = (this.enraged ? BALANCE.bossEnragedEvery : BALANCE.bossActionEvery[m.phase]) + this.rand() * 0.6;
+          const slimes = m.group ? this.splitGroup(m).length : 1;
+          m.actionTimer =
+            ((this.enraged ? BALANCE.bossEnragedEvery : BALANCE.bossActionEvery[m.phase]) + this.rand() * 0.6) *
+            (1 + SPLIT.actionSlowPerExtra * (slimes - 1));
           this.bossSpecial(m);
           continue;
         }
@@ -1216,7 +1225,7 @@ export class Game {
         this.telegraphs.push({
           kind: 'cone', x: m.x, y: m.y, r: m.r + COMBAT.mobReach + p.r + 22, inner: 0, angle: m.angle,
           width: 0.9, time: COMBAT.mobWindup * (m.boss ? 1.3 : 1), total: COMBAT.mobWindup * (m.boss ? 1.3 : 1), damage: m.atk, boss: m.boss, ownerId: m.id,
-          pct: m.boss ? BALANCE.bossMeleePct : 0, wait: 0, follow: false,
+          pct: m.boss ? BALANCE.bossMeleePct * SPLIT.damage[m.gen] : 0, wait: 0, follow: false,
         });
         continue;
       }
@@ -1289,11 +1298,16 @@ export class Game {
     const move = kit[Math.floor(this.rand() * kit.length)];
     const dmg = m.atk * COMBAT.telegraphDamageMult * (this.enraged ? BALANCE.bossEnrageDamage : 1);
     const speed = this.enraged ? 0.8 : m.phase === 2 ? 0.88 : 1; // later phases telegraph a bit faster
+    const sz = SPLIT.attackSize[m.gen];
     const tele = (o: Partial<Telegraph> & Pick<Telegraph, 'kind' | 'x' | 'y' | 'r' | 'time'>, mv: BossMove) => {
       const time = o.time * speed;
+      // smaller split slimes make smaller attacks (lines keep their length, get thinner)
+      const r = o.kind === 'line' ? o.r : o.r * sz;
+      const width = o.kind === 'line' ? (o.width ?? 0) * sz : o.width ?? 0;
       this.telegraphs.push({
-        inner: 0, angle: 0, width: 0, damage: dmg, boss: true, ownerId: m.id, wait: 0, follow: false,
-        pct: BOSS_MOVE_PCT[mv] * (this.enraged ? BALANCE.bossEnrageDamage : 1), ...o, time, total: time,
+        angle: 0, damage: dmg, boss: true, ownerId: m.id, wait: 0, follow: false,
+        pct: BOSS_MOVE_PCT[mv] * SPLIT.damage[m.gen] * (this.enraged ? BALANCE.bossEnrageDamage : 1), ...o,
+        r, width, inner: (o.inner ?? 0) * sz, time, total: time,
       });
     };
     const busy = (t: number) => {
@@ -1951,9 +1965,17 @@ export class Game {
     if (m.boss) mult *= 1 + t.bossDmg;
     if (m.staggerUntil > this.time) mult *= 1.25 + t.staggerBonus;
     if (t.longShot && src !== 'companion' && src !== 'bleed' && dist(this.player, m) > 250) mult *= 1 + t.longShot;
+    const group = m.group ? this.splitGroup(m) : null;
+    if (group && group.length > 1) {
+      // the slimes share one life: hitting several at once has diminishing returns
+      m.lastHitAt = this.time;
+      const hitRecently = group.filter((o) => this.time - o.lastHitAt < SPLIT.multiHitWindow).length;
+      mult /= Math.sqrt(Math.max(1, hitRecently));
+    }
     if (crit && t.killshot && m.hp / m.maxHp < 0.3) mult *= 3;
     const dmg = base * (crit ? this.stats.critDmg : 1) * (src === 'bleed' ? 1 : 0.9 + this.rand() * 0.2) * mult;
     m.hp -= dmg;
+    if (group) for (const o of group) o.hp = m.hp;
     m.hitFlash = src === 'bleed' ? Math.max(m.hitFlash, 0.4) : 1;
     if (m.state === 'idle') m.state = 'chase';
     const small = src === 'bleed';
@@ -2003,22 +2025,54 @@ export class Game {
     this.float(m.x, m.y, m.r * 2 + 40, 'STAGGERED', '#ffd166', 20);
   }
 
-  /** Bosses get faster and learn new moves at 60% and 25% HP. */
+  /** Bosses get faster and learn new moves at 60% and 25% HP. Slime bosses also split. */
   private checkPhase(m: Mob) {
     const frac = m.hp / m.maxHp;
     const want = frac <= BALANCE.bossPhaseAt[1] ? 2 : frac <= BALANCE.bossPhaseAt[0] ? 1 : 0;
     if (want <= m.phase) return;
-    m.phase = want;
-    m.invuln = 1.4;
-    m.actionTimer = 1.6;
-    m.state = 'recover';
-    m.timer = 1.4;
-    this.telegraphs = this.telegraphs.filter((t) => t.ownerId !== m.id);
+    const group = m.group ? this.splitGroup(m) : [m];
+    for (const b of group) {
+      b.phase = want;
+      b.invuln = 1.4;
+      b.actionTimer = 1.6 + this.rand() * 0.8;
+      b.state = 'recover';
+      b.timer = 1.4;
+      b.chargeTo = null;
+      this.telegraphs = this.telegraphs.filter((t) => t.ownerId !== b.id);
+    }
     this.anim.flash = 1;
     this.anim.flashColor = '#a4161a';
     this.effect('ring', m.x, m.y, 260, '#a4161a', 0.8);
+    if (m.group) {
+      for (const b of group) this.splitSlime(b, want);
+      this.onToast(want === 1 ? `${m.name} splits in two!` : `${m.name} splits again! Smaller, faster...`, '#f72585');
+      return;
+    }
     this.onToast(want === 1 ? `${m.name} grows furious!` : `${m.name} is desperate. Its attacks come faster!`, '#f72585');
     if (ZONES[m.zone].bossKit[want]?.includes('adds')) this.spawnAdds(m, 2);
+  }
+
+  /** All living slimes sharing this boss's health pool (including itself). */
+  splitGroup(m: Mob): Mob[] {
+    return this.mobs.filter((o) => o.group === m.group);
+  }
+
+  /** One slime becomes two smaller, faster ones at generation `gen`. */
+  private splitSlime(b: Mob, gen: number) {
+    b.gen = gen;
+    b.r = PHYS.bossRadius * SPLIT.radius[gen];
+    const a = this.rand() * Math.PI * 2;
+    const twin: Mob = { ...b, id: this.nextMobId++, bleeds: [], path: null, chargeTo: null, spawnAnim: 0.6, stagger: 0, staggers: 0 };
+    for (const [o, s] of [[b, 1], [twin, -1]] as const) {
+      const nx = b.x + Math.cos(a) * 70 * s;
+      const ny = b.y + Math.sin(a) * 70 * s;
+      if (fits(this.map, nx, ny, o.r, true)) {
+        o.x = nx;
+        o.y = ny;
+      }
+    }
+    this.mobs.push(twin);
+    this.effect('poof', b.x, b.y, 90, b.color, 0.5);
   }
 
   private effect(
@@ -2036,6 +2090,16 @@ export class Game {
 
   private killMob(m: Mob) {
     const s = this.state;
+    if (m.group) {
+      // the shared life is gone: every slime bursts together, the reward is given once
+      for (const o of this.splitGroup(m)) {
+        if (o === m) continue;
+        this.effect('poof', o.x, o.y, o.r * 1.4, o.color, 0.4);
+        this.telegraphs = this.telegraphs.filter((t) => t.ownerId !== o.id);
+        if (this.target === o) this.target = null;
+      }
+      this.mobs = this.mobs.filter((x) => x.group !== m.group);
+    }
     this.mobs = this.mobs.filter((x) => x !== m);
     const camp = this.camps[m.camp];
     if (camp && camp.mob === m.id) {
