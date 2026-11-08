@@ -168,3 +168,7 @@ body.runmode { overflow: hidden; }
 }
 
 #slimed { margin-top: 4px; font-size: 14px; color: #9be38a; text-shadow: 2px 2px 0 #0b0806; }
+
+/* touch: no browser gestures, callouts or text selection during play */
+body.runmode, body.runmode #battle { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; overscroll-behavior: none; }
+body.runmode .choice-box { touch-action: pan-y; }

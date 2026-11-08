@@ -41,16 +41,27 @@ export function setupRunInput(input: RunInput, area: HTMLElement, ctl: RunContro
     if (k) held.delete(k);
   });
   window.addEventListener('blur', () => held.clear());
+  // stop long-press menus and text selection from eating touches
+  area.addEventListener('contextmenu', (e) => e.preventDefault());
 
   const stick = document.getElementById('stick');
   const knob = document.getElementById('stick-knob');
+  const release = () => {
+    joy = null;
+    stick?.classList.add('hidden');
+    if (knob) knob.style.transform = '';
+  };
+  // a floating stick: starts wherever you put your thumb (except on buttons and cards)
   area.addEventListener(
     'touchstart',
     (e) => {
+      // a finger the browser never told us was lifted: forget it so the stick can't get stuck
+      if (joy && !Array.from(e.touches).some((t) => t.identifier === joy!.id)) release();
       if (joy) return;
       const t = e.changedTouches[0];
+      const target = t.target as HTMLElement | null;
+      if (target?.closest('button, .card, .overlay-screen:not(.hidden), a, input, label')) return;
       const r = area.getBoundingClientRect();
-      if (t.clientX - r.left > r.width * 0.6) return;
       joy = { id: t.identifier, ox: t.clientX, oy: t.clientY, dx: 0, dy: 0 };
       if (stick) {
         stick.style.left = `${t.clientX - r.left}px`;
@@ -61,7 +72,8 @@ export function setupRunInput(input: RunInput, area: HTMLElement, ctl: RunContro
     },
     { passive: false },
   );
-  area.addEventListener(
+  // moves and releases are caught on the whole window, so lifting your thumb anywhere counts
+  window.addEventListener(
     'touchmove',
     (e) => {
       if (!joy) return;
@@ -70,9 +82,17 @@ export function setupRunInput(input: RunInput, area: HTMLElement, ctl: RunContro
         let dx = t.clientX - joy.ox;
         let dy = t.clientY - joy.oy;
         const l = Math.hypot(dx, dy);
+        // the stick follows your thumb if you drag past its edge
         if (l > 50) {
+          joy.ox += (dx / l) * (l - 50);
+          joy.oy += (dy / l) * (l - 50);
           dx = (dx / l) * 50;
           dy = (dy / l) * 50;
+          const r = area.getBoundingClientRect();
+          if (stick) {
+            stick.style.left = `${joy.ox - r.left}px`;
+            stick.style.top = `${joy.oy - r.top}px`;
+          }
         }
         joy.dx = dx / 50;
         joy.dy = dy / 50;
@@ -85,15 +105,12 @@ export function setupRunInput(input: RunInput, area: HTMLElement, ctl: RunContro
   const end = (e: TouchEvent) => {
     if (!joy) return;
     const id = joy.id;
-    for (const t of Array.from(e.changedTouches))
-      if (t.identifier === id) {
-        joy = null;
-        stick?.classList.add('hidden');
-        if (knob) knob.style.transform = '';
-      }
+    if (Array.from(e.changedTouches).some((t) => t.identifier === id) || !Array.from(e.touches).some((t) => t.identifier === id)) release();
   };
-  area.addEventListener('touchend', end);
-  area.addEventListener('touchcancel', end);
+  window.addEventListener('touchend', end);
+  window.addEventListener('touchcancel', end);
+  window.addEventListener('blur', release);
+  document.addEventListener('visibilitychange', release);
   document.getElementById('jumpbtn')?.addEventListener('pointerdown', (e) => {
     e.preventDefault();
     input.jump = true;

@@ -11,6 +11,7 @@
 - EXP is granted on kill for now (`RUN.xpOnKill`; set false to bring back gem drops).
 - Loop: abilities auto-fire, items come from chests (unlimited; gold chests cost `chestCost` rising each open, elite/boss chests are free). Level-ups offer 3 cards with rolled rarity (luck shifts it), 3 rerolls per run. Shrines: stand inside for `SHRINE_TIME` for a boon pick. Space jumps over bodies (not shots or slams). Final boss at 10:00; killing it wins (the 5:00 mini boss is now the optional King Jelly lair). Overtime makes foes tougher.
 - Balance check: `npx tsx tools/runsim.ts <job> [runs]` (AUTO bot; Q toggles it in the browser too). Current state: the bot nearly always wins (10-13 min), so the early game is on the easy side now that abilities are free. Deadeye kills the final boss fastest, Warrior the slowest.
+- Touch (src/run/input.ts): floating stick that starts anywhere except buttons, cards and open overlays; move/end are listened for on window, a finger missing from `e.touches` resets the stick (no stuck stick after a modal, app switch or edge swipe); body has `touch-action: none`.
 - Best result per hero is saved in localStorage `gloomtide-best`.
 
 ## MMO notes (shared code)
