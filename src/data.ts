@@ -421,13 +421,10 @@ export const SPLIT = {
   hopTime: 0.75, // seconds in the air (the landing circle shows for this long)
   hopRadius: 80, // landing splash radius (scaled by attackSize)
   hopPct: 0.05, // landing hit, % of max HP (bosses' scaling applies)
-  /** Last phase: the main slime leaps to the middle and rains globes over the arena with a few safe spots. */
+  /** Last phase: the main slime leaps to the middle and drops globes in a checkerboard (alternating each volley). */
   globeEvery: [3.6, 4.6] as [number, number],
-  globeSpacing: 150,
-  globeRadius: 88,
-  globeTime: 1.7,
-  globeSafeSpots: 3,
-  globeSafeRadius: 90,
+  globeCell: 128, // checkerboard square size (2x2 floor tiles); each volley hits every other square
+  globeTime: 1.9, // the shadow darkens over this long, the globe is visible falling at the end
   /** Slime goo: landing puddles and trails. Standing in it or bumping a split-off roots you. */
   gooLife: 7,
   gooPuddle: 62,

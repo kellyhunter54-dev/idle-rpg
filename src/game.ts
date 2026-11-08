@@ -95,7 +95,7 @@ export interface Goo {
 }
 
 export interface Telegraph {
-  kind: 'circle' | 'cone' | 'line' | 'ring';
+  kind: 'circle' | 'cone' | 'line' | 'ring' | 'square'; // square: r is half the side, axis-aligned
   x: number;
   y: number;
   r: number; // circle/ring radius, cone/line length
@@ -292,6 +292,7 @@ export class Game {
   safeUntil = 0;
   private volleyHit = new Set<number>();
   private nextVolley = 1;
+  private globeParity = 0;
   rootedUntil = 0;
   rootImmuneUntil = 0;
   get rooted(): boolean {
@@ -1497,44 +1498,41 @@ export class Game {
     }
   }
 
-  /** Globes over the whole arena, except a few clear spots (one always within reach). */
+  /**
+   * Globes in a checkerboard over the whole lair: every other square gets hit, and the next volley
+   * hits the other squares, so you can always plan your next step.
+   */
   private globeRain(m: Mob) {
-    const p = this.player;
-    const safe: Vec[] = [];
-    for (let tries = 0; safe.length < SPLIT.globeSafeSpots && tries < 200; tries++) {
-      // first safe spot is close enough to reach in time; the rest are anywhere
-      const near = safe.length === 0;
-      const a = this.rand() * Math.PI * 2;
-      const d = near ? 140 + this.rand() * 160 : this.rand() * 900;
-      const q = near ? { x: p.x + Math.cos(a) * d, y: p.y + Math.sin(a) * d } : { x: m.x + Math.cos(a) * d, y: m.y + Math.sin(a) * d };
-      if (!fits(this.map, q.x, q.y, 40, true)) continue;
-      if (safe.some((s2) => dist(s2, q) < SPLIT.globeSafeRadius * 2.5)) continue;
-      safe.push(q);
-    }
-    const sp = SPLIT.globeSpacing;
-    const r = SPLIT.globeRadius;
+    const cell = SPLIT.globeCell;
+    const half = cell / 2;
     const time = SPLIT.globeTime * (this.enraged ? 0.85 : 1);
     const dmg = m.atk * COMBAT.telegraphDamageMult * (this.enraged ? BALANCE.bossEnrageDamage : 1);
     const pct = BOSS_MOVE_PCT.globes * (this.enraged ? BALANCE.bossEnrageDamage : 1);
     const volley = this.nextVolley++;
-    this.safeSpots = safe;
-    this.safeUntil = this.time + time + 0.3;
-    const W = this.map.w * TILE;
-    const H = this.map.h * TILE;
-    let row = 0;
-    for (let y = sp / 2; y < H; y += sp * 0.87, row++) {
-      for (let x = (row % 2 ? sp : sp / 2); x < W; x += sp) {
-        const jx = x + (this.rand() - 0.5) * 30;
-        const jy = y + (this.rand() - 0.5) * 30;
-        if (!walkablePoint(this.map, jx, jy, true)) continue;
-        if (safe.some((s2) => dist(s2, { x: jx, y: jy }) < SPLIT.globeSafeRadius + r)) continue;
+    this.globeParity ^= 1;
+    const safe: Vec[] = [];
+    const cols = Math.ceil((this.map.w * TILE) / cell);
+    const rows = Math.ceil((this.map.h * TILE) / cell);
+    for (let cy = 0; cy < rows; cy++) {
+      for (let cx = 0; cx < cols; cx++) {
+        const x = cx * cell + half;
+        const y = cy * cell + half;
+        // a square counts if any part of it is floor
+        const q = half / 2;
+        const floor = [[-q, -q], [q, -q], [-q, q], [q, q]].some(([ox, oy]) => walkablePoint(this.map, x + ox, y + oy, true));
+        if (!floor) continue;
+        if ((cx + cy) % 2 !== this.globeParity) {
+          if (fits(this.map, x, y, this.player.r, true)) safe.push({ x, y });
+          continue;
+        }
         this.telegraphs.push({
-          kind: 'circle', x: jx, y: jy, r, inner: 0, angle: 0, width: 0, time, total: time, damage: dmg, boss: true,
-          ownerId: m.id, wait: this.rand() * 0.25, follow: false, pct, volley,
+          kind: 'square', x, y, r: half, inner: 0, angle: 0, width: 0, time, total: time, damage: dmg, boss: true,
+          ownerId: m.id, wait: 0, follow: false, pct, volley,
         });
       }
     }
-    for (const s2 of safe) this.effect('ring', s2.x, s2.y, SPLIT.globeSafeRadius, '#7df9ff', time + 0.3);
+    this.safeSpots = safe;
+    this.safeUntil = this.time + time + 0.2;
     this.float(m.x, m.y, m.r * 2 + 50, 'Globes!', '#7bc950', 18);
   }
 
@@ -1744,6 +1742,7 @@ export class Game {
     const d = dist(t, p);
     if (t.kind === 'circle') return d <= t.r + pr;
     if (t.kind === 'ring') return d <= t.r + pr && d >= t.inner - pr;
+    if (t.kind === 'square') return Math.abs(p.x - t.x) <= t.r + pr && Math.abs(p.y - t.y) <= t.r + pr;
     if (t.kind === 'cone') {
       if (d > t.r + pr) return false;
       if (d < pr) return true;
@@ -1785,7 +1784,8 @@ export class Game {
       t.time -= dt;
       if (t.time > 0) continue;
       done.push(t);
-      if (t.boss) this.effect(t.kind === 'line' ? 'dash' : 'blast', t.x, t.y, t.r, '#ff4d4d', 0.35, t.x + Math.cos(t.angle) * t.r, t.y + Math.sin(t.angle) * t.r);
+      if (t.kind === 'square') this.effect('poof', t.x, t.y, t.r * 0.8, '#7bc950', 0.35);
+      else if (t.boss) this.effect(t.kind === 'line' ? 'dash' : 'blast', t.x, t.y, t.r, '#ff4d4d', 0.35, t.x + Math.cos(t.angle) * t.r, t.y + Math.sin(t.angle) * t.r);
       if (t.kind === 'line' && owner.chargeTo) {
         owner.state = 'charge';
       }

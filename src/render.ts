@@ -252,6 +252,7 @@ export class Renderer {
     // ---- air effects (bolts, falling stars) ----
     this.drawProjectiles(g);
     this.drawAirEffects(g);
+    this.drawFallingGlobes(g);
 
     // ---- floating text ----
     ctx.textAlign = 'center';
@@ -331,6 +332,19 @@ export class Renderer {
     if (t.wait > 0) return;
     const ctx = this.ctx;
     const prog = 1 - t.time / t.total;
+    if (t.kind === 'square') {
+      // checkerboard globe: red square, and the globe's shadow growing and darkening as it falls
+      ctx.fillStyle = `rgba(200,30,30,${0.12 + 0.18 * prog})`;
+      ctx.fillRect(t.x - t.r, t.y - t.r, t.r * 2, t.r * 2);
+      ctx.strokeStyle = 'rgba(200,30,30,0.7)';
+      ctx.lineWidth = 2.5;
+      ctx.strokeRect(t.x - t.r + 2, t.y - t.r + 2, t.r * 2 - 4, t.r * 2 - 4);
+      ctx.fillStyle = `rgba(0,0,0,${0.12 + 0.6 * prog * prog})`;
+      ctx.beginPath();
+      ctx.arc(t.x, t.y, t.r * (0.3 + 0.55 * prog), 0, Math.PI * 2);
+      ctx.fill();
+      return;
+    }
     const base = t.boss ? 'rgba(200,30,30,' : 'rgba(230,120,40,';
     ctx.lineWidth = 3;
     const path = (scale: number) => {
@@ -364,6 +378,35 @@ export class Renderer {
     path(prog);
     ctx.fillStyle = base + '0.35)';
     ctx.fill('evenodd');
+  }
+
+  /** The globes themselves, dropping onto their squares in the last part of the telegraph. */
+  private drawFallingGlobes(g: Game) {
+    const ctx = this.ctx;
+    const k = this.k;
+    for (const t of g.telegraphs) {
+      if (t.kind !== 'square' || t.wait > 0) continue;
+      const prog = 1 - t.time / t.total;
+      if (prog < 0.45) continue;
+      const fall = (prog - 0.45) / 0.55; // 0 high up .. 1 landed
+      const z = (1 - fall * fall) * 420;
+      const sx = this.px(t.x, t.y);
+      const sy = this.py(t.x, t.y, z);
+      const r = t.r * 0.42 * k;
+      ctx.globalAlpha = Math.min(1, fall * 3);
+      ctx.fillStyle = '#7bc950';
+      ctx.beginPath();
+      ctx.arc(sx, sy - r, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(230,255,200,0.6)';
+      ctx.beginPath();
+      ctx.arc(sx - r * 0.35, sy - r * 1.35, r * 0.3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
   }
 
   /** Slime goo puddles (fade out near the end of their 7 seconds) and the hero stuck in it. */
