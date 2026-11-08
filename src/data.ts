@@ -449,11 +449,11 @@ export const SPLIT = {
   mainHopEvery: [1.1, 1.7] as [number, number],
   mainHopTime: 0.9,
   mainSlamRadius: 125,
-  waveSpeed: 270,
+  waveSpeed: 190,
   waveWidth: 34,
   waveMaxR: 950,
   waveCount: [2, 3] as number[], // rings per landing in phase 1 / phase 2
-  waveSpacing: 300, // distance between rings (about 1.1 s apart)
+  waveSpacing: 260, // distance between rings (about 1.4 s apart)
   waveGaps: 5,
   waveGapHalf: 0.24, // radians each side of a gap's centre
   wavePct: 0.32,
