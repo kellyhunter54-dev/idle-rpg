@@ -1497,11 +1497,12 @@ export class Game {
     if (this.goo.some((g) => g.life <= 0)) this.goo = this.goo.filter((g) => g.life > 0);
     const p = this.player;
     if (this.deadTimer > 0 || p.dash) return;
-    for (const g of this.goo) {
-      if (Math.hypot(g.x - p.x, g.y - p.y) < g.r + p.r * 0.4) {
-        this.rootPlayer(SPLIT.rootGoo);
-        break;
-      }
+    const touching = this.goo.filter((g) => Math.hypot(g.x - p.x, g.y - p.y) < g.r + p.r * 0.4);
+    if (touching.length && !this.rooted) {
+      // the goo grabs you once and is used up: every puddle you're standing in splats away
+      this.rootPlayer(SPLIT.rootGoo);
+      this.goo = this.goo.filter((g) => !touching.includes(g));
+      for (const g of touching) this.effect('poof', g.x, g.y, g.r, '#7bc950', 0.4);
     }
   }
 
