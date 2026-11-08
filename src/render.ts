@@ -416,7 +416,7 @@ export class Renderer {
     for (const w of g.waves) {
       if (w.r <= 0) continue;
       const fade = Math.min(1, (950 - w.r) / 200);
-      const gh = 0.3;
+      const gh = 0.24;
       const sorted = [...w.gaps].sort((a, b) => a - b);
       ctx.lineWidth = 34;
       ctx.strokeStyle = `rgba(120,200,70,${0.75 * fade})`;
@@ -457,6 +457,13 @@ export class Renderer {
       ctx.beginPath();
       ctx.arc(p.x, p.y, p.r * (g.parrying ? 1.9 : 1.5) + Math.sin(time * 14) * 2, 0, Math.PI * 2);
       ctx.stroke();
+    }
+    if (g.slowed && !g.rooted) {
+      const p = g.player;
+      ctx.fillStyle = 'rgba(110,190,70,0.45)';
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r * 1.25, 0, Math.PI * 2);
+      ctx.fill();
     }
     if (g.rooted) {
       const p = g.player;

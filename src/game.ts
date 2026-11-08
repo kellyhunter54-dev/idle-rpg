@@ -304,6 +304,11 @@ export class Game {
   waves: Wave[] = [];
   /** Space ability: cooldown left, and when parry / sprint end. */
   evadeCd = 0;
+  /** Slowed by a slime wave until this time. */
+  slowUntil = 0;
+  get slowed(): boolean {
+    return this.time < this.slowUntil;
+  }
   parryUntil = 0;
   sprintUntil = 0;
   /** Last phase globes: the clear spots and when they expire (AUTO heads for one). */
@@ -781,6 +786,7 @@ export class Game {
   private resetTransient() {
     this.goo = [];
     this.waves = [];
+    this.slowUntil = 0;
     this.rootedUntil = 0;
     if (this.deadeye) this.endDeadeye();
     this.telegraphs = [];
@@ -1089,7 +1095,7 @@ export class Game {
     }
     // Facing follows movement unless the mouse is aiming
     if (!(this.manualActive && this.input.aim) && this.aimHold <= 0) p.angle = Math.atan2(my, mx);
-    const spd = PHYS.playerSpeed * (this.time < this.sprintUntil ? EVADE.sprintSpeed : 1);
+    const spd = PHYS.playerSpeed * (this.time < this.sprintUntil ? EVADE.sprintSpeed : 1) * (this.slowed ? SPLIT.waveSlow : 1);
     const np = moveCircle(this.map, p.x, p.y, mx * spd * dt, my * spd * dt, p.r);
     p.x = np.x;
     p.y = np.y;
@@ -1575,7 +1581,6 @@ export class Game {
 
   /** Phases 1-2: the crowned slime follows you by hopping; every landing slams and sends out waves. */
   private updateMainHopper(m: Mob, dt: number) {
-    const p = this.player;
     if (m.hop) {
       const h = m.hop;
       h.t += dt;
@@ -1604,9 +1609,8 @@ export class Game {
     }
     m.hopTimer -= dt;
     if (m.hopTimer > 0 || this.telegraphs.some((t) => t.ownerId === m.id)) return;
-    // land on you (leading a little if you're running)
-    const raw = { x: p.x + this.pVel.x * 0.35, y: p.y + this.pVel.y * 0.35 };
-    const to = this.clampArena(raw, m.r * 0.8 + 2);
+    // hop somewhere around the room (not onto you), so the rings come from all over
+    const to = this.roomSpot(m, 220);
     const dur = SPLIT.mainHopTime * (this.enraged ? 0.8 : 1);
     m.hop = { fx: m.x, fy: m.y, tx: to.x, ty: to.y, t: 0, dur };
     this.telegraphs.push({
@@ -1614,6 +1618,20 @@ export class Game {
       time: dur, total: dur, damage: m.atk * COMBAT.telegraphDamageMult, boss: true, ownerId: m.id, wait: 0, follow: false,
       pct: BOSS_MOVE_PCT.slam * SPLIT.damage[m.gen] * (this.enraged ? BALANCE.bossEnrageDamage : 1),
     });
+  }
+
+  /** A random open spot in the arena for a slime of this size, at least `minFromPlayer` away from you. */
+  private roomSpot(m: Mob, minFromPlayer: number): Vec {
+    const c = this.map.altars[0] ?? { x: m.x, y: m.y };
+    const p = this.player;
+    for (let i = 0; i < 40; i++) {
+      const a = this.rand() * Math.PI * 2;
+      const d = this.rand() * 520;
+      const q = { x: c.x + Math.cos(a) * d, y: c.y + Math.sin(a) * d };
+      if (dist(q, p) < minFromPlayer || dist(q, m) < 120) continue;
+      if (fits(this.map, q.x, q.y, m.r * 0.8 + 2, true)) return q;
+    }
+    return this.clampArena({ x: c.x, y: c.y }, m.r * 0.8 + 2);
   }
 
   /** Is this angle (from a wave's centre) inside one of its gaps? */
@@ -1632,7 +1650,12 @@ export class Game {
       const pad = Math.atan2(p.r * 0.6, Math.max(1, d));
       if (this.inGap(w, angleTo(w, p), pad)) continue;
       w.hit = true;
+      const parried = this.parrying;
       this.hurtPlayer(w.damage, w.level, w.pct);
+      if (!parried && this.deadTimer <= 0) {
+        this.slowUntil = this.time + SPLIT.waveSlowTime;
+        this.float(p.x, p.y, 45, 'Slowed!', '#7bc950', 15);
+      }
     }
     this.waves = this.waves.filter((w) => w.r < SPLIT.waveMaxR && this.mobs.some((m) => m.id === w.ownerId));
   }
@@ -2724,6 +2747,7 @@ export class Game {
       this.telegraphs = [];
       this.goo = [];
     this.waves = [];
+    this.slowUntil = 0;
       this.rootedUntil = 0;
     }
     this.dirty = true;
@@ -2775,6 +2799,7 @@ export class Game {
   private endBoss() {
     this.goo = [];
     this.waves = [];
+    this.slowUntil = 0;
     this.rootedUntil = 0;
     const ids = this.mobs.filter((m) => m.boss).map((m) => m.id);
     this.mobs = this.mobs.filter((m) => !m.boss);

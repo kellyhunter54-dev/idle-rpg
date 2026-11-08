@@ -452,9 +452,11 @@ export const SPLIT = {
   waveSpeed: 270,
   waveWidth: 34,
   waveMaxR: 950,
-  waveGaps: 3,
-  waveGapHalf: 0.3, // radians each side of a gap's centre
-  wavePct: 0.25,
+  waveGaps: 5,
+  waveGapHalf: 0.24, // radians each side of a gap's centre
+  wavePct: 0.32,
+  waveSlow: 0.5, // getting hit by a wave slows you to this speed...
+  waveSlowTime: 2, // ...for this long
   /** Last phase: the main slime leaps to the middle and drops globes in a checkerboard (alternating each volley). */
   globeEvery: [3.6, 4.6] as [number, number],
   globeCell: 128, // checkerboard square size (2x2 floor tiles); each volley hits every other square
