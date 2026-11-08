@@ -1,6 +1,6 @@
 import {
   BALANCE, COMPANION, COMPANIONS, GROWTH, GrowthKey, JobDef, MobStats, RARITIES, Rarity, SLOTS,
-  Slot, TALENT_TREES, TIERS, TIER_WEIGHTS, ZONES, CAVE, FOCUS, MANA, BOSS_MOVE_PCT, SPLIT, SkillDef, BossMove, bossName, bossPctScale, jobOf, companionHitMult, dealtLevelMult, enhanceCopies,
+  Slot, TALENT_TREES, TIERS, TIER_WEIGHTS, ZONES, CAVE, FOCUS, MANA, BOSS_MOVE_PCT, SPLIT, phaseAt, SkillDef, BossMove, bossName, bossPctScale, jobOf, companionHitMult, dealtLevelMult, enhanceCopies,
   expLevelMult, expToNext, gearId, gearScore, mobForZone, parseGear, takenLevelMult,
 } from './data';
 import {
@@ -1448,6 +1448,8 @@ export class Game {
     m.gooDist += moved;
     if (m.gooDist < (airborne ? 70 : 45)) return;
     m.gooDist = 0;
+    // no unmarked goo on top of you: mid-air drops skip the spot you're standing on
+    if (airborne && dist(m, this.player) < 70) return;
     this.addGoo(m.x, m.y, SPLIT.gooDrop * SPLIT.attackSize[m.gen]);
   }
 
@@ -1639,6 +1641,7 @@ export class Game {
     const share = pct > 0 ? this.stats.maxHp * pct * bossPctScale(fromLevel, this.state.level) : 0;
     amount = Math.max(flat, share) * this.job.damageTaken;
     const t = this.stats.t;
+    if (this.rooted) amount *= SPLIT.rootedDamage;
     if (t.frostWard && this.time < this.wardUntil) amount *= 1 - t.frostWard;
     // Mana Shield keystone: part of the hit drains mana instead of HP
     if (t.manaShield && this.mana > 0) {
@@ -2222,7 +2225,8 @@ export class Game {
   /** Bosses get faster and learn new moves at 60% and 25% HP. Slime bosses also split. */
   private checkPhase(m: Mob) {
     const frac = m.hp / m.maxHp;
-    const want = frac <= BALANCE.bossPhaseAt[1] ? 2 : frac <= BALANCE.bossPhaseAt[0] ? 1 : 0;
+    const [p2, p3] = phaseAt(m.zone);
+    const want = frac <= p3 ? 2 : frac <= p2 ? 1 : 0;
     if (want <= m.phase) return;
     const group = m.group ? this.splitGroup(m) : [m];
     for (const b of group) {

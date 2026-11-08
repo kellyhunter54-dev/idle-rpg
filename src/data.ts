@@ -399,6 +399,8 @@ export interface ZoneDef {
   offering: { item: string; count: number }[];
   /** The boss's moves in each phase (phase 2 at 60% HP, phase 3 at 25%). */
   bossKit: BossMove[][];
+  /** HP fractions where phases 2 and 3 start (default BALANCE.bossPhaseAt). */
+  phaseAt?: [number, number];
   /** Slime boss: splits in two at each phase (1, 2, then 4 slimes sharing one health pool). */
   bossSplit?: boolean;
 }
@@ -423,9 +425,10 @@ export const SPLIT = {
   gooLife: 7,
   gooPuddle: 62,
   gooDrop: 24,
-  rootGoo: 0.5,
-  rootBump: 0.9,
-  rootImmune: 2.0, // after a root ends you can't be rooted again for this long
+  rootGoo: 1.0,
+  rootBump: 1.4,
+  rootImmune: 0, // no grace: goo under you roots you again the moment a root ends
+  rootedDamage: 1.3, // hits taken while stuck
 };
 
 /**
@@ -455,6 +458,7 @@ export const ZONES: ZoneDef[] = [
     name: 'Sprout Meadow', minLevel: 1, maxLevel: 10, bossLevel: 12, chapter: 0, offering: [],
     bossKit: [['slam', 'cone', 'charge'], ['slam', 'chase', 'cone'], ['chase', 'slam', 'charge', 'cone']],
     bossSplit: true,
+    phaseAt: [0.8, 0.5], // splits early: the four-slime phase is the long one
   },
   {
     name: 'Whisper Woods', minLevel: 10, maxLevel: 20, bossLevel: 22, chapter: 1, offering: [],
@@ -467,6 +471,10 @@ export const ZONES: ZoneDef[] = [
 ];
 
 export const CAVE = { name: 'Echoing Hollow', zone: 99 };
+
+export function phaseAt(z: number): [number, number] {
+  return ZONES[z]?.phaseAt ?? (BALANCE.bossPhaseAt as [number, number]);
+}
 
 export function bossName(z: number): string {
   return CHAPTERS[(ZONES[z] ?? ZONES[0]).chapter].boss;

@@ -1,4 +1,4 @@
-import { BALANCE, CHAPTERS, COMPANION, JOBS, JobDef, JobId, ZONES, levelColor } from './data';
+import { BALANCE, CHAPTERS, phaseAt, COMPANION, JOBS, JobDef, JobId, ZONES, levelColor } from './data';
 import { Game, Mob, Telegraph, Vec } from './game';
 import { TILE, Tile } from './map';
 
@@ -292,9 +292,9 @@ export class Renderer {
       const slimes = boss.group ? g.splitGroup(boss).length : 1;
       outlineText(ctx, `${boss.name}${slimes > 1 ? `  ×${slimes}` : ''}  ·  Lv ${boss.level}`, w / 2, 58 + o);
       bar(ctx, x, 62 + o, bw, 12, boss.hp / boss.maxHp, '#a4161a', '#c9a227');
-      // phase marks at 60% and 25%
+      // phase marks (per boss)
       ctx.fillStyle = '#e8d7a9';
-      for (const f of BALANCE.bossPhaseAt) ctx.fillRect(x + bw * f - 1, 60 + o, 2, 16);
+      for (const f of phaseAt(boss.zone)) ctx.fillRect(x + bw * f - 1, 60 + o, 2, 16);
       if (g.stats.t.stagger) {
         const staggered = boss.staggerUntil > g.time;
         bar(ctx, x + bw * 0.25, 100 + o, bw * 0.5, 5, staggered ? 1 : boss.stagger / 100, staggered ? '#ffffff' : '#ffd166');
