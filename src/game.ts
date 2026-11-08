@@ -2010,7 +2010,7 @@ export class Game {
       }
       case 'charge': {
         const a = angleTo(m, p);
-        const len = this.chargeLength(m, a, wildMini ? SPLIT.wild.chargeLen : 460); // stops at walls instead of running off the map
+        const len = this.chargeLength(m, a, wildMini ? SPLIT.wild.chargeLen : 460); // stops at walls (wild minis: wall to wall)
         m.angle = a;
         tele({ kind: 'line', x: m.x, y: m.y, r: len, angle: a, width: 90, time: 1.0 }, move);
         busy(1.0);
@@ -2134,7 +2134,10 @@ export class Game {
       if (t.time > 0) continue;
       done.push(t);
       if (t.kind === 'square') this.effect('poof', t.x, t.y, t.r * 0.8, '#7bc950', 0.35);
-      else if (t.boss) this.effect(t.kind === 'line' ? 'dash' : 'blast', t.x, t.y, t.r, '#ff4d4d', 0.35, t.x + Math.cos(t.angle) * t.r, t.y + Math.sin(t.angle) * t.r);
+      else if (t.boss && t.kind === 'line') {
+        // a soft streak as wide as the charge (not as wide as it is long: that flashed the whole screen)
+        this.effect('dash', t.x, t.y, t.width * 0.5, 'rgba(170,40,40,0.6)', 0.25, t.x + Math.cos(t.angle) * t.r, t.y + Math.sin(t.angle) * t.r);
+      } else if (t.boss) this.effect('blast', t.x, t.y, t.r, '#ff4d4d', 0.35, t.x + Math.cos(t.angle) * t.r, t.y + Math.sin(t.angle) * t.r);
       if (t.kind === 'line' && owner.chargeTo) {
         owner.state = 'charge';
       }

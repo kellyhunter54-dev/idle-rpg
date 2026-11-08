@@ -451,7 +451,7 @@ export const SPLIT = {
     actionMult: 0.3, // specials over three times as often
     kit: ['charge', 'charge', 'charge', 'rain'] as BossMove[],
     puddleMult: 1.35,
-    chargeLen: 900, // charges cross most of the room
+    chargeLen: 3000, // charges run wall to wall (they stop at the wall)
     chargeSpeed: 1250,
     globes: false, // the checkerboard globes (off: phase 3 is all about the minis)
   },
