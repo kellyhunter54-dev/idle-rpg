@@ -75,3 +75,18 @@ export function bolt(): HTMLCanvasElement {
 export function orb(color: string): HTMLCanvasElement {
   return cached('orb' + color, () => fromRows(['.ooo.', 'oLMMo', 'oMMDo', 'oMDDo', '.ooo.'], { o: O, L: shade(color, 0.6), M: hexRgb(color), D: shade(color, -0.4) }));
 }
+
+/** Wall torch: iron bracket and a flickering flame (4 frames). Anchor: bracket bottom centre. */
+export function torch(frame: number): HTMLCanvasElement {
+  return cached('torch' + frame, () => {
+    const flames = [
+      ['..y..', '.yYy.', '.YWY.', 'yYWYy', '.yOy.'],
+      ['.y...', '.yYy.', 'yYWY.', '.YWYy', '.yOy.'],
+      ['...y.', '.yYy.', '.YWYy', 'yYWY.', '.yOy.'],
+      ['..y..', '..Yy.', '.yWY.', '.YWYy', '.yOy.'],
+    ][frame & 3];
+    return fromRows([...flames, '.oOo.', '.oBo.', '..B..', '.oBo.', '..o..'], {
+      o: O, y: hexRgb('#ff9a3c'), Y: hexRgb('#ffd166'), W: hexRgb('#fff8d6'), O: hexRgb('#d9480f'), B: hexRgb('#4a3a2c'),
+    });
+  });
+}

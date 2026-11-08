@@ -5,7 +5,7 @@
 // 10 Slimed stacks in one fight kills you. Split-offs hop and charge and leave goo that roots you.
 // Phase 3 (wild): the crowned slime sits in the middle sending rings nonstop and raining globs,
 // while the minis only charge, wall to wall, toward the cleanest floor.
-import { GameMap, TILE, fits, generateLair, moveCircle } from '../map';
+import { GameMap, TILE, Tile, fits, generateLair, moveCircle } from '../map';
 import type { Enemy, Run } from './run';
 
 export const JELLY = {
@@ -104,6 +104,8 @@ export class JellyFight {
 
   constructor(private run: Run, level: number) {
     this.map = generateLair(0);
+    // no brazier pillars in the room: the walls carry torches instead (drawn by the renderer)
+    for (let i = 0; i < this.map.tiles.length; i++) if (this.map.tiles[i] === Tile.Pillar) this.map.tiles[i] = Tile.Floor;
     this.centre = this.map.altars[0];
     this.entrance = this.map.entrances[0];
     this.exit = this.map.exit!;

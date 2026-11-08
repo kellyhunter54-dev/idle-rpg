@@ -296,6 +296,31 @@ export class RunRenderer {
       f.stroke();
       f.setLineDash([]);
     }
+    // torch light on the lair floor (kept inside the room)
+    if (lair && run.jelly) {
+      f.save();
+      f.beginPath();
+      f.arc(run.jelly.centre.x, run.jelly.centre.y, 9.4 * TILE, 0, Math.PI * 2);
+      f.clip();
+      for (let ty = minTy; ty <= maxTy; ty++)
+        for (let tx = minTx; tx <= maxTx; tx++) {
+          const side = this.torchSide(run, tx, ty);
+          if (!side) continue;
+          const gx = (tx + 0.5) * TILE + (side < 0 ? 0 : TILE * 0.9);
+          const gy = (ty + 0.5) * TILE + (side < 0 ? TILE * 0.9 : 0);
+          const fl = 1 + Math.sin(time * 9 + tx * 1.7 + ty) * 0.06;
+          f.globalAlpha = 0.14;
+          f.fillStyle = '#ffb35c';
+          f.beginPath();
+          f.arc(gx, gy, 120 * fl, 0, Math.PI * 2);
+          f.fill();
+          f.globalAlpha = 0.12;
+          f.beginPath();
+          f.arc(gx, gy, 60 * fl, 0, Math.PI * 2);
+          f.fill();
+        }
+      f.restore();
+    }
     // King Jelly: goo, rings with gaps
     if (run.jelly) {
       const j = run.jelly;
@@ -586,6 +611,12 @@ export class RunRenderer {
           } else {
             const img = PX.wallBlock(LAIR_ROCK, v & 3);
             this.blit(ctx, img, sx, sy, img.width >> 1, PX.TILE_H / 2, false, alpha);
+            // torches on walls that face into the room
+            const side = this.torchSide(run, tx, ty);
+            if (side) {
+              const t = SP.torch(Math.floor(time * 7 + tx * 5 + ty * 3) & 3);
+              this.blit(ctx, t, sx + side * (PX.TILE_W / 4) * B, sy + 13 * B, t.width >> 1, t.height - 1, false, alpha);
+            }
           }
         } else if (map.tiles[it.i] === Tile.Tree) {
           const img = v % 4 === 3 ? PX.pineTree(0, v % 4) : PX.leafyTree(0, v % 4);
@@ -813,6 +844,16 @@ export class RunRenderer {
     }
     o.globalAlpha = 1;
     this.drawMinimap(run);
+  }
+
+  /** Which face of a lair wall gets a torch: -1 left face (room toward +y), 1 right face (room toward +x), 0 none. */
+  private torchSide(run: Run, tx: number, ty: number): number {
+    const m = run.map;
+    if (m.tiles[ty * m.w + tx] !== Tile.Rock || (tx * 3 + ty * 5) % 4 !== 0) return 0;
+    const floor = (x: number, y: number) => x >= 0 && y >= 0 && x < m.w && y < m.h && (m.tiles[y * m.w + x] === Tile.Floor || m.tiles[y * m.w + x] === Tile.Altar);
+    if (floor(tx, ty + 1)) return -1;
+    if (floor(tx + 1, ty)) return 1;
+    return 0;
   }
 
   private touchesFloor(run: Run, tx: number, ty: number): boolean {
