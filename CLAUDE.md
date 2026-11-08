@@ -1,5 +1,14 @@
 # Notes for Claude
 
+## This is the `bonk` branch: Gloomtide (survivors-style run mode)
+- Served at /bonk/ (built by the deploy workflow on `main`, like /side/). `main` stays the MMO; don't merge this into it.
+- Entry `src/run/main.ts` (index.html boots it). Code lives in `src/run/`: `data.ts` (all balance: `RUN`, weapons, tomes, items, heroes, enemies, bosses, `enemyHpScale`, `spawnRate`, `xpToNext`), `run.ts` (`Run`: the whole sim, DOM free), `render.ts` (same pixel pipeline as the MMO renderer), `sprites.ts`, `input.ts`, `run.css`. It reuses `pixel.ts` sprites and `map.ts` collision; the MMO files are still in the tree but unused here.
+- Loop: weapons auto-fire (4 slots), tomes are passive stats (4 slots), items come from chests (unlimited; gold chests cost `chestCost` rising each open, elite/boss chests are free). Level-ups offer 3 cards with rolled rarity (luck shifts it), 3 rerolls per run. Shrines: stand inside for `SHRINE_TIME` for a boon pick. Space jumps over bodies (not shots or slams). Mini boss at 5:00, final boss at 10:00; killing it wins. Overtime makes foes tougher.
+- Balance check: `npx tsx tools/runsim.ts <job> [runs]` (AUTO bot; Q toggles it in the browser too). Current state: the bot dies around 2-4 min about half the time (spitter shots), otherwise it usually wins around 11-13 min.
+- Best result per hero is saved in localStorage `gloomtide-best`.
+
+## MMO notes (shared code)
+
 - Owner: Kelly. She works on Windows and plays the game through GitHub Pages. Do not use em dashes in user-facing text or docs.
 - Stack: Vite + TypeScript, plain Canvas 2D (no game framework). Isometric view, action combat (WASD + mouse aim), AUTO pilot with manual override.
 - Characters: 3 save slots (`idle-rpg-char-0..2` in localStorage), jobs Warrior/Archer/Mage defined in `JOBS` (data.ts). Skills are data-driven by `SkillType`; implement new types in `Game.castSkills`. Sim per job: `npm run sim -- 4 archer`.

@@ -7,7 +7,7 @@
  */
 import { JobId } from './data';
 
-type RGB = [number, number, number];
+export type RGB = [number, number, number];
 const OUTLINE: RGB = [27, 20, 16];
 
 export const hexRgb = (h: string): RGB => {
@@ -398,7 +398,7 @@ export function horn(flip: boolean): HTMLCanvasElement {
   });
 }
 
-function fromRows(rows: string[], pal: Record<string, RGB>): HTMLCanvasElement {
+export function fromRows(rows: string[], pal: Record<string, RGB>): HTMLCanvasElement {
   const img = new PixelImage(rows[0].length, rows.length);
   rows.forEach((r, y) => [...r].forEach((ch, x) => pal[ch] && img.set(x, y, pal[ch])));
   return img.canvas();
