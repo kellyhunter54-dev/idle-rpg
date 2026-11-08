@@ -226,41 +226,31 @@ export class RunRenderer {
         f.fill();
       }
     }
-    // poison pools
+    // your own ground zones (traps, brambles, rain, fire pools): kept faint so they never read as an attack.
+    // Just a dashed outline and a few motes; even quieter in the lair.
+    const zoneA = lair ? 0.45 : 0.75;
     for (const p of run.pools) {
-      const left = Math.min(1, (p.until - run.t) * 2);
-      if (p.style === 'rain') {
-        // the patch the arrows are falling on
-        f.globalAlpha = 0.16 * left;
-        f.fillStyle = run.weapons[p.w]?.def.color ?? '#e0c08a';
-        f.beginPath();
-        f.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-        f.fill();
-        f.globalAlpha = 0.5 * left;
-        f.strokeStyle = run.weapons[p.w]?.def.color ?? '#e0c08a';
-        f.lineWidth = 4;
-        f.setLineDash([14, 12]);
-        f.stroke();
-        f.setLineDash([]);
-        continue;
-      }
-      const pc = run.weapons[p.w]?.def.color ?? '#6fbf3a';
-      const spikes = run.weapons[p.w]?.def.id === 'traps';
-      f.globalAlpha = 0.45 * left;
-      f.fillStyle = spikes ? '#5a4630' : '#6fbf3a';
+      const left = Math.min(1, (p.until - run.t) * 2) * zoneA;
+      const col = run.weapons[p.w]?.def.color ?? '#e0c08a';
+      f.globalAlpha = 0.07 * left;
+      f.fillStyle = col;
       f.beginPath();
       f.arc(p.x, p.y, p.r, 0, Math.PI * 2);
       f.fill();
-      f.globalAlpha = 0.8 * left;
-      f.strokeStyle = spikes ? pc : '#b8f27a';
-      f.lineWidth = 6;
+      f.globalAlpha = 0.45 * left;
+      f.strokeStyle = col;
+      f.lineWidth = 3;
+      f.setLineDash([10, 14]);
       f.stroke();
-      f.fillStyle = spikes ? '#e6ecf2' : '#d6ff9e';
-      for (let b = 0; b < 4; b++) {
-        const a = time * 1.3 + b * 1.7 + p.x;
+      f.setLineDash([]);
+      if (p.style === 'rain') continue;
+      f.globalAlpha = 0.6 * left;
+      f.fillStyle = col;
+      for (let b = 0; b < 3; b++) {
+        const a = time * 1.3 + b * 2.1 + p.x;
         const rr = p.r * (0.25 + ((b * 0.37 + time * 0.4) % 0.6));
         f.beginPath();
-        f.arc(p.x + Math.cos(a) * rr, p.y + Math.sin(a) * rr, 7, 0, Math.PI * 2);
+        f.arc(p.x + Math.cos(a) * rr, p.y + Math.sin(a) * rr, 5, 0, Math.PI * 2);
         f.fill();
       }
     }
@@ -402,7 +392,22 @@ export class RunRenderer {
       if (tg.t < 0) continue;
       if (tg.style) {
         // jelly landings: faint outline, the fill grows with the jump's travel time
-        const col = tg.style === 'spout' ? '#6ccf5a' : tg.slimed ? '#ff5c5c' : '#ff8a5c';
+        const col = tg.style === 'spout' ? '#f2e6b8' : tg.slimed ? '#ff5c5c' : '#ff8a5c';
+        if (tg.style === 'spout') {
+          // falling glob: a shadow that darkens as it drops, cream rim (not green like goo and rings)
+          f.globalAlpha = 0.15 + 0.55 * p;
+          f.fillStyle = '#120c08';
+          f.beginPath();
+          f.arc(tg.x, tg.y, tg.r * (0.5 + 0.5 * p), 0, Math.PI * 2);
+          f.fill();
+          f.globalAlpha = 0.8;
+          f.strokeStyle = col;
+          f.lineWidth = 3;
+          f.beginPath();
+          f.arc(tg.x, tg.y, tg.r, 0, Math.PI * 2);
+          f.stroke();
+          continue;
+        }
         f.globalAlpha = 0.6;
         f.strokeStyle = col;
         f.lineWidth = 4;
@@ -420,7 +425,7 @@ export class RunRenderer {
         f.beginPath();
         f.arc(tg.x, tg.y, tg.r * p, 0, Math.PI * 2);
         f.fill();
-        if (tg.from && tg.style !== 'spout') {
+        if (tg.from) {
           // dotted line from where the slime jumped
           f.globalAlpha = 0.45;
           f.setLineDash([10, 14]);

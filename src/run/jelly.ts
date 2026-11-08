@@ -42,7 +42,11 @@ export const JELLY = {
   chargeSpeed: 800,
   chargeLen: 700,
   // wild phase
-  wild: { actEvery: [0.15, 0.45] as [number, number], chargeLen: 3000, rainEvery: [0.08, 0.17] as [number, number], rainR: 45, rainTime: 2.0 },
+  /** wild phase, tuned so there is always floor to stand on: ~6 globs falling, at most `gooCap` puddles */
+  wild: {
+    actEvery: [0.9, 1.5] as [number, number], wind: 0.85, chargeLen: 3000, rainEvery: [0.25, 0.4] as [number, number], rainR: 45, rainTime: 2.0,
+    rings: 3, waveRest: 0.75, trailEvery: 130, gooLife: 5, gooCap: 30,
+  },
   // goo
   gooLife: 7,
   gooPuddle: 62,
@@ -52,7 +56,7 @@ export const JELLY = {
   rootBump: 1.4,
   rootedDamage: 1.3,
   /** damage as a share of your max HP */
-  pct: { slam: 0.3, ring: 0.22, hop: 0.12, charge: 0.25, glob: 0.15, bump: 0.08, main: 0.12 },
+  pct: { slam: 0.3, ring: 0.16, hop: 0.12, charge: 0.22, glob: 0.12, bump: 0.08, main: 0.12 },
 };
 
 interface Ring {
@@ -96,6 +100,8 @@ export class JellyFight {
   rings: Ring[] = [];
   goo: Goo[] = [];
   slimed = 0;
+  /** what hit you, newest last (death recap) */
+  hitLog: string[] = [];
   /** last ring of the latest set: the crowned slime rests until it's this far out */
   private lastRing: Ring | null = null;
   private rainT = 0;
@@ -196,9 +202,9 @@ export class JellyFight {
       }
       // touching a slime on the ground hurts (bumping a split-off roots you)
       if (run.air <= 0 && Math.hypot(s.x - run.x, s.y - run.y) < s.r * 0.85 + run.r) {
-        if (ai.main) this.hit(JELLY.pct.main, true);
+        if (ai.main) this.hit(JELLY.pct.main, true, false, 'Touched King Jelly');
         else {
-          this.hit(JELLY.pct.bump, false);
+          this.hit(JELLY.pct.bump, false, false, 'Bumped a slime');
           run.rootFor(JELLY.rootBump);
         }
       }
@@ -207,7 +213,7 @@ export class JellyFight {
         if (ai.anchored) {
           // wild phase: bounce in place, rings nonstop
           s.z = Math.abs(Math.sin(t * 4)) * 30;
-          if (!this.lastRing || this.lastRing.r >= JELLY.waveMaxR * JELLY.waveRest) this.emitRings(s.x, s.y, JELLY.waveCount[2]);
+          if (!this.lastRing || this.lastRing.r >= JELLY.waveMaxR * JELLY.wild.waveRest) this.emitRings(s.x, s.y, JELLY.wild.rings);
           continue;
         }
         const rested = !this.lastRing || this.lastRing.r >= JELLY.waveMaxR * JELLY.waveRest;
@@ -230,7 +236,7 @@ export class JellyFight {
         const l = Math.hypot(dx, dy) || 1;
         const len = this.chargeLength(s, dx / l, dy / l, wild ? JELLY.wild.chargeLen : JELLY.chargeLen);
         ai.windDir = { dx: dx / l, dy: dy / l, len };
-        ai.wind = wild ? 0.6 : 0.8;
+        ai.wind = wild ? JELLY.wild.wind : 0.8;
         run.telegraphs.push({ x: s.x, y: s.y, r: s.r * 0.8, t: 0, dur: ai.wind, dmg: 0, line: { dx: dx / l, dy: dy / l, len } });
         ai.wait = wild ? rr(run.rand, JELLY.wild.actEvery) : rr(run.rand, JELLY.hopEvery) * 1.4;
       } else {
@@ -294,12 +300,14 @@ export class JellyFight {
     c.left -= step;
     c.trail += moved;
     // goo trail, spaced so there's always a gap to slip through
-    while (c.trail >= JELLY.trailEvery) {
-      c.trail -= JELLY.trailEvery;
-      this.goo.push({ x: s.x, y: s.y, r: JELLY.gooDrop * (this.phase === 2 ? 1.35 : 1), until: run.t + JELLY.gooLife });
+    const wild = this.phase === 2;
+    const every = wild ? JELLY.wild.trailEvery : JELLY.trailEvery;
+    while (c.trail >= every) {
+      c.trail -= every;
+      this.addGoo(s.x, s.y, JELLY.gooDrop * (wild ? 1.2 : 1), wild ? JELLY.wild.gooLife : JELLY.gooLife);
     }
     if (run.air <= 0 && Math.hypot(s.x - run.x, s.y - run.y) < s.r * 0.8 + run.r) {
-      this.hit(JELLY.pct.charge, false);
+      this.hit(JELLY.pct.charge, false, false, 'Slime charge');
       run.rootFor(JELLY.rootBump);
     }
     if (c.left <= 0 || moved < step * 0.3) ai.charge = null;
@@ -340,17 +348,27 @@ export class JellyFight {
       // jump over it, or slip through a gap
       if ((JELLY.jumpRings && run.air > 0) || this.inGap(ring, Math.atan2(run.y - ring.y, run.x - ring.x))) continue;
       ring.hit = true;
-      this.hit(JELLY.pct.ring, true);
+      this.hit(JELLY.pct.ring, true, false, 'Ring');
       run.slowFor(JELLY.waveSlowTime);
     }
     this.rings = this.rings.filter((r) => r.r < JELLY.waveMaxR);
   }
 
   /** Called by the run when a jelly telegraph lands. */
-  landed(tg: { x: number; y: number; r: number; pct?: number; slimed?: boolean; goo?: number }) {
+  landed(tg: { x: number; y: number; r: number; pct?: number; slimed?: boolean; goo?: number; style?: string }) {
     const run = this.run;
-    if (tg.goo) this.goo.push({ x: tg.x, y: tg.y, r: tg.goo, until: run.t + JELLY.gooLife });
-    if (Math.hypot(run.x - tg.x, run.y - tg.y) < tg.r + run.r * 0.5) this.hit(tg.pct ?? 0.1, !!tg.slimed, true);
+    if (tg.goo) this.addGoo(tg.x, tg.y, tg.goo, JELLY.gooLife);
+    const what = tg.style === 'spout' ? 'Falling glob' : tg.slimed ? 'King Jelly slam' : 'Slime landing';
+    if (Math.hypot(run.x - tg.x, run.y - tg.y) < tg.r + run.r * 0.5) this.hit(tg.pct ?? 0.1, !!tg.slimed, true, what);
+  }
+
+  /** New goo; in the wild phase the oldest puddles dry up once there are too many. */
+  private addGoo(x: number, y: number, r: number, life: number) {
+    this.goo.push({ x, y, r, until: this.run.t + life });
+    if (this.phase === 2 && this.goo.length > JELLY.wild.gooCap) {
+      this.goo.sort((a, b) => a.until - b.until);
+      this.goo.splice(0, this.goo.length - JELLY.wild.gooCap);
+    }
   }
 
   private updateGoo() {
@@ -367,12 +385,16 @@ export class JellyFight {
   }
 
   /** A hit from the boss: % of your max HP, +30% while rooted; the crowned slime's hits add Slimed. */
-  private hit(pct: number, slimed: boolean, ignoreIframes = false) {
+  private hit(pct: number, slimed: boolean, ignoreIframes = false, what = 'King Jelly') {
     const run = this.run;
     if (ignoreIframes) run.iframes = 0;
     if (run.iframes > 0) return;
     const rooted = run.rootUntil > run.t ? JELLY.rootedDamage : 1;
     const landed = run.hurt(run.stats.maxHp * pct * rooted, undefined, 'slam');
+    if (landed) {
+      this.hitLog.push(rooted > 1 ? `${what} (while rooted)` : what);
+      if (this.hitLog.length > 12) this.hitLog.shift();
+    }
     if (slimed && landed) {
       this.slimed++;
       if (this.slimed >= JELLY.lethal) {

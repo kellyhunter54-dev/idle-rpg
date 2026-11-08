@@ -195,3 +195,7 @@ body.runmode .choice-box { touch-action: pan-y; }
   #bossbar { top: 172px; }
   #tslots .rslot, #wslots .rslot { width: 26px; height: 26px; font-size: 13px; }
 }
+
+.recap { text-align: left; max-width: 460px; margin: 0 auto 12px; padding: 8px 10px; font-size: 13px; line-height: 1.5; border: 2px solid #6ccf5a; background: #0b0806b0; }
+.recap b { color: #9be38a; }
+.recap .tip { color: #ffd166; margin-top: 4px; }

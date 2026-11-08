@@ -356,8 +356,25 @@ function showEnd(r: Run) {
       <div><b>${r.items.length}</b><span>items</span></div>
     </div>
     ${record ? '<div class="end-record">New best for this hero!</div>' : ''}
+    ${recap(r)}
     <div class="dmg-list">${rows}</div>`;
   $('end').classList.remove('hidden');
+}
+
+/** Died to King Jelly: what got you, so the next attempt knows what to fix. */
+function recap(r: Run): string {
+  const j = r.jelly;
+  if (r.ended !== 'dead' || !r.inLair || !j) return '';
+  const last = j.hitLog.slice(-6);
+  const counts = new Map<string, number>();
+  for (const h of j.hitLog) counts.set(h.replace(' (while rooted)', ''), (counts.get(h.replace(' (while rooted)', '')) ?? 0) + 1);
+  const top = [...counts].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} x${n}`).join(', ');
+  const phase = ['phase 1', 'phase 2', 'the wild phase'][j.phase];
+  const tip = top.startsWith('Ring') ? 'Watch for the gaps in each ring and walk into one early; getting slowed by one ring is what makes the next one land.'
+    : top.startsWith('Falling glob') ? 'Globs show their circle for 2 seconds; keep moving between them instead of waiting.'
+    : top.startsWith('Slime charge') || top.startsWith('Bumped') ? 'Mini slimes charge along the red lanes; step out sideways, never along the lane.'
+    : 'Every attack shows its circle first; the fill tells you when it lands.';
+  return `<div class="recap"><b>King Jelly got you in ${phase}${j.slimed ? `, ${j.slimed} Slimed` : ''}.</b><div>Hits taken: ${top}</div><div>Last hits: ${last.join(' → ')}</div><div class="tip">${tip}</div></div>`;
 }
 
 function fmtBig(n: number) {
