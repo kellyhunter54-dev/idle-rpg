@@ -2,7 +2,7 @@ import '@fontsource/pixelify-sans/400.css';
 import '@fontsource/pixelify-sans/600.css';
 import { JobId } from '../data';
 import * as PX from '../pixel';
-import { HEROES, ITEM, RUN, RUN_RARITIES, TOME, WEAPON } from './data';
+import { HEROES, ITEM, PASSIVE, PASSIVES, RUN, RUN_RARITIES, WEAPON } from './data';
 import { setupRunInput } from './input';
 import { RunRenderer } from './render';
 import { Run } from './run';
@@ -57,15 +57,17 @@ function showTitle() {
   box.innerHTML = '';
   (['warrior', 'archer', 'mage'] as JobId[]).forEach((job) => {
     const h = HEROES[job];
-    const w = WEAPON[h.weapon];
     const b = best[job];
+    const abil = h.abilities.map((id, i) => `<span class="hc-ab${i ? '' : ' start'}" title="${WEAPON[id].name}: ${WEAPON[id].desc}">${WEAPON[id].icon}</span>`).join('');
     const card = document.createElement('button');
     card.className = 'hero-card';
     card.innerHTML = `
       <canvas width="64" height="72"></canvas>
       <div class="hc-name">${h.name}</div>
-      <div class="hc-line">${w.icon} ${w.name}</div>
+      <div class="hc-line">Starts with ${WEAPON[h.abilities[0]].name}</div>
+      <div class="hc-abs">${abil}</div>
       <div class="hc-pass">${h.passive}</div>
+      <div class="hc-more">${PASSIVES[job].length} class passives</div>
       <div class="hc-best">${b ? (b.win ? `Won in ${fmtTime(b.time)}` : `Best: ${fmtTime(b.time)}, Lv ${b.level}`) : 'No runs yet'}</div>`;
     portrait(card.querySelector('canvas')!, job);
     card.addEventListener('click', () => startRun(job));
@@ -163,7 +165,7 @@ function renderCards(r: Run) {
     const el = document.createElement('button');
     el.className = `card r-${c.rarity.id}`;
     el.style.setProperty('--rc', c.rarity.color);
-    const tag = c.kind === 'newWeapon' ? 'NEW WEAPON' : c.kind === 'newTome' ? 'NEW TOME' : c.level ? `Lv ${c.level}` : c.kind === 'boon' ? 'BOON' : '';
+    const tag = c.kind === 'newWeapon' ? 'NEW ABILITY' : c.kind === 'newPassive' ? 'NEW PASSIVE' : c.kind === 'passive' ? `Lv ${c.level} / ${PASSIVE[c.id].max}` : c.level ? `Lv ${c.level}` : c.kind === 'boon' ? 'BOON' : '';
     el.innerHTML = `
       <div class="card-top"><span class="card-rar">${c.rarity.name}</span><span class="card-tag">${tag}</span></div>
       <div class="card-icon">${c.icon}</div>
@@ -201,14 +203,16 @@ function updateHud(r: Run) {
     setText('clocksub', 'beat the Gloom Tide');
   }
   $('clock').classList.toggle('danger', r.t >= RUN.length || r.timeLeft < 30);
-  const ws = [0, 1, 2, 3].map((i) => {
-    const w = r.weapons[i];
-    return w ? slotHtml(w.def.icon, w.level, `${w.def.name}: ${w.def.desc}`) : '<div class="rslot empty"></div>';
+  // the class's 4 abilities, locked ones dimmed
+  const ws = r.hero.abilities.map((id) => {
+    const w = r.weapons.find((x) => x.def.id === id);
+    const d = WEAPON[id];
+    return w ? slotHtml(d.icon, w.level, `${d.name}: ${d.desc}`) : `<div class="rslot locked" title="${d.name} (not learned yet)"><span>${d.icon}</span></div>`;
   });
   setHtml('wslots', ws.join(''));
-  const ts = [0, 1, 2, 3].map((i) => {
-    const t = r.tomes[i];
-    return t ? slotHtml(TOME[t.id].icon, t.level, TOME[t.id].name) : '<div class="rslot empty"></div>';
+  const ts = r.passives.map((p) => {
+    const d = PASSIVE[p.id];
+    return slotHtml(d.icon, p.level, `${d.name}: ${r.passiveTotal(p)}`);
   });
   setHtml('tslots', ts.join(''));
   // items: grouped with counts

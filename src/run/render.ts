@@ -224,16 +224,18 @@ export class RunRenderer {
     // poison pools
     for (const p of run.pools) {
       const left = Math.min(1, (p.until - run.t) * 2);
+      const pc = run.weapons[p.w]?.def.color ?? '#6fbf3a';
+      const spikes = run.weapons[p.w]?.def.id === 'traps';
       f.globalAlpha = 0.45 * left;
-      f.fillStyle = '#6fbf3a';
+      f.fillStyle = spikes ? '#5a4630' : '#6fbf3a';
       f.beginPath();
       f.arc(p.x, p.y, p.r, 0, Math.PI * 2);
       f.fill();
       f.globalAlpha = 0.8 * left;
-      f.strokeStyle = '#b8f27a';
+      f.strokeStyle = spikes ? pc : '#b8f27a';
       f.lineWidth = 6;
       f.stroke();
-      f.fillStyle = '#d6ff9e';
+      f.fillStyle = spikes ? '#e6ecf2' : '#d6ff9e';
       for (let b = 0; b < 4; b++) {
         const a = time * 1.3 + b * 1.7 + p.x;
         const rr = p.r * (0.25 + ((b * 0.37 + time * 0.4) % 0.6));
@@ -460,7 +462,25 @@ export class RunRenderer {
     f.globalAlpha = 1;
     for (const e of run.fx) {
       const p = e.t / e.dur;
-      if (e.kind === 'zap') {
+      if (e.kind === 'zap' && e.text === 'arrows') {
+        // a few arrows dropping onto the spot
+        const sx = this.px(e.x, e.y);
+        const sy = this.py(e.x, e.y);
+        f.globalAlpha = 1 - p;
+        for (let i = 0; i < 4; i++) {
+          const ax = sx + ((i * 37) % 9 - 4) * 3 * B;
+          const ay = sy - (1 - Math.min(1, p * 2.5 + i * 0.08)) * 90 * B + ((i * 13) % 5) * B;
+          f.strokeStyle = '#1b1410';
+          f.lineWidth = 3 * B;
+          f.beginPath();
+          f.moveTo(ax, ay - 10 * B);
+          f.lineTo(ax, ay);
+          f.stroke();
+          f.strokeStyle = e.color;
+          f.lineWidth = B;
+          f.stroke();
+        }
+      } else if (e.kind === 'zap') {
         const sx = this.px(e.x, e.y);
         const sy = this.py(e.x, e.y);
         f.globalAlpha = 1 - p;
@@ -517,7 +537,7 @@ export class RunRenderer {
       const area = wpn.area * (1 + run.stats.area);
       const cnt = wpn.count + run.stats.count;
       const R = 130 * area;
-      const img = SP.blade();
+      const img = wpn.def.id === 'orbs' ? SP.orb(wpn.def.color) : SP.blade();
       const sc = area > 1.6 ? 2 : 1;
       for (let b = 0; b < cnt; b++) {
         const a = wpn.orbitA + (b / cnt) * Math.PI * 2;
@@ -624,6 +644,9 @@ export class RunRenderer {
     if (!back) drawWeapon();
     // HP bar under the feet
     bar(o, sx - 18, sy + 6, 36, 4, run.hp / run.stats.maxHp, run.hp < run.stats.maxHp * 0.3 ? '#e04848' : '#4caf50');
+    // Mana Shield
+    const smax = run.sp('shield');
+    if (smax > 0 && run.shield > 0) bar(o, sx - 18, sy + 11, 36, 2, run.shield / smax, '#8fd3ff');
     // jump cooldown pip
     if (run.jumpCd > 0 && run.air <= 0) {
       o.fillStyle = 'rgba(232,215,169,0.6)';

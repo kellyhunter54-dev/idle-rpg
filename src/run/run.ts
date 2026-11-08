@@ -4,7 +4,7 @@ import { JobId } from '../data';
 import { GameMap, TILE, Tile, fits, moveCircle } from '../map';
 import {
   BossDef, ELITE, ENEMIES, EnemyDef, FINAL_BOSS, HEROES, HeroDef, ITEM, ITEMS, ItemDef, MINI_BOSS, PStat, RUN, RUN_RARITIES,
-  RunRarity, SHRINE_BOONS, SHRINE_RADIUS, SHRINE_TIME, STAT_LABEL, TOME, TOMES, WEAPON, WEAPONS, WSTAT_NAME, WSTAT_STEP, WStat,
+  PASSIVE, PASSIVES, PSpecial, PassiveDef, RunRarity, SHRINE_BOONS, SHRINE_RADIUS, SHRINE_TIME, STAT_LABEL, WEAPON, WSTAT_NAME, WSTAT_STEP, WStat,
   WeaponDef, enemyHpScale, fmtStat, rollRarity, spawnRate, xpToNext,
 } from './data';
 
@@ -25,6 +25,11 @@ export interface Enemy {
   boss: 0 | 1 | 2;
   name: string;
   slowUntil: number;
+  /** Hunter's Mark */
+  marked: boolean;
+  /** Ignite */
+  burnDps: number;
+  burnUntil: number;
   hitFlash: number;
   /** ranged shot / boss move timer */
   cd: number;
@@ -150,14 +155,15 @@ export interface OwnedWeapon {
   total: number;
 }
 
-export interface OwnedTome {
+export interface OwnedPassive {
   id: string;
   level: number;
-  amount: number;
+  /** summed rarity multipliers of every pick (1 per common pick) */
+  mult: number;
 }
 
 export interface Choice {
-  kind: 'weapon' | 'newWeapon' | 'tome' | 'newTome' | 'boon' | 'gold';
+  kind: 'weapon' | 'newWeapon' | 'passive' | 'newPassive' | 'boon' | 'gold';
   id: string;
   name: string;
   icon: string;
@@ -185,6 +191,7 @@ export interface RunStats {
   gold: number;
   duration: number;
   jump: number;
+  pierce: number;
 }
 
 export interface RunInput {
@@ -265,6 +272,11 @@ export class Run {
   air = 0;
   airDur = 0;
   jumpCd = 0;
+  /** Mana Shield */
+  shield = 0;
+  lastHurt = -99;
+  private retaliateCd = 0;
+  private volleyN = 0;
   iframes = 0;
   hurtFlash = 0;
   level = 1;
@@ -277,7 +289,9 @@ export class Run {
 
   stats!: RunStats;
   weapons: OwnedWeapon[] = [];
-  tomes: OwnedTome[] = [];
+  passives: OwnedPassive[] = [];
+  /** special passive amounts, rebuilt in recalc() */
+  special: Partial<Record<PSpecial, number>> = {};
   items: ItemDef[] = [];
   boons: { stat: PStat; amount: number }[] = [];
 
@@ -319,7 +333,7 @@ export class Run {
     this.y = this.map.entrances[0].y;
     this.recalc();
     this.hp = this.stats.maxHp;
-    this.addWeapon(this.hero.weapon);
+    this.addWeapon(this.hero.abilities[0]);
     this.placeObjects();
   }
 
@@ -365,13 +379,19 @@ export class Run {
   recalc() {
     const s: RunStats = {
       dmg: 0, cd: 0, speed: 0, maxHp: this.hero.hp, pickup: 0, xp: 0, luck: 0, area: 0, count: 0,
-      crit: 0.05, critDmg: 0.8, armor: 0, regen: 0, curse: 0, gold: 0, duration: 0, jump: 0,
+      crit: 0.05, critDmg: 0.8, armor: 0, regen: 0, curse: 0, gold: 0, duration: 0, jump: 0, pierce: 0,
     };
     const add = (stat: PStat, v: number) => {
       (s as unknown as Record<string, number>)[stat] += v;
     };
     for (const [k, v] of Object.entries(this.hero.stats)) add(k as PStat, v!);
-    for (const t of this.tomes) add(TOME[t.id].stat, t.amount);
+    const sp: Partial<Record<PSpecial, number>> = {};
+    for (const p of this.passives) {
+      const d = PASSIVE[p.id];
+      for (const [k, v] of Object.entries(d.stats ?? {})) add(k as PStat, v! * p.mult);
+      if (d.special) sp[d.special] = (sp[d.special] ?? 0) + d.step! * p.mult;
+    }
+    this.special = sp;
     for (const it of this.items) for (const [k, v] of Object.entries(it.stats ?? {})) add(k as PStat, v!);
     for (const b of this.boons) add(b.stat, b.amount);
     s.armor = Math.min(0.7, s.armor);
@@ -425,6 +445,20 @@ export class Run {
     return out;
   }
 
+  /** Card text for one pick of a passive at a rarity multiplier. */
+  passiveLines(d: PassiveDef, mult: number): string[] {
+    const out = Object.entries(d.stats ?? {}).map(([k, v]) => `${fmtStat(k as PStat, v! * mult)} ${STAT_LABEL[k as PStat]}`);
+    if (d.special && d.text) out.push(d.text(d.step! * mult));
+    return out;
+  }
+  /** Tooltip for an owned passive (its total). */
+  passiveTotal(p: OwnedPassive): string {
+    return this.passiveLines(PASSIVE[p.id], p.mult).join(', ');
+  }
+  sp(k: PSpecial): number {
+    return this.special[k] ?? 0;
+  }
+
   /** Builds the three level-up cards. */
   makeLevelChoices(): Choice[] {
     type Cand = { w: number; make: () => Choice };
@@ -440,34 +474,31 @@ export class Run {
         },
       });
     }
-    if (this.weapons.length < 4)
-      for (const d of WEAPONS)
-        if (!this.weapons.some((w) => w.def.id === d.id))
-          cands.push({ w: 1.2, make: () => ({ kind: 'newWeapon', id: d.id, name: d.name, icon: d.icon, rarity: RUN_RARITIES[0], level: 1, lines: ['New weapon', d.desc], apply: () => this.addWeapon(d.id) }) });
-    for (const t of this.tomes) {
-      const d = TOME[t.id];
-      if (d.maxLevel && t.level >= d.maxLevel) continue;
-      cands.push({
-        w: 2.4,
-        make: () => {
-          const rar = d.flat ? RUN_RARITIES[0] : rollRarity(luck, this.rand);
-          const amt = d.flat ? d.step : d.step * rar.mult;
-          return { kind: 'tome', id: d.id, name: d.name, icon: d.icon, rarity: rar, level: t.level + 1, lines: [`${fmtStat(d.stat, amt)} ${d.desc}`], apply: () => { t.level++; t.amount += amt; this.recalc(); } };
-        },
-      });
+    for (const id of this.hero.abilities) {
+      if (this.weapons.some((w) => w.def.id === id)) continue;
+      const d = WEAPON[id];
+      cands.push({ w: 1.8, make: () => ({ kind: 'newWeapon', id: d.id, name: d.name, icon: d.icon, rarity: RUN_RARITIES[0], level: 1, lines: ['New ability', d.desc], apply: () => this.addWeapon(d.id) }) });
     }
-    if (this.tomes.length < 4)
-      for (const d of TOMES)
-        if (!this.tomes.some((t) => t.id === d.id))
-          cands.push({
-            w: 1,
-            make: () => {
-              const rar = d.flat ? RUN_RARITIES[0] : rollRarity(luck, this.rand);
-              const amt = d.flat ? d.step : d.step * rar.mult;
-              const extra = d.stat === 'curse' ? ['Foes get tougher'] : [];
-              return { kind: 'newTome', id: d.id, name: d.name, icon: d.icon, rarity: rar, level: 1, lines: ['New tome', `${fmtStat(d.stat, amt)} ${d.desc}`, ...extra], apply: () => { this.tomes.push({ id: d.id, level: 1, amount: amt }); this.recalc(); } };
-            },
-          });
+    const pick = (d: PassiveDef, owned: OwnedPassive | undefined): Choice => {
+      const rar = d.flat ? RUN_RARITIES[0] : rollRarity(luck, this.rand);
+      const lines = this.passiveLines(d, rar.mult);
+      return {
+        kind: owned ? 'passive' : 'newPassive', id: d.id, name: d.name, icon: d.icon, rarity: rar, level: (owned?.level ?? 0) + 1,
+        lines: owned ? lines : ['New passive', ...lines],
+        apply: () => {
+          if (owned) {
+            owned.level++;
+            owned.mult += rar.mult;
+          } else this.passives.push({ id: d.id, level: 1, mult: rar.mult });
+          this.recalc();
+        },
+      };
+    };
+    for (const d of PASSIVES[this.job]) {
+      const owned = this.passives.find((p) => p.id === d.id);
+      if (owned && owned.level >= d.max) continue;
+      cands.push({ w: owned ? 2.2 : 1.6, make: () => pick(d, owned) });
+    }
     const out: Choice[] = [];
     while (out.length < 3 && cands.length) {
       let tot = cands.reduce((a, c) => a + c.w, 0) * this.rand();
@@ -601,6 +632,9 @@ export class Run {
     this.iframes -= dt;
     this.hurtFlash -= dt;
     if (this.stats.regen > 0) this.heal(this.stats.regen * dt);
+    const smax = this.sp('shield');
+    if (smax > 0 && this.t - this.lastHurt > 3) this.shield = Math.min(smax, this.shield + smax * 0.3 * dt);
+    this.retaliateCd -= dt;
   }
 
   /** Height of the hero's jump (world units), for the renderer. */
@@ -614,11 +648,26 @@ export class Run {
   taken = { contact: 0, shot: 0, slam: 0 };
   hurt(dmg: number, from?: Enemy, src: 'contact' | 'shot' | 'slam' = 'contact') {
     if (this.iframes > 0 || this.ended) return;
-    this.hp -= dmg * (1 - this.stats.armor);
-    this.taken[src] += dmg * (1 - this.stats.armor);
+    let d = dmg * (1 - this.stats.armor);
+    this.lastHurt = this.t;
+    if (this.shield > 0) {
+      const soak = Math.min(this.shield, d);
+      this.shield -= soak;
+      d -= soak;
+    }
+    this.hp -= d;
+    this.taken[src] += d;
     this.iframes = RUN.contactIframes;
-    this.hurtFlash = 0.25;
+    this.hurtFlash = d > 0 ? 0.25 : 0;
     if (from && this.hasProc('thorns')) this.hitEnemy(from, 40, -2, false);
+    const ret = this.sp('retaliate');
+    if (ret > 0 && this.retaliateCd <= 0 && this.weapons[0]) {
+      this.retaliateCd = 1;
+      const R = 190 * (1 + this.stats.area);
+      const rd = this.weaponStats(this.weapons[0]).dmg * ret * 2;
+      this.fx.push({ kind: 'nova', x: this.x, y: this.y, t: 0, dur: 0.35, r: R, color: '#ff8a5c' });
+      this.forEnemiesIn(this.x, this.y, R, (e) => this.hitEnemy(e, rd, -2, true, 420));
+    }
   }
 
   // ---------------------------------------------------------------- spawning
@@ -646,7 +695,7 @@ export class Run {
       id: this.nextId++, def, x, y, r, hp, maxHp: hp, speed: def.speed * (elite ? 0.9 : 1) * (0.92 + this.rand() * 0.16),
       dmg: def.dmg * (1 + this.t / 600) * (elite ? ELITE.dmgMult : 1), xp: def.xp * (elite ? ELITE.xpMult : 1),
       color: elite ? ELITE.color : def.color, elite, boss: 0, name: '', slowUntil: 0, hitFlash: 0, cd: 1 + this.rand() * 2,
-      kx: 0, ky: 0, dead: false, angle: 0, moving: true, touchCd: 0, move: '', moveT: 0, dirX: 0, dirY: 0, spawnT: 0.35,
+      kx: 0, ky: 0, dead: false, angle: 0, moving: true, touchCd: 0, move: '', moveT: 0, dirX: 0, dirY: 0, spawnT: 0.35, marked: false, burnDps: 0, burnUntil: 0,
     };
   }
 
@@ -713,7 +762,7 @@ export class Run {
     const e: Enemy = {
       id: this.nextId++, def: null, x: p.x, y: p.y, r: def.r, hp, maxHp: hp, speed: def.speed, dmg: def.dmg, xp: tier === 1 ? 120 : 400,
       color: def.color, elite: false, boss: tier, name: def.name, slowUntil: 0, hitFlash: 0, cd: 2.5, kx: 0, ky: 0, dead: false,
-      angle: 0, moving: true, touchCd: 0, move: '', moveT: 0, dirX: 0, dirY: 0, spawnT: 0.6,
+      angle: 0, moving: true, touchCd: 0, move: '', moveT: 0, dirX: 0, dirY: 0, spawnT: 0.6, marked: false, burnDps: 0, burnUntil: 0,
     };
     this.enemies.push(e);
     this.boss = e;
@@ -786,6 +835,16 @@ export class Run {
       if (e.dead) continue;
       e.hitFlash -= dt;
       e.touchCd -= dt;
+      if (e.burnUntil > this.t && !e.dead) {
+        const b = e.burnDps * dt;
+        e.hp -= b;
+        const wi = this.weapons.findIndex((x) => x.def.id === 'ember');
+        if (wi >= 0) this.weapons[wi].total += b;
+        if (e.hp <= 0) {
+          this.kill(e);
+          continue;
+        }
+      }
       if (e.spawnT > 0) {
         e.spawnT -= dt;
         continue;
@@ -944,6 +1003,16 @@ export class Run {
     if (e.dead) return false;
     let dmg = base;
     let crit = false;
+    // class passives that change damage taken by the foe
+    const mark = this.sp('mark');
+    if (mark) {
+      if (e.marked) dmg *= 1 + mark;
+      e.marked = true;
+    }
+    const fb = this.sp('frostbite');
+    if (fb && e.slowUntil > this.t) dmg *= 1 + fb;
+    const sharp = this.sp('sharpshot');
+    if (sharp && dist2(e.x, e.y, this.x, this.y) > 380 * 380) dmg *= 1 + sharp;
     if (canCrit && this.rand() < this.stats.crit) {
       crit = true;
       dmg *= 1.2 + this.stats.critDmg;
@@ -962,6 +1031,17 @@ export class Run {
     }
     if (this.fx.length < 220 && (crit || this.rand() < 0.6))
       this.fx.push({ kind: 'text', x: e.x + (this.rand() - 0.5) * 20, y: e.y, t: 0, dur: 0.6, r: 0, color: crit ? '#ffd166' : '#ffffff', text: String(Math.round(dmg)), crit });
+    const ign = this.sp('ignite');
+    if (ign && w >= 0 && this.weapons[w]?.def.id === 'ember') {
+      e.burnDps = Math.max(e.burnUntil > this.t ? e.burnDps : 0, (dmg * ign) / 3);
+      e.burnUntil = this.t + 3;
+    }
+    const ex = this.sp('execute');
+    if (ex && !e.boss && e.hp > 0 && e.hp < e.maxHp * ex) {
+      if (w >= 0 && this.weapons[w]) this.weapons[w].total += e.hp;
+      e.hp = 0;
+      this.fx.push({ kind: 'text', x: e.x, y: e.y, t: 0, dur: 0.6, r: 0, color: '#ff6b6b', text: 'X', crit: true });
+    }
     if (e.hp <= 0) {
       this.kill(e);
       return true;
@@ -972,6 +1052,8 @@ export class Run {
   private kill(e: Enemy) {
     e.dead = true;
     this.kills++;
+    const bl = this.sp('bloodlust');
+    if (bl) this.heal(bl);
     const s = this.stats;
     const xpv = e.xp * (1 + s.xp) * (1 + s.curse);
     this.dropXp(e.x, e.y, xpv);
@@ -1011,9 +1093,12 @@ export class Run {
   private weaponStats(w: OwnedWeapon) {
     const s = this.stats;
     const frenzy = this.hasProc('frenzy') && this.hp < s.maxHp * 0.5 ? 0.4 : 0;
+    const berserk = this.sp('berserk') * (1 - this.hp / s.maxHp);
+    const kite = this.moving ? this.sp('kite') : 0;
+    const momentum = this.moving ? this.sp('momentum') : 0;
     return {
-      dmg: w.dmg * (1 + s.dmg) * (1 + (this.level - 1) * 0.015),
-      cd: w.cd / (1 + w.haste + s.cd + frenzy),
+      dmg: w.dmg * (1 + s.dmg + momentum) * (1 + (this.level - 1) * 0.015),
+      cd: w.cd / (1 + w.haste + s.cd + frenzy + berserk + kite),
       count: w.count + s.count,
       area: w.area * (1 + s.area),
       duration: w.duration * (1 + s.duration),
@@ -1066,6 +1151,8 @@ export class Run {
         }
         w.timer = st.cd;
         w.burst = kind === 'nova' ? 1 + Math.floor((st.count - 1) / 2) : st.count;
+        // Echo: sometimes the whole cast happens twice
+        if (this.sp('echo') && this.rand() < this.sp('echo')) w.burst *= 2;
         w.burstT = 0;
         w.burstDir = 0;
       }
@@ -1113,10 +1200,18 @@ export class Run {
       const tgt = this.nearest(this.x, this.y, 900);
       let a = tgt ? Math.atan2(tgt.y - this.y, tgt.x - this.x) : this.angle;
       a += (n % 2 ? 1 : -1) * Math.ceil(n / 2) * 0.12;
-      this.shots.push({
-        kind: 'arrow', x: this.x, y: this.y, vx: Math.cos(a) * w.speed, vy: Math.sin(a) * w.speed, dmg: st.dmg, pierce: w.pierce, r: 10 * Math.sqrt(st.area),
-        life: 1.1, hit: new Set(), w: i, enemy: false, target: 0, area: st.area, dist: 0, back: false, range: 0, color: w.def.color,
-      });
+      const arrow = (ang: number) =>
+        this.shots.push({
+          kind: 'arrow', x: this.x, y: this.y, vx: Math.cos(ang) * w.speed, vy: Math.sin(ang) * w.speed, dmg: st.dmg, pierce: w.pierce + this.stats.pierce, r: 10 * Math.sqrt(st.area),
+          life: 1.1, hit: new Set(), w: i, enemy: false, target: 0, area: st.area, dist: 0, back: false, range: 0, color: w.def.color,
+        });
+      arrow(a);
+      // Volley: every 5th cast adds a fan of arrows
+      const vol = this.sp('volley');
+      if (vol && n === 0 && ++this.volleyN % 5 === 0) {
+        const extra = 2 + vol * 2;
+        for (let k = 1; k <= extra; k++) arrow(a + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 0.16);
+      }
     } else if (kind === 'bolt') {
       const tgt = this.randomNear(this.x, this.y, 650) ?? this.nearest(this.x, this.y, 900);
       const a = tgt ? Math.atan2(tgt.y - this.y, tgt.x - this.x) : this.rand() * Math.PI * 2;
@@ -1136,8 +1231,25 @@ export class Run {
       const e = this.randomNear(this.x, this.y, 620);
       if (!e) return;
       const R = 70 * st.area;
-      this.fx.push({ kind: 'zap', x: e.x, y: e.y, t: 0, dur: 0.3, r: R, color: w.def.color });
+      const style = w.def.id === 'rain' ? 'arrows' : 'bolt';
+      this.fx.push({ kind: 'zap', x: e.x, y: e.y, t: 0, dur: 0.3, r: R, color: w.def.color, text: style });
       this.forEnemiesIn(e.x, e.y, R, (o) => this.hitEnemy(o, st.dmg, i, true, 120, e.x, e.y));
+      // Overload: the spark jumps on to more foes
+      const chain = w.def.id === 'spark' ? this.sp('chain') : 0;
+      let from = e;
+      const hit = new Set([e.id]);
+      for (let c = 0; c < chain; c++) {
+        let next: Enemy | null = null;
+        this.forEnemiesIn(from.x, from.y, 300, (o) => {
+          if (!next && !hit.has(o.id)) next = o;
+        });
+        const nx = next as Enemy | null;
+        if (!nx) break;
+        hit.add(nx.id);
+        this.fx.push({ kind: 'zap', x: nx.x, y: nx.y, t: 0, dur: 0.3, r: R * 0.8, color: w.def.color, text: 'bolt' });
+        this.forEnemiesIn(nx.x, nx.y, R * 0.8, (o) => this.hitEnemy(o, st.dmg * 0.8, i, true, 120, nx.x, nx.y));
+        from = nx;
+      }
     } else if (kind === 'nova') {
       this.fx.push({ kind: 'nova', x: this.x, y: this.y, t: 0, dur: 0.55, r: 250 * st.area, color: w.def.color, hits: new Set(), dmg: st.dmg, slow: st.duration, w: i });
     } else if (kind === 'pool') {
@@ -1429,11 +1541,11 @@ export class Run {
     }
   }
 
-  /** Auto-picks a card (headless sim): favours weapons, then damage tomes. */
+  /** Auto-picks a card (headless sim): favours abilities, then passives. */
   autoPick() {
     if (!this.choices) return;
     const score = (c: Choice) =>
-      (c.kind === 'newWeapon' ? 5 : c.kind === 'weapon' ? 4 : c.kind === 'newTome' ? 3 : 2) + RUN_RARITIES.indexOf(c.rarity) * 0.8 + (c.id === 'peril' ? -6 : 0);
+      (c.kind === 'newWeapon' ? 5 : c.kind === 'weapon' ? 4 : c.kind === 'newPassive' ? 3.5 : 3) + RUN_RARITIES.indexOf(c.rarity) * 0.8 + (c.id === 'glass' ? -2 : 0);
     let best = 0;
     this.choices.forEach((c, i) => {
       if (score(c) > score(this.choices![best])) best = i;

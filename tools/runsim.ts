@@ -27,7 +27,7 @@ for (let r = 0; r < runs; r++) {
       const tot = run.weapons.reduce((a, w) => a + w.total, 0);
       const dps = Math.round((tot - lastDmg) / 60);
       lastDmg = tot;
-      console.log(`  ${Math.round(run.t / 60)}m dps ${dps} lv${run.level} hp ${Math.round(run.hp)}/${run.stats.maxHp} kills ${run.kills} enemies ${run.enemies.length} gold ${Math.round(run.gold)} items ${run.items.length} w[${run.weapons.map((w) => w.def.id + w.level).join(',')}] t[${run.tomes.map((t) => t.id + t.level).join(',')}]`);
+      console.log(`  ${Math.round(run.t / 60)}m dps ${dps} lv${run.level} hp ${Math.round(run.hp)}/${run.stats.maxHp} kills ${run.kills} enemies ${run.enemies.length} gold ${Math.round(run.gold)} items ${run.items.length} w[${run.weapons.map((w) => w.def.id + w.level).join(',')}] p[${run.passives.map((t) => t.id + t.level).join(',')}]`);
     }
   }
   const dmg = run.weapons.map((w) => `${w.def.id} ${Math.round(w.total / 1000)}k`).join(', ');

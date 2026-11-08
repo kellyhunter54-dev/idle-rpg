@@ -85,50 +85,88 @@ export interface WeaponDef {
 }
 
 export const WEAPONS: WeaponDef[] = [
-  { id: 'cleaver', name: 'Cleaver', icon: '🪓', desc: 'Wide sweeps at the closest foes.', kind: 'arc', dmg: 14, cd: 1.0, count: 1, area: 1, pierce: 0, speed: 0, duration: 0, ups: ['dmg', 'cd', 'count', 'area'], color: '#e6ecf2' },
+  // Warrior
+  { id: 'cleave', name: 'Cleave', icon: '🪓', desc: 'Wide sweeps at the closest foes, front then back.', kind: 'arc', dmg: 14, cd: 1.0, count: 1, area: 1, pierce: 0, speed: 0, duration: 0, ups: ['dmg', 'cd', 'count', 'area'], color: '#e6ecf2' },
+  { id: 'whirl', name: 'Whirlwind', icon: '🌀', desc: 'Spinning axes circle you for a few seconds.', kind: 'orbit', dmg: 12, cd: 4.0, count: 2, area: 1, pierce: 0, speed: 3.4, duration: 3, ups: ['dmg', 'cd', 'count', 'area', 'duration'], color: '#cfd8e3' },
+  { id: 'quake', name: 'Ground Slam', icon: '💥', desc: 'A shockwave from your feet that slows what it hits.', kind: 'nova', dmg: 12, cd: 2.8, count: 1, area: 1, pierce: 0, speed: 0, duration: 1.5, ups: ['dmg', 'cd', 'area', 'duration'], color: '#e0b073' },
+  { id: 'hatchet', name: 'Hurled Axe', icon: '🪃', desc: 'Thrown out and back, cutting everything twice.', kind: 'axe', dmg: 16, cd: 1.8, count: 1, area: 1, pierce: 99, speed: 620, duration: 0, ups: ['dmg', 'cd', 'count', 'area', 'speed'], color: '#c0a070' },
+  // Archer
   { id: 'longbow', name: 'Longbow', icon: '🏹', desc: 'Arrows at the nearest foe.', kind: 'arrow', dmg: 11, cd: 0.8, count: 1, area: 1, pierce: 1, speed: 900, duration: 0, ups: ['dmg', 'cd', 'count', 'pierce', 'speed'], color: '#e0c08a' },
+  { id: 'rain', name: 'Arrow Rain', icon: '🌧️', desc: 'Volleys fall on random foes nearby.', kind: 'storm', dmg: 15, cd: 1.6, count: 3, area: 1, pierce: 0, speed: 0, duration: 0, ups: ['dmg', 'cd', 'count', 'area'], color: '#e0c08a' },
+  { id: 'traps', name: 'Spike Traps', icon: '🪤', desc: 'Throws spike fields among your foes.', kind: 'pool', dmg: 4.5, cd: 2.6, count: 1, area: 1, pierce: 0, speed: 0, duration: 3.5, ups: ['dmg', 'cd', 'count', 'area', 'duration'], color: '#b08a5a' },
+  { id: 'disc', name: 'Ricochet Disc', icon: '🥏', desc: 'A disc that flies out and back through foes.', kind: 'axe', dmg: 13, cd: 1.5, count: 1, area: 1, pierce: 99, speed: 760, duration: 0, ups: ['dmg', 'cd', 'count', 'speed'], color: '#cfd8e3' },
+  // Mage
   { id: 'ember', name: 'Ember Bolt', icon: '🔥', desc: 'Seeking fire that bursts on impact.', kind: 'bolt', dmg: 13, cd: 1.1, count: 1, area: 1, pierce: 0, speed: 520, duration: 0, ups: ['dmg', 'cd', 'count', 'area', 'speed'], color: '#ff8c42' },
-  { id: 'blades', name: 'Whirling Blades', icon: '🌀', desc: 'Blades spin around you.', kind: 'orbit', dmg: 8, cd: 4.5, count: 2, area: 1, pierce: 0, speed: 3.2, duration: 3, ups: ['dmg', 'cd', 'count', 'area', 'duration'], color: '#cfd8e3' },
   { id: 'spark', name: 'Sky Spark', icon: '⚡', desc: 'Lightning strikes random foes nearby.', kind: 'storm', dmg: 18, cd: 1.6, count: 2, area: 1, pierce: 0, speed: 0, duration: 0, ups: ['dmg', 'cd', 'count', 'area'], color: '#ffe66d' },
   { id: 'frost', name: 'Frost Ring', icon: '❄️', desc: 'A freezing ring that slows what it touches.', kind: 'nova', dmg: 9, cd: 2.6, count: 1, area: 1, pierce: 0, speed: 0, duration: 2, ups: ['dmg', 'cd', 'area', 'duration'], color: '#a8e6ff' },
-  { id: 'axe', name: 'Homing Axe', icon: '🪃', desc: 'Thrown out and back, cutting everything twice.', kind: 'axe', dmg: 16, cd: 1.8, count: 1, area: 1, pierce: 99, speed: 620, duration: 0, ups: ['dmg', 'cd', 'count', 'area', 'speed'], color: '#c0a070' },
-  { id: 'venom', name: 'Venom Flask', icon: '🧪', desc: 'Leaves poison pools among your foes.', kind: 'pool', dmg: 6, cd: 2.4, count: 1, area: 1, pierce: 0, speed: 0, duration: 3.5, ups: ['dmg', 'cd', 'count', 'area', 'duration'], color: '#8fdc5a' },
-  { id: 'thorns', name: 'Bramble Aura', icon: '🌿', desc: 'Constant damage to everything close.', kind: 'aura', dmg: 5, cd: 0.5, count: 1, area: 1, pierce: 0, speed: 0, duration: 0, ups: ['dmg', 'cd', 'area'], color: '#7bc96f' },
+  { id: 'orbs', name: 'Arcane Orbs', icon: '🔮', desc: 'Orbs of force circle you for a few seconds.', kind: 'orbit', dmg: 8, cd: 4.5, count: 2, area: 1, pierce: 0, speed: 2.8, duration: 3.5, ups: ['dmg', 'cd', 'count', 'area', 'duration'], color: '#b388ff' },
 ];
 export const WEAPON: Record<string, WeaponDef> = Object.fromEntries(WEAPONS.map((w) => [w.id, w]));
 
-// ---------------------------------------------------------------- tomes (passive stat slots)
+// ---------------------------------------------------------------- class passives
 export type PStat =
-  | 'dmg' | 'cd' | 'speed' | 'maxHp' | 'pickup' | 'xp' | 'luck' | 'area' | 'count' | 'crit' | 'armor' | 'regen' | 'curse' | 'gold' | 'duration' | 'critDmg' | 'jump';
+  | 'dmg' | 'cd' | 'speed' | 'maxHp' | 'pickup' | 'xp' | 'luck' | 'area' | 'count' | 'crit' | 'armor' | 'regen' | 'curse' | 'gold' | 'duration' | 'critDmg' | 'jump' | 'pierce';
 
-export interface TomeDef {
+/** Special passive effects, handled in run.ts. The value is the summed amount. */
+export type PSpecial =
+  | 'bloodlust' | 'berserk' | 'retaliate' | 'execute' | 'momentum'
+  | 'mark' | 'kite' | 'sharpshot' | 'volley'
+  | 'shield' | 'ignite' | 'frostbite' | 'echo' | 'chain';
+
+export interface PassiveDef {
   id: string;
   name: string;
   icon: string;
-  stat: PStat;
-  /** amount per level at common rarity (fractions are percent) */
-  step: number;
-  /** count style tomes ignore rarity */
+  /** stats per pick (scaled by rarity unless flat) */
+  stats?: Partial<Record<PStat, number>>;
+  /** special effect amount per pick */
+  special?: PSpecial;
+  step?: number;
+  /** text for a special amount */
+  text?: (v: number) => string;
   flat?: boolean;
-  maxLevel?: number;
-  desc: string;
+  max: number;
 }
-export const TOMES: TomeDef[] = [
-  { id: 'might', name: 'Tome of Might', icon: '💪', stat: 'dmg', step: 0.1, desc: 'Damage' },
-  { id: 'haste', name: 'Tome of Haste', icon: '⏱️', stat: 'cd', step: 0.07, desc: 'Attack speed' },
-  { id: 'swift', name: 'Tome of Wind', icon: '👟', stat: 'speed', step: 0.07, desc: 'Move speed' },
-  { id: 'vital', name: 'Tome of Vigor', icon: '❤️', stat: 'maxHp', step: 20, desc: 'Max HP' },
-  { id: 'magnet', name: 'Tome of Pull', icon: '🧲', stat: 'pickup', step: 0.3, desc: 'Pickup range' },
-  { id: 'wisdom', name: 'Tome of Insight', icon: '📘', stat: 'xp', step: 0.1, desc: 'EXP gain' },
-  { id: 'fortune', name: 'Tome of Fortune', icon: '🍀', stat: 'luck', step: 10, desc: 'Luck' },
-  { id: 'reach', name: 'Tome of Reach', icon: '🔵', stat: 'area', step: 0.1, desc: 'Size' },
-  { id: 'plenty', name: 'Tome of Plenty', icon: '➕', stat: 'count', step: 1, flat: true, maxLevel: 3, desc: 'Projectiles' },
-  { id: 'precision', name: 'Tome of Precision', icon: '🎯', stat: 'crit', step: 0.06, desc: 'Crit chance' },
-  { id: 'guard', name: 'Tome of Guard', icon: '🛡️', stat: 'armor', step: 0.05, desc: 'Damage taken down' },
-  { id: 'renewal', name: 'Tome of Renewal', icon: '💚', stat: 'regen', step: 0.6, desc: 'HP regen /s' },
-  { id: 'peril', name: 'Tome of Peril', icon: '💀', stat: 'curse', step: 0.12, desc: 'More and tougher foes, more EXP and gold' },
-];
-export const TOME: Record<string, TomeDef> = Object.fromEntries(TOMES.map((t) => [t.id, t]));
+const pct = (v: number) => `${Math.round(v * 100)}%`;
+export const PASSIVES: Record<JobId, PassiveDef[]> = {
+  warrior: [
+    { id: 'giant', name: "Giant's Strength", icon: '💪', stats: { dmg: 0.12, area: 0.06 }, max: 5 },
+    { id: 'ironskin', name: 'Iron Skin', icon: '🛡️', stats: { armor: 0.06 }, max: 5 },
+    { id: 'vigor', name: 'Vigor', icon: '❤️', stats: { maxHp: 25, regen: 0.3 }, max: 5 },
+    { id: 'bloodlust', name: 'Bloodlust', icon: '🩸', special: 'bloodlust', step: 0.5, text: (v) => `Kills heal ${Math.round(v * 10) / 10} HP`, max: 5 },
+    { id: 'berserk', name: 'Berserker', icon: '😤', special: 'berserk', step: 0.5, text: (v) => `Up to +${pct(v)} attack speed as your HP drops`, max: 5 },
+    { id: 'retaliate', name: 'Retaliation', icon: '⚔️', special: 'retaliate', step: 1, text: (v) => `Getting hit releases a shockwave (${pct(v * 2)} damage)`, max: 5 },
+    { id: 'execute', name: 'Executioner', icon: '🪦', special: 'execute', step: 0.05, text: (v) => `Hits kill foes under ${pct(v)} HP (not bosses)`, max: 4 },
+    { id: 'hardened', name: 'Battle Hardened', icon: '🎖️', stats: { cd: 0.07, armor: 0.03 }, max: 5 },
+    { id: 'reach', name: 'Long Reach', icon: '📏', stats: { area: 0.12, duration: 0.1 }, max: 5 },
+    { id: 'momentum', name: 'Momentum', icon: '🏃', special: 'momentum', step: 0.1, text: (v) => `+${pct(v)} damage while moving`, max: 5 },
+  ],
+  archer: [
+    { id: 'eagle', name: 'Eagle Eye', icon: '🦅', stats: { crit: 0.06 }, max: 5 },
+    { id: 'deadly', name: 'Deadly Aim', icon: '🎯', stats: { critDmg: 0.3 }, max: 5 },
+    { id: 'fleet', name: 'Fleet Foot', icon: '👟', stats: { speed: 0.08, jump: 0.1 }, max: 5 },
+    { id: 'quickdraw', name: 'Quickdraw', icon: '⏱️', stats: { cd: 0.08 }, max: 5 },
+    { id: 'multishot', name: 'Multishot', icon: '➕', stats: { count: 1 }, flat: true, max: 3 },
+    { id: 'piercing', name: 'Barbed Tips', icon: '📌', stats: { pierce: 1 }, flat: true, max: 3 },
+    { id: 'mark', name: "Hunter's Mark", icon: '🔻', special: 'mark', step: 0.08, text: (v) => `Foes you've hit take +${pct(v)} damage`, max: 5 },
+    { id: 'kite', name: 'Kiting', icon: '💨', special: 'kite', step: 0.1, text: (v) => `+${pct(v)} attack speed while moving`, max: 5 },
+    { id: 'sharpshot', name: 'Sharpshooter', icon: '🔭', special: 'sharpshot', step: 0.15, text: (v) => `+${pct(v)} damage to foes far away`, max: 5 },
+    { id: 'volley', name: 'Volley', icon: '🎆', special: 'volley', step: 1, flat: true, text: (v) => `Every 5th Longbow shot fires a fan of ${2 + v * 2} extra arrows`, max: 3 },
+  ],
+  mage: [
+    { id: 'arcane', name: 'Arcane Power', icon: '✨', stats: { dmg: 0.1 }, max: 5 },
+    { id: 'spellhaste', name: 'Spell Haste', icon: '⏱️', stats: { cd: 0.08 }, max: 5 },
+    { id: 'wide', name: 'Wide Magic', icon: '🔵', stats: { area: 0.1, duration: 0.08 }, max: 5 },
+    { id: 'study', name: 'Studious', icon: '📘', stats: { xp: 0.12, pickup: 0.15 }, max: 5 },
+    { id: 'glass', name: 'Glass Cannon', icon: '🍷', stats: { dmg: 0.2, maxHp: -10 }, max: 3 },
+    { id: 'shield', name: 'Mana Shield', icon: '🫧', special: 'shield', step: 15, text: (v) => `A shield soaks ${Math.round(v)} damage, refills when you avoid hits`, max: 5 },
+    { id: 'ignite', name: 'Ignite', icon: '🔥', special: 'ignite', step: 0.4, text: (v) => `Ember Bolt burns for ${pct(v)} of its hit over 3s`, max: 5 },
+    { id: 'frostbite', name: 'Frostbite', icon: '🥶', special: 'frostbite', step: 0.15, text: (v) => `Slowed foes take +${pct(v)} damage`, max: 5 },
+    { id: 'chain', name: 'Overload', icon: '🌩️', special: 'chain', step: 1, flat: true, text: (v) => `Sky Spark jumps to ${v} more foe${v > 1 ? 's' : ''}`, max: 3 },
+    { id: 'echo', name: 'Echo', icon: '🔁', special: 'echo', step: 0.08, text: (v) => `${pct(v)} chance to cast an ability twice`, max: 5 },
+  ],
+};
+export const PASSIVE: Record<string, PassiveDef> = Object.fromEntries(Object.values(PASSIVES).flat().map((p) => [p.id, p]));
 
 // ---------------------------------------------------------------- items (from chests, unlimited)
 export interface ItemDef {
@@ -165,16 +203,17 @@ export const ITEM: Record<string, ItemDef> = Object.fromEntries(ITEMS.map((i) =>
 export interface HeroDef {
   job: JobId;
   name: string;
-  weapon: string;
+  /** the class's 4 abilities; the first is the one you start with */
+  abilities: string[];
   passive: string;
   stats: Partial<Record<PStat, number>>;
   hp: number;
   speed: number;
 }
 export const HEROES: Record<JobId, HeroDef> = {
-  warrior: { job: 'warrior', name: 'Warrior', weapon: 'cleaver', passive: 'Sturdy: +40 max HP, 10% less damage taken, +0.5 HP regen', stats: { armor: 0.1, regen: 0.5 }, hp: 140, speed: 225 },
-  archer: { job: 'archer', name: 'Archer', weapon: 'longbow', passive: 'Nimble: +10% move speed, +8% crit chance', stats: { speed: 0.1, crit: 0.08 }, hp: 100, speed: 235 },
-  mage: { job: 'mage', name: 'Mage', weapon: 'ember', passive: 'Scholar: +15% size, +15% EXP', stats: { area: 0.15, xp: 0.15 }, hp: 90, speed: 225 },
+  warrior: { job: 'warrior', name: 'Warrior', abilities: ['cleave', 'whirl', 'quake', 'hatchet'], passive: 'Sturdy: 10% less damage taken, +0.5 HP regen', stats: { armor: 0.1, regen: 0.5 }, hp: 140, speed: 225 },
+  archer: { job: 'archer', name: 'Archer', abilities: ['longbow', 'rain', 'traps', 'disc'], passive: 'Nimble: +10% move speed, +8% crit chance', stats: { speed: 0.1, crit: 0.08 }, hp: 100, speed: 235 },
+  mage: { job: 'mage', name: 'Mage', abilities: ['ember', 'spark', 'frost', 'orbs'], passive: 'Scholar: +15% size, +15% EXP', stats: { area: 0.15, xp: 0.15 }, hp: 90, speed: 225 },
 };
 
 // ---------------------------------------------------------------- enemies
@@ -252,11 +291,12 @@ export const SHRINE_RADIUS = 110;
 export const STAT_LABEL: Record<PStat, string> = {
   dmg: 'Damage', cd: 'Attack speed', speed: 'Move speed', maxHp: 'Max HP', pickup: 'Pickup range', xp: 'EXP gain',
   luck: 'Luck', area: 'Size', count: 'Projectiles', crit: 'Crit chance', armor: 'Damage taken down', regen: 'HP regen',
-  curse: 'Peril', gold: 'Gold gain', duration: 'Duration', critDmg: 'Crit damage', jump: 'Jump time',
+  curse: 'Peril', gold: 'Gold gain', duration: 'Duration', critDmg: 'Crit damage', jump: 'Jump time', pierce: 'Pierce',
 };
 /** Stats shown as a percent (the others are flat numbers). */
 export const PCT_STATS = new Set<PStat>(['dmg', 'cd', 'speed', 'pickup', 'xp', 'area', 'crit', 'armor', 'curse', 'gold', 'duration', 'critDmg', 'jump']);
 export function fmtStat(stat: PStat, v: number): string {
-  if (PCT_STATS.has(stat)) return `+${Math.round(v * 100)}%`;
-  return `+${Math.round(v * 10) / 10}`;
+  const sign = v < 0 ? '-' : '+';
+  if (PCT_STATS.has(stat)) return `${sign}${Math.round(Math.abs(v) * 100)}%`;
+  return `${sign}${Math.round(Math.abs(v) * 10) / 10}`;
 }
