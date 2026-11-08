@@ -18,6 +18,10 @@ export class Renderer {
   private camX = 0;
   private camY = 0;
   private camInit = false;
+  /** Phones and narrow screens use a stacked HUD layout. */
+  private get compact(): boolean {
+    return (typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches) || this.w < 720;
+  }
 
   constructor(private canvas: HTMLCanvasElement) {
     this.ctx = canvas.getContext('2d')!;
@@ -234,35 +238,37 @@ export class Renderer {
     // ---- boss bar ----
     const boss = g.mobs.find((m) => m.boss);
     if (boss) {
+      // sits below the floating HUD (further down on phones / narrow screens)
+      const o = this.compact ? 170 : 62;
       const bw = Math.min(420, w * 0.6);
       const x = (w - bw) / 2;
       ctx.fillStyle = '#e8d7a9';
       ctx.font = 'bold 14px Georgia, serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'bottom';
-      outlineText(ctx, `${boss.name}  ·  Lv ${boss.level}`, w / 2, 58);
-      bar(ctx, x, 62, bw, 12, boss.hp / boss.maxHp, '#a4161a', '#c9a227');
+      outlineText(ctx, `${boss.name}  ·  Lv ${boss.level}`, w / 2, 58 + o);
+      bar(ctx, x, 62 + o, bw, 12, boss.hp / boss.maxHp, '#a4161a', '#c9a227');
       // phase marks at 60% and 25%
       ctx.fillStyle = '#e8d7a9';
-      for (const f of BALANCE.bossPhaseAt) ctx.fillRect(x + bw * f - 1, 60, 2, 16);
+      for (const f of BALANCE.bossPhaseAt) ctx.fillRect(x + bw * f - 1, 60 + o, 2, 16);
       if (g.stats.t.stagger) {
         const staggered = boss.staggerUntil > g.time;
-        bar(ctx, x + bw * 0.25, 100, bw * 0.5, 5, staggered ? 1 : boss.stagger / 100, staggered ? '#ffffff' : '#ffd166');
+        bar(ctx, x + bw * 0.25, 100 + o, bw * 0.5, 5, staggered ? 1 : boss.stagger / 100, staggered ? '#ffffff' : '#ffd166');
         if (staggered) {
           ctx.font = 'bold 11px Georgia, serif';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'top';
           ctx.fillStyle = '#ffd166';
-          outlineText(ctx, 'STAGGERED', w / 2, 107);
+          outlineText(ctx, 'STAGGERED', w / 2, 107 + o);
         }
       }
       const t = Math.max(0, g.bossTimer / BALANCE.bossTimeLimit);
-      bar(ctx, x, 77, bw, 5, g.enraged ? 1 : t, g.enraged ? '#ff0000' : t < 0.3 ? '#ef4444' : '#c9a227');
+      bar(ctx, x, 77 + o, bw, 5, g.enraged ? 1 : t, g.enraged ? '#ff0000' : t < 0.3 ? '#ef4444' : '#c9a227');
       ctx.font = '11px Georgia, serif';
       ctx.textBaseline = 'top';
       ctx.fillStyle = g.enraged ? '#ff4d4d' : '#e8d7a9';
       const phaseTxt = ['', 'Phase 2', 'Phase 3'][boss.phase];
-      outlineText(ctx, g.enraged ? 'ENRAGED' : `Enrage in ${Math.ceil(g.bossTimer)}s${phaseTxt ? '  ·  ' + phaseTxt : ''}`, w / 2, 85);
+      outlineText(ctx, g.enraged ? 'ENRAGED' : `Enrage in ${Math.ceil(g.bossTimer)}s${phaseTxt ? '  ·  ' + phaseTxt : ''}`, w / 2, 85 + o);
     }
 
     if (g.deadTimer > 0) {
@@ -855,7 +861,7 @@ export class Renderer {
     const mw = g.map.w * k;
     const mh = g.map.h * k;
     const x0 = this.w - mw - 10;
-    const y0 = 42;
+    const y0 = this.compact ? 58 : 10;
     ctx.fillStyle = 'rgba(10,8,6,0.8)';
     ctx.fillRect(x0 - 3, y0 - 3, mw + 6, mh + 6);
     ctx.strokeStyle = '#6b5a36';

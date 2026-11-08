@@ -15,6 +15,8 @@ const esc = (t: string) => t.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&
 
 export class UI {
   tab: Tab = 'growth';
+  /** Is a menu window open over the game? */
+  open = false;
   private lastPanelHtml = '';
   private panelTimer = 0;
   private holdTimer: number | undefined;
@@ -27,13 +29,19 @@ export class UI {
   constructor(private game: Game) {
     game.onToast = (m, c) => this.toast(m, c);
 
+    // Menu buttons open a window over the game; clicking the same one again closes it.
     document.querySelectorAll<HTMLButtonElement>('#tabs button').forEach((b) => {
       b.addEventListener('click', () => {
-        this.tab = b.dataset.tab as Tab;
-        document.querySelectorAll('#tabs button').forEach((x) => x.classList.toggle('active', x === b));
-        this.renderPanel(true);
-        $('panel').scrollTop = 0;
+        const tab = b.dataset.tab as Tab;
+        if (this.open && this.tab === tab) this.closeWindow();
+        else this.openWindow(tab);
       });
+    });
+    $('winclose').addEventListener('click', () => this.closeWindow());
+    window.addEventListener('keydown', (e) => {
+      if (e.code !== 'Escape') return;
+      if (!$('modal').classList.contains('hidden')) this.closeModal();
+      else if (this.open) this.closeWindow();
     });
 
     $('bossbtn').addEventListener('click', () => {
@@ -314,7 +322,25 @@ export class UI {
     }
   }
 
+  openWindow(tab: Tab) {
+    this.tab = tab;
+    this.open = true;
+    const btn = document.querySelector<HTMLElement>(`#tabs button[data-tab="${tab}"]`);
+    $('wintitle').textContent = btn?.title ?? '';
+    document.querySelectorAll('#tabs button').forEach((x) => x.classList.toggle('active', x === btn));
+    $('window').classList.remove('hidden');
+    this.renderPanel(true);
+    $('panel').scrollTop = 0;
+  }
+
+  closeWindow() {
+    this.open = false;
+    $('window').classList.add('hidden');
+    document.querySelectorAll('#tabs button').forEach((x) => x.classList.remove('active'));
+  }
+
   renderPanel(force = false) {
+    if (!this.open) return;
     let html = '';
     switch (this.tab) {
       case 'growth': html = this.growthHtml(); break;
@@ -651,7 +677,7 @@ export class UI {
       </div>
       <button class="btn wide" style="background:#7f1d1d;margin-top:12px" data-action="reset">Reset this character to Lv 1</button>
       <p class="small" style="text-align:center;margin-top:16px"><a href="./side/">Play the classic side-scroller version</a></p>
-      <p class="muted small" style="text-align:center">v0.10.0</p>`;
+      <p class="muted small" style="text-align:center">v0.11.0</p>`;
   }
 
   // ---------------- Modals & toasts ----------------

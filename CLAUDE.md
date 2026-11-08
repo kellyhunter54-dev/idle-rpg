@@ -10,6 +10,7 @@
 - Spec cores: each spec should feel like its own class. Marksman = Focus/Deadeye (`FOCUS`, `Game.activateDeadeye`, `empoweredShot`). All talent stats are listed in `TALENT_STATS` and start at 0 (never reference a stat that isn't in that list).
 - Echoing Hollow: manual-only cave (`generateCave`, `Game.enterCave/exitCave`, `inCave` forces `auto` false). Cave mobs use zone id `CAVE.zone` (99) and scale to the player's level.
 - Monsters come from fixed spawn camps per zone (even level spread). AUTO avoids monsters 4+ levels above you and roams to level-appropriate camps.
+- Layout: full-screen canvas with floating HUD panels (index.html `#battle`). Menus are windows (`#window`) opened from the bottom-right buttons (`UI.openWindow/closeWindow`, Esc closes). Phones/narrow screens (`pointer: coarse` or < 720px) stack the HUD at the top, menu buttons on the right, windows as a bottom sheet; the renderer's `compact` getter moves the boss bar/minimap to match.
 - `main` is the isometric game. The old side-scroller lives on the `side-scroller` branch and deploys to /side/; leave it alone unless asked.
 - Planned: replace gacha with an ironman-style gear system (work for everything; drops are the only RNG). Long-term goal is a low-grind MMO. Keep `src/game.ts` free of DOM code so `npm run sim` keeps working.
 - Balance lives in `src/data.ts` (`BALANCE` and the content tables). After balance changes, run `npm run sim -- 6` and check pacing.

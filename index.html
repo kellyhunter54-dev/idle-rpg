@@ -11,51 +11,61 @@
   <body>
     <div id="charselect" class="hidden"></div>
     <div id="app" class="hidden">
-      <header id="topbar">
-        <div class="lvl">
-          <span id="lvl">Lv. 1</span>
-          <div class="expbar"><div id="expfill"></div></div>
-        </div>
-        <div class="cur"><span>🪙</span><b id="gold">0</b></div>
-        <div class="cur"><span>💎</span><b id="gems">0</b></div>
-        <button id="switchbtn" class="cur hudswitch" title="Switch character">👥</button>
-      </header>
-
       <section id="battle">
         <canvas id="canvas"></canvas>
+
+        <!-- HUD floating over the game -->
+        <header id="topbar" class="hudpanel">
+          <div class="lvl">
+            <span id="lvl">Lv. 1</span>
+            <div class="expbar"><div id="expfill"></div></div>
+          </div>
+          <div class="cur"><span>🪙</span><b id="gold">0</b></div>
+          <div class="cur"><span>💎</span><b id="gems">0</b></div>
+          <button id="switchbtn" class="cur hudswitch" title="Switch character">👥</button>
+        </header>
         <div id="hud-top">
           <button id="autobtn" class="hudbtn">AUTO</button>
           <span id="modebadge" class="badge hidden">MANUAL</span>
         </div>
-        <div id="keyhint">WASD move · Mouse aim · Click / Space attack · 1-3 skills · F deadeye · R flask · E summon · Q auto</div>
+        <div id="keyhint">WASD move · Mouse aim · Click / Space attack · 1-3 skills · F deadeye · R flask · E summon · Q auto · Esc close menu</div>
+
+        <section id="stagebar" class="hudpanel">
+          <div class="stage-info">
+            <div id="stagename">Stage</div>
+            <div class="killbar"><div id="killfill"></div><span id="killtext"></span></div>
+          </div>
+          <div class="stage-side">
+            <div class="power">⚡ <b id="power">0</b></div>
+            <button id="bossbtn" class="btn boss hidden">Fight boss</button>
+            <button id="leavebtn" class="btn alt hidden">Leave lair</button>
+          </div>
+        </section>
+
         <div id="skillbar"></div>
         <div id="stick" class="hidden"><div id="stick-knob"></div></div>
         <div id="pad-right" class="pad">
           <button data-key="attack">⚔️</button>
         </div>
-      </section>
 
-      <section id="stagebar">
-        <div>
-          <div id="stagename">Stage</div>
-          <div class="killbar"><div id="killfill"></div><span id="killtext"></span></div>
+        <nav id="tabs">
+          <button data-tab="growth" title="Growth">📈<span>Growth</span></button>
+          <button data-tab="world" title="World">🗺️<span>World</span></button>
+          <button data-tab="talents" class="tabdot-host" title="Talents">🌟<span>Talents</span><i id="talentdot" class="tabdot hidden"></i></button>
+          <button data-tab="gear" title="Gear">🗡️<span>Gear</span></button>
+          <button data-tab="companions" title="Companions">🐾<span>Allies</span></button>
+          <button data-tab="summon" title="Summon">✨<span>Summon</span></button>
+          <button data-tab="info" title="Info">⚙️<span>Info</span></button>
+        </nav>
+
+        <div id="window" class="hidden">
+          <div class="win-head">
+            <span id="wintitle"></span>
+            <button id="winclose" title="Close (Esc)">✕</button>
+          </div>
+          <main id="panel"></main>
         </div>
-        <div class="power">⚡ <b id="power">0</b></div>
-        <button id="bossbtn" class="btn boss hidden">Fight boss</button>
-        <button id="leavebtn" class="btn alt hidden">Leave lair</button>
       </section>
-
-      <nav id="tabs">
-        <button data-tab="growth" class="active">📈<span>Growth</span></button>
-        <button data-tab="world">🗺️<span>World</span></button>
-        <button data-tab="talents" class="tabdot-host">🌟<span>Talents</span><i id="talentdot" class="tabdot hidden"></i></button>
-        <button data-tab="gear">🗡️<span>Gear</span></button>
-        <button data-tab="companions">🐾<span>Companions</span></button>
-        <button data-tab="summon">✨<span>Summon</span></button>
-        <button data-tab="info">⚙️<span>Info</span></button>
-      </nav>
-
-      <main id="panel"></main>
     </div>
 
     <div id="toasts"></div>
