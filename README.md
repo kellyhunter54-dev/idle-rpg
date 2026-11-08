@@ -55,12 +55,19 @@ Level is the main source of power (`LEVEL_POWER` in `src/data.ts`): base ATK and
 
 ## Talents
 
-Each job has one tree (`TALENT_TREES` in `src/data.ts`): Warrior **Blademaster** (attack speed, off-hand strikes, bleeds, armor shred, Blade Dance keystone), Archer **Marksman** (crit, long range, boss stagger, ricochet, Killshot keystone), Mage **Arcane** (mana, Arcane Charges, cooldown reduction, Frost Ward, Mana Shield keystone).
+Each job has one tree (`TALENT_TREES` in `src/data.ts`): Warrior **Blademaster** (attack speed, off-hand strikes, bleeds, armor shred, Blade Dance keystone), Archer **Marksman** (core: Focus meter and Deadeye empowered arrows; talents: Barbed, Split Shot, Seeking, Prolonged Focus, Concussive stagger, Second Nature, Trueshot keystone), Mage **Arcane** (mana, Arcane Charges, cooldown reduction, Frost Ward, Mana Shield keystone).
 
 - 1 point per level from Lv 2; unspent points are derived from level (`talentsAvailable`), so changing level never breaks them.
 - Rows unlock every 5 points spent in the tree; the keystone needs 25.
 - Passive numbers are summed in `talentStats` (stats.ts); procs live in `Game.damage`, `Game.playerAttacks`, `Game.tickDots`, `Game.startSkill` and `Game.hurtPlayer`.
 - Respec is free for now; Auto-assign spends points top to bottom.
+
+### Spec cores
+
+Each spec has its own core mechanic that its talents build on:
+- **Marksman:** arrows build Focus (`FOCUS` in data.ts). At full Focus, Deadeye (F, AUTO fires it instantly) empowers basic arrows for 6s: they pierce and deal +40%.
+- **Arcane:** mana and Arcane Charges.
+- **Blademaster:** bleeds and off-hand strikes (core mechanic still to come).
 
 ## Echoing Hollow (manual-only cave)
 

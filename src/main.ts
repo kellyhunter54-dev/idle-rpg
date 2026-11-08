@@ -27,6 +27,9 @@ function startGame(slot: number) {
   // Skill buttons for this job (built before input setup so they get listeners)
   document.getElementById('skillbar')!.innerHTML =
     `<button class="skillbtn flask" id="flaskbtn" title="Healing flask (R): heals ${Math.round(BALANCE.flaskHeal * 100)}%">🧪<span class="key">R</span><div class="count" id="flaskcount"></div></button>` +
+    (game.usesFocus
+      ? `<button class="skillbtn deadeye" id="deadeyebtn" title="Deadeye (F): at full Focus, your arrows are empowered">🎯<div class="fill" id="focusfill"></div><span class="key">F</span></button>`
+      : '') +
     game.job.skills
     .map(
       (sk, i) => `<button class="skillbtn" data-skill="${i}" title="${sk.name} (${i + 1}), unlocks at Lv ${sk.unlock}">
@@ -43,6 +46,11 @@ function startGame(slot: number) {
     ui.toast(game.auto ? 'AUTO on: your hero plays itself.' : 'AUTO off: full manual control.', '#c9a227');
   };
   document.getElementById('autobtn')!.addEventListener('click', toggleAuto);
+  document.getElementById('deadeyebtn')?.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    const why = game.activateDeadeye();
+    if (why) ui.toast(why, '#ffd166');
+  });
   document.getElementById('flaskbtn')!.addEventListener('pointerdown', (e) => {
     e.preventDefault();
     game.drinkFlask();
@@ -54,6 +62,10 @@ function startGame(slot: number) {
     if (t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT')) return;
     if (e.code === 'KeyE' && !e.repeat && game.inLair >= 0) ui.trySummon();
     if (e.code === 'KeyR' && !e.repeat) game.drinkFlask();
+    if (e.code === 'KeyF' && !e.repeat) {
+      const why = game.activateDeadeye();
+      if (why) ui.toast(why, '#ffd166');
+    }
   });
 
   const switchCharacter = () => {

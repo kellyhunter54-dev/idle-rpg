@@ -507,36 +507,49 @@ export function levelColor(mobLevel: number, playerLevel: number): string {
 
 // ---------- Talents ----------
 /** Passive numbers a talent can add (per rank). stats.ts sums them into TalentStats. */
-export type TalentStat =
-  | 'atkPct' // +% ATK
-  | 'atkSpeed' // +% attack speed
-  | 'critRate'
-  | 'critDmg'
-  | 'offhandChance' // chance a melee basic attack strikes again with the off-hand
-  | 'offhandRatio' // extra off-hand damage (base 50% of the main hand)
-  | 'bleed' // basic hits bleed for this share of the hit over 4s
-  | 'shred' // each shred stack: target takes +this% damage (max 5 stacks)
-  | 'critShred' // like shred, but only applied by crits
-  | 'bloodlust' // +% attack speed per bleeding enemy nearby (max 5)
-  | 'whirlBonus' // Whirlwind damage, and it applies bleed
-  | 'bleedHeal' // bleed ticks heal this share of max HP
-  | 'longShot' // +% damage to targets more than 250 away
-  | 'pierceBonus' // Piercing Arrow damage
-  | 'stagger' // boss stagger build rate
-  | 'staggerBonus' // +% damage to staggered enemies
-  | 'quickdraw' // seconds off Piercing Arrow per crit
-  | 'ricochet' // chance a crit bounces to another enemy
-  | 'bossDmg' // +% damage to bosses
-  | 'manaRegen' // +% mana regen
-  | 'cdr' // skill cooldown reduction
-  | 'charges' // Arcane Charges: max charges = 2 + this
-  | 'chargeBonus' // extra damage per charge consumed
-  | 'manaTap' // mana restored per bolt hit
-  | 'flux' // seconds off all skill cooldowns per crit
-  | 'surge' // mana refund when casting at max charges
-  | 'frostWard' // Frost Nova damage reduction
-  | 'chargeCrit' // crit chance per charge held
-  | 'hemorrhage' | 'bladeDance' | 'killshot' | 'manaShield'; // keystones / flags
+export const TALENT_STATS = [
+  'atkPct',
+  'atkSpeed',
+  'critRate',
+  'critDmg',
+  'offhandChance',
+  'offhandRatio',
+  'bleed',
+  'shred',
+  'critShred',
+  'bloodlust',
+  'whirlBonus',
+  'bleedHeal',
+  'longShot',
+  'pierceBonus',
+  'stagger',
+  'staggerBonus',
+  'quickdraw',
+  'ricochet',
+  'bossDmg',
+  'manaRegen',
+  'cdr',
+  'charges',
+  'chargeBonus',
+  'manaTap',
+  'flux',
+  'surge',
+  'frostWard',
+  'chargeCrit',
+  'focusGain',
+  'barbed',
+  'splitShot',
+  'seeking',
+  'deadeyeDur',
+  'secondNature',
+  'trueshot',
+  'hemorrhage',
+  'bladeDance',
+  'killshot',
+  'manaShield',
+] as const;
+/** Passive numbers a talent can add (per rank). stats.ts sums them into TalentStats; all start at 0. */
+export type TalentStat = (typeof TALENT_STATS)[number];
 
 export interface TalentNode {
   id: string;
@@ -590,30 +603,30 @@ export const TALENT_TREES: Record<JobId, TalentTree> = {
     ],
   },
   archer: {
-    job: 'archer', name: 'Marksman', theme: 'Precision, crits and boss stagger',
+    job: 'archer', name: 'Marksman', theme: 'Build Focus, unleash Deadeye, empower every arrow',
     nodes: [
       { id: 'mk_steady', name: 'Steady Aim', icon: '🎯', tier: 0, col: 0, maxRank: 5, reqPoints: 0, perRank: { critRate: 0.03 },
         desc: (r) => `+${pct(0.03 * r)} crit chance.` },
-      { id: 'mk_keen', name: 'Keen Eye', icon: '👁️', tier: 0, col: 1, maxRank: 5, reqPoints: 0, perRank: { critDmg: 0.12 },
-        desc: (r) => `+${pct(0.12 * r)} crit damage.` },
-      { id: 'mk_long', name: 'Long Shot', icon: '🏹', tier: 1, col: 0, maxRank: 3, reqPoints: 5, perRank: { longShot: 0.08 },
-        desc: (r) => `+${pct(0.08 * r)} damage to enemies more than 250 away. Stay back!` },
-      { id: 'mk_called', name: 'Called Shot', icon: '➶', tier: 1, col: 1, maxRank: 3, reqPoints: 5, perRank: { pierceBonus: 0.35 },
-        desc: (r) => `Piercing Arrow deals +${pct(0.35 * r)} damage.` },
-      { id: 'mk_concuss', name: 'Concussive Shots', icon: '💫', tier: 2, col: 0, maxRank: 3, reqPoints: 10, perRank: { stagger: 1 },
-        desc: (r) => `Your hits build stagger on bosses (${['', 'slowly', 'steadily', 'quickly'][r]}). A full meter stuns the boss for 2.5s.` },
-      { id: 'mk_weak', name: 'Weak Spot', icon: '🩻', tier: 2, col: 1, maxRank: 3, reqPoints: 10, perRank: { critShred: 0.04 },
-        desc: (r) => `Crits expose a weak spot: each stack makes the target take +${pct(0.04 * r)} damage (max 5 stacks, 4s).` },
-      { id: 'mk_exploit', name: 'Exploit Weakness', icon: '⚡', tier: 3, col: 0, maxRank: 3, reqPoints: 15, perRank: { staggerBonus: 0.15 },
-        desc: (r) => `Staggered enemies take +${pct(0.15 * r)} damage from you.` },
-      { id: 'mk_quick', name: 'Quickdraw', icon: '⏱️', tier: 3, col: 1, maxRank: 2, reqPoints: 15, perRank: { quickdraw: 0.4 },
-        desc: (r) => `Crits take ${(0.4 * r).toFixed(1)}s off Piercing Arrow's cooldown.` },
-      { id: 'mk_rico', name: 'Ricochet', icon: '↩️', tier: 4, col: 0, maxRank: 2, reqPoints: 20, perRank: { ricochet: 0.2 },
-        desc: (r) => `Crits have a ${pct(0.2 * r)} chance to bounce to another enemy nearby.` },
-      { id: 'mk_hunter', name: "Hunter's Focus", icon: '🦅', tier: 4, col: 1, maxRank: 3, reqPoints: 20, perRank: { bossDmg: 0.1 },
-        desc: (r) => `+${pct(0.1 * r)} damage to bosses.` },
-      { id: 'mk_kill', name: 'Killshot', icon: '☠️', tier: 5, col: 2, maxRank: 1, reqPoints: 25, keystone: true, perRank: { killshot: 1 },
-        desc: () => 'KEYSTONE. Crits against enemies below 30% HP deal triple damage. Stagger lasts twice as long.' },
+      { id: 'mk_rapid', name: 'Rapid Fire', icon: '💨', tier: 0, col: 1, maxRank: 5, reqPoints: 0, perRank: { atkSpeed: 0.05 },
+        desc: (r) => `+${pct(0.05 * r)} attack speed.` },
+      { id: 'mk_trained', name: 'Trained Eye', icon: '👁️', tier: 1, col: 0, maxRank: 3, reqPoints: 5, perRank: { focusGain: 0.2 },
+        desc: (r) => `Focus builds ${pct(0.2 * r)} faster.` },
+      { id: 'mk_keen', name: 'Keen Eye', icon: '💥', tier: 1, col: 1, maxRank: 3, reqPoints: 5, perRank: { critDmg: 0.15 },
+        desc: (r) => `+${pct(0.15 * r)} crit damage.` },
+      { id: 'mk_barbed', name: 'Barbed Arrows', icon: '🩸', tier: 2, col: 0, maxRank: 3, reqPoints: 10, perRank: { barbed: 0.3 },
+        desc: (r) => `Empowered arrows make enemies bleed for ${pct(0.3 * r)} of the hit over 4s (stacks 5x).` },
+      { id: 'mk_split', name: 'Split Shot', icon: '🔱', tier: 2, col: 1, maxRank: 2, reqPoints: 10, perRank: { splitShot: 1 },
+        desc: (r) => `Each empowered shot also fires ${r} extra arrow${r > 1 ? 's' : ''} at other enemies nearby.` },
+      { id: 'mk_seek', name: 'Seeking Arrows', icon: '🧭', tier: 3, col: 0, maxRank: 1, reqPoints: 15, perRank: { seeking: 1 },
+        desc: () => 'Empowered arrows curve toward enemies and fly 25% further.' },
+      { id: 'mk_prolong', name: 'Prolonged Focus', icon: '⏳', tier: 3, col: 1, maxRank: 2, reqPoints: 15, perRank: { deadeyeDur: 2 },
+        desc: (r) => `Deadeye lasts ${2 * r}s longer.` },
+      { id: 'mk_concuss', name: 'Concussive Arrows', icon: '💫', tier: 4, col: 0, maxRank: 3, reqPoints: 20, perRank: { stagger: 1 },
+        desc: (r) => `Arrows build stagger on bosses (${['', 'slowly', 'steadily', 'quickly'][r]}); empowered arrows build it 2x faster. A full meter stuns the boss for 2.5s and it takes +25% damage. Each stagger makes the next one take longer.` },
+      { id: 'mk_second', name: 'Second Nature', icon: '🌀', tier: 4, col: 1, maxRank: 2, reqPoints: 20, perRank: { secondNature: 0.25 },
+        desc: (r) => `During Deadeye, each crit adds ${(0.25 * r).toFixed(2)}s to it.` },
+      { id: 'mk_true', name: 'Trueshot', icon: '☀️', tier: 5, col: 2, maxRank: 1, reqPoints: 25, keystone: true, perRank: { trueshot: 1 },
+        desc: () => 'KEYSTONE. Deadeye no longer runs on a timer: each empowered arrow drains 7 Focus and every crit refunds 10. Empowered arrows deal +30% more damage.' },
     ],
   },
   mage: {
@@ -653,6 +666,18 @@ export const TALENT_NODE: Record<string, TalentNode> = Object.fromEntries(
 export function talentPointsForLevel(level: number): number {
   return Math.max(0, level - 1);
 }
+
+/** Marksman core: Focus builds on arrow hits; at full, Deadeye empowers basic arrows. */
+export const FOCUS = {
+  max: 100,
+  perHit: 7,
+  perCrit: 4, // extra on a crit
+  duration: 6,
+  damage: 0.4, // empowered arrows +40%
+  trueshotDamage: 0.3,
+  trueshotDrain: 7,
+  trueshotRefund: 10,
+};
 
 /** Mage mana (the other jobs have none). */
 export const MANA = { base: 100, regen: 10, shieldShare: 0.4, shieldCost: 1.5, keystoneCostMult: 1.2 };

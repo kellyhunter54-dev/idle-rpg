@@ -283,6 +283,14 @@ export class UI {
     ab.classList.toggle('on', g.auto);
     ab.textContent = g.inCave ? 'AUTO 🔒' : g.auto ? 'AUTO ✓' : 'AUTO ✗';
     $('modebadge').classList.toggle('hidden', g.inCave ? false : !g.auto || !g.manualActive);
+    const de = document.getElementById('deadeyebtn');
+    if (de) {
+      const ff = document.getElementById('focusfill')!;
+      const frac = g.deadeye ? (g.stats.t.trueshot ? g.focus / 100 : Math.max(0, (g.deadeyeEnd - g.time) / (6 + g.stats.t.deadeyeDur))) : g.focus / 100;
+      ff.style.height = `${Math.max(0, Math.min(1, frac)) * 100}%`;
+      de.classList.toggle('ready', !g.deadeye && g.focus >= 100);
+      de.classList.toggle('active', g.deadeye);
+    }
     const fc = document.getElementById('flaskcount');
     if (fc) {
       fc.textContent = String(g.flasks);
@@ -606,6 +614,7 @@ export class UI {
       <p class="muted small"><b>${CAVE.name}:</b> a cave in ${ZONES[0].name} where AUTO is switched off. Monsters there match your level and give ${BALANCE.caveExpMult}x EXP, so it's the fastest way to level if you play yourself.</p>
       <p class="muted small"><b>Boss lairs:</b> walk into a lair's archway, then press E or Summon boss at the circle. Leave through the blue Exit portal or the Leave lair button.</p>
       <p class="muted small"><b>Bosses</b> are meant to be hard. Every attack is marked on the ground in red first, and a big hit takes a large share of your max HP no matter how much HP you have. Only out-levelling a boss makes its hits smaller. Bosses speed up and learn new attacks at 60% and 25% HP, and enrage after ${Math.round(BALANCE.bossTimeLimit / 60)} minutes. AUTO dodges like an average player; beating a boss at its own level takes your own hands.</p>
+      <p class="muted small"><b>🎯 Marksman (Archer):</b> every arrow that hits builds Focus. At full Focus press F (AUTO does it right away) for Deadeye: your arrows pierce and hit 40% harder for 6s. The Marksman talents build on this.</p>
       <p class="muted small"><b>🧪 Flasks (R)</b> heal ${Math.round(BALANCE.flaskHeal * 100)}% of your HP. You carry ${BALANCE.flaskCharges}; they refill when you enter a lair and slowly out in the world. AUTO drinks when low.</p>
       <p class="muted small">Monsters flash red and show an orange arc before they swing.</p>
       <p class="muted small">Your hero fights on its own. Spend 🪙 gold on Growth and summon gear and companions with 💎 gems. Explore east into harder zones when you are ready (the 🗺️ World tab shows where your level fits), and challenge each zone's boss at its altar. You keep earning for up to ${BALANCE.offlineCapHours} hours while away, farming wherever you left your hero.</p>
@@ -642,7 +651,7 @@ export class UI {
       </div>
       <button class="btn wide" style="background:#7f1d1d;margin-top:12px" data-action="reset">Reset this character to Lv 1</button>
       <p class="small" style="text-align:center;margin-top:16px"><a href="./side/">Play the classic side-scroller version</a></p>
-      <p class="muted small" style="text-align:center">v0.9.0</p>`;
+      <p class="muted small" style="text-align:center">v0.10.0</p>`;
   }
 
   // ---------------- Modals & toasts ----------------

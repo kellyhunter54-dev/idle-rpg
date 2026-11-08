@@ -446,6 +446,13 @@ export class Renderer {
     const sx = this.px(p.x, p.y);
     const bob = p.moving ? Math.abs(Math.sin(time * 11)) * 4 : Math.sin(time * 2.5) * 1.2;
     const sy = this.py(p.x, p.y) - bob;
+    if (g.deadeye) {
+      const glow = ctx.createRadialGradient(sx, sy - 30 * k, 4, sx, sy - 30 * k, 60 * k);
+      glow.addColorStop(0, `rgba(255,209,102,${0.45 + 0.15 * Math.sin(time * 8)})`);
+      glow.addColorStop(1, 'rgba(255,209,102,0)');
+      ctx.fillStyle = glow;
+      ctx.fillRect(sx - 60 * k, sy - 90 * k, 120 * k, 120 * k);
+    }
     ctx.save();
     ctx.globalAlpha = g.deadTimer > 0 ? 0.3 : 1;
     drawHeroFigure(ctx, sx, sy, k, g.job, this.screenDir(p.angle), g.anim.swing, p.moving, time, g.anim.playerHit > 0.5);
@@ -453,6 +460,7 @@ export class Renderer {
     const by = sy - 46 * k - 34 * k;
     bar(ctx, sx - 22 * k, by, 44 * k, 5, g.hp / g.stats.maxHp, '#4caf50');
     if (g.stats.maxMana > 0) bar(ctx, sx - 22 * k, by + 6, 44 * k, 4, g.mana / g.stats.maxMana, '#4ea1ff');
+    if (g.usesFocus) bar(ctx, sx - 22 * k, by + 6, 44 * k, 4, g.focus / 100, g.deadeye ? '#fff3c4' : '#ffd166');
     // Arcane Charges
     const maxC = g.maxCharges();
     for (let i = 0; i < maxC; i++) {
@@ -475,9 +483,17 @@ export class Renderer {
       const sy = this.py(pr.x, pr.y, 28);
       if (pr.kind === 'arrow') {
         const d = this.screenDir(pr.angle);
-        const len = 26 * this.k + 6;
+        const len = (pr.empowered ? 44 : 26) * this.k + 6;
+        if (pr.empowered) {
+          ctx.strokeStyle = 'rgba(255,209,102,0.35)';
+          ctx.lineWidth = 8;
+          ctx.beginPath();
+          ctx.moveTo(sx - d.dx * len * 1.4, sy - d.dy * len * 1.4);
+          ctx.lineTo(sx, sy);
+          ctx.stroke();
+        }
         ctx.strokeStyle = pr.color;
-        ctx.lineWidth = 3;
+        ctx.lineWidth = pr.empowered ? 4 : 3;
         ctx.beginPath();
         ctx.moveTo(sx - d.dx * len, sy - d.dy * len);
         ctx.lineTo(sx, sy);

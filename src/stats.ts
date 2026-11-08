@@ -1,5 +1,5 @@
 import {
-  BALANCE, GROWTH, MANA, Slot, TALENT_NODE, TALENT_TREES, TalentStat, companionOwnedAtk, gearEffect, jobOf,
+  BALANCE, GROWTH, MANA, Slot, TALENT_NODE, TALENT_STATS, TALENT_TREES, TalentStat, companionOwnedAtk, gearEffect, jobOf,
   levelBaseAtk, levelBaseHp, parseGear, talentPointsForLevel,
 } from './data';
 import { GameState } from './state';
@@ -26,9 +26,8 @@ export type TalentStats = Record<TalentStat, number>;
 
 /** Sums the allocated talents of the character's own job tree. */
 export function talentStats(state: GameState): TalentStats {
-  const t = {} as TalentStats;
-  for (const tree of Object.values(TALENT_TREES))
-    for (const n of tree.nodes) for (const k of Object.keys(n.perRank) as TalentStat[]) t[k] = 0;
+  // every stat starts at 0, even ones no current talent uses (so maths never sees undefined)
+  const t = Object.fromEntries(TALENT_STATS.map((k) => [k, 0])) as TalentStats;
   const tree = TALENT_TREES[jobOf(state).id];
   for (const n of tree.nodes) {
     const rank = Math.min(n.maxRank, state.talents[n.id] ?? 0);

@@ -1,6 +1,6 @@
 import {
   BALANCE, COMPANION, COMPANIONS, GROWTH, GrowthKey, JobDef, MobStats, RARITIES, Rarity, SLOTS,
-  Slot, TALENT_TREES, TIERS, TIER_WEIGHTS, ZONES, CAVE, MANA, BOSS_MOVE_PCT, SkillDef, BossMove, bossName, bossPctScale, jobOf, companionHitMult, dealtLevelMult, enhanceCopies,
+  Slot, TALENT_TREES, TIERS, TIER_WEIGHTS, ZONES, CAVE, FOCUS, MANA, BOSS_MOVE_PCT, SkillDef, BossMove, bossName, bossPctScale, jobOf, companionHitMult, dealtLevelMult, enhanceCopies,
   expLevelMult, expToNext, gearId, gearScore, mobForZone, parseGear, takenLevelMult,
 } from './data';
 import {
@@ -73,6 +73,7 @@ export interface Mob extends MobStats {
   /** Boss stagger meter (0..100) and when the current stagger ends. */
   stagger: number;
   staggerUntil: number;
+  staggers: number;
   invuln: number; // boss: phase-change roar
   chargeTo: Vec | null;
 }
@@ -157,6 +158,10 @@ export interface Projectile {
   label?: string;
   hit: number[];
   src: DmgSrc;
+  /** Marksman Deadeye arrow. */
+  empowered?: boolean;
+  seeking?: boolean;
+  bleedShare?: number;
 }
 
 /** Where a hit came from (talents care: bleeds come from basic attacks, etc.). */
@@ -269,6 +274,10 @@ export class Game {
   private fluxCd = 0;
   private basicCount = 0;
   private manaToastAt = -99;
+  /** Marksman: Focus meter and Deadeye (empowered arrows). */
+  focus = 0;
+  deadeye = false;
+  deadeyeEnd = 0;
   /**
    * How AUTO handles boss telegraphs: base reaction time, random extra delay, and the chance
    * it doesn't notice one at all. Tuned to play like a distracted average player; the boss
@@ -641,6 +650,7 @@ export class Game {
   }
 
   private resetTransient() {
+    if (this.deadeye) this.endDeadeye();
     this.telegraphs = [];
     this.blasts = [];
     this.projectiles = [];
@@ -685,6 +695,7 @@ export class Game {
     this.fluxCd -= dt;
     if (this.stats.maxMana > 0) this.mana = Math.min(this.stats.maxMana, this.mana + this.stats.manaRegen * dt);
     this.tickDots(dt);
+    this.updateFocus();
     if (this.inLair < 0 && this.flasks < BALANCE.flaskCharges) {
       this.flaskRegen += dt;
       if (this.flaskRegen >= BALANCE.flaskRegen) {
@@ -875,7 +886,7 @@ export class Game {
       ...stats, id: this.nextMobId++, zone, maxHp: stats.hp, x: p.x, y: p.y, r, angle: this.rand() * 6.28,
       state: 'idle', timer: 0, homeX: p.x, homeY: p.y, wander: { x: 0, y: 0 }, path: null, pathTimer: 0,
       hitFlash: 0, spawnAnim: 1, moving: false, actionTimer: 0, chargeTo: null, phase: 0, invuln: 0, camp: -1,
-      bleeds: [], bleedTimer: 0, shred: 0, shredPct: 0, shredTimer: 0, stagger: 0, staggerUntil: 0,
+      bleeds: [], bleedTimer: 0, shred: 0, shredPct: 0, shredTimer: 0, stagger: 0, staggerUntil: 0, staggers: 0,
     };
   }
 
@@ -1522,12 +1533,84 @@ export class Game {
         for (const m of targets) this.damage(m, dmg * this.stats.offhandRatio, 'Off-hand', '#d0d6e0', 'basic');
       }
     } else if (basic.kind === 'arrow') {
-      this.shoot({ angle, speed: basic.speed ?? 900, maxDist: basic.range, damage: dmg, kind: 'arrow', color: '#e8d7a9', src: 'basic' });
+      if (this.deadeye) this.empoweredShot(angle, dmg);
+      else this.shoot({ angle, speed: basic.speed ?? 900, maxDist: basic.range, damage: dmg, kind: 'arrow', color: '#e8d7a9', src: 'basic' });
     } else {
       this.shoot({ angle, speed: basic.speed ?? 650, maxDist: basic.range, damage: dmg, kind: 'bolt', color: '#b388ff', splash: basic.splash, src: 'basic' });
       // Arcane Charges build on every bolt
       if (t.charges) this.charges = Math.min(this.maxCharges(), this.charges + 1);
     }
+  }
+
+  // ---------------- Marksman: Focus & Deadeye ----------------
+  get usesFocus(): boolean {
+    return this.job.basic.kind === 'arrow';
+  }
+
+  /** Enter Deadeye at full Focus. Returns a reason if you can't. */
+  activateDeadeye(): string | null {
+    if (!this.usesFocus) return null;
+    if (this.deadeye) return 'Deadeye is already active.';
+    if (this.focus < FOCUS.max) return `Focus ${Math.floor(this.focus)}/${FOCUS.max}. Keep landing arrows.`;
+    this.deadeye = true;
+    this.deadeyeEnd = this.time + FOCUS.duration + this.stats.t.deadeyeDur;
+    this.anim.flash = 0.8;
+    this.anim.flashColor = '#ffd166';
+    this.effect('ring', this.player.x, this.player.y, 90, '#ffd166', 0.6);
+    this.float(this.player.x, this.player.y, 70, 'DEADEYE', '#ffd166', 18);
+    return null;
+  }
+
+  private endDeadeye() {
+    this.deadeye = false;
+    this.focus = 0;
+  }
+
+  private updateFocus() {
+    if (!this.usesFocus) return;
+    if (this.deadeye) {
+      if (this.stats.t.trueshot ? this.focus <= 0 : this.time >= this.deadeyeEnd) this.endDeadeye();
+      return;
+    }
+    // AUTO fires Deadeye the moment it's full and something is in range
+    if (this.auto && this.focus >= FOCUS.max && this.nearestMob(this.job.basic.range, this.player, true)) this.activateDeadeye();
+  }
+
+  /** An arrow landed: build Focus (or feed Deadeye). */
+  private onArrowHit(crit: boolean) {
+    const t = this.stats.t;
+    if (this.deadeye) {
+      if (crit && t.trueshot) this.focus = Math.min(FOCUS.max, this.focus + FOCUS.trueshotRefund);
+      else if (crit && t.secondNature) this.deadeyeEnd += t.secondNature;
+      return;
+    }
+    this.focus = Math.min(FOCUS.max, this.focus + (FOCUS.perHit + (crit ? FOCUS.perCrit : 0)) * (1 + t.focusGain));
+  }
+
+  /** Deadeye basic attack: piercing, harder-hitting arrows (plus talent extras). */
+  private empoweredShot(angle: number, dmg: number) {
+    const t = this.stats.t;
+    const basic = this.job.basic;
+    const power = dmg * (1 + FOCUS.damage + (t.trueshot ? FOCUS.trueshotDamage : 0));
+    const range = basic.range * (t.seeking ? 1.25 : 1);
+    const opts = {
+      speed: (basic.speed ?? 900) * 1.15, maxDist: range, damage: power, kind: 'arrow' as const, color: '#ffd166',
+      pierce: true, src: 'basic' as const, empowered: true, seeking: !!t.seeking, bleedShare: t.barbed || undefined,
+    };
+    this.shoot({ angle, ...opts });
+    // Split Shot: extra arrows at other enemies (or fanned out if there are none)
+    const extra = Math.round(t.splitShot);
+    if (extra > 0) {
+      const p = this.player;
+      const others = this.mobs
+        .filter((m) => dist(m, p) <= range && Math.abs(angDiff(angle, angleTo(p, m))) > 0.15)
+        .sort((a, b) => dist(a, p) - dist(b, p));
+      for (let k = 0; k < extra; k++) {
+        const a = others[k] ? angleTo(p, others[k]) : angle + (k % 2 ? -1 : 1) * 0.22 * Math.ceil((k + 1) / 2);
+        this.shoot({ angle: a, ...opts, damage: power * 0.6 });
+      }
+    }
+    if (t.trueshot) this.focus = Math.max(0, this.focus - FOCUS.trueshotDrain);
   }
 
   maxCharges(): number {
@@ -1541,8 +1624,8 @@ export class Game {
   }
 
   /** Adds a bleed stack (max 5) worth `share` of the hit over 4 seconds. */
-  private applyBleed(m: Mob, hit: number) {
-    const share = Math.max(this.stats.t.bleed, 0.25);
+  private applyBleed(m: Mob, hit: number, shareOverride?: number) {
+    const share = shareOverride ?? Math.max(this.stats.t.bleed, 0.25);
     m.bleeds.push({ tick: (hit * share) / 8, left: 8 });
     if (m.bleeds.length > 5) m.bleeds.shift();
   }
@@ -1580,18 +1663,37 @@ export class Game {
   private shoot(o: {
     angle: number; speed: number; maxDist: number; damage: number; kind: Projectile['kind'];
     color: string; splash?: number; pierce?: boolean; label?: string; src?: DmgSrc;
+    empowered?: boolean; seeking?: boolean; bleedShare?: number;
   }) {
     const p = this.player;
     this.projectiles.push({
       x: p.x + Math.cos(o.angle) * (p.r + 6), y: p.y + Math.sin(o.angle) * (p.r + 6),
       angle: o.angle, speed: o.speed, traveled: 0, maxDist: o.maxDist, damage: o.damage, kind: o.kind,
       color: o.color, splash: o.splash ?? 0, pierce: !!o.pierce, label: o.label, hit: [], src: o.src ?? 'skill',
+      empowered: o.empowered, seeking: o.seeking, bleedShare: o.bleedShare,
     });
   }
 
   private updateProjectiles(dt: number) {
     const keep: Projectile[] = [];
     for (const pr of this.projectiles) {
+      if (pr.seeking) {
+        // curve toward the nearest enemy ahead that this arrow hasn't hit yet
+        let best: Mob | null = null;
+        let bd = 360;
+        for (const m of this.mobs) {
+          if (pr.hit.includes(m.id)) continue;
+          const d = dist(m, pr);
+          if (d < bd && Math.abs(angDiff(pr.angle, angleTo(pr, m))) < 1.6) {
+            bd = d;
+            best = m;
+          }
+        }
+        if (best) {
+          const turn = 7 * dt;
+          pr.angle += Math.max(-turn, Math.min(turn, angDiff(pr.angle, angleTo(pr, best))));
+        }
+      }
       const step = pr.speed * dt;
       let alive = true;
       // sub-step so fast arrows can't skip past a mob
@@ -1611,8 +1713,12 @@ export class Game {
           this.explode(pr);
           alive = false;
         } else {
-          this.damage(hit, pr.damage, pr.label, undefined, pr.src);
+          const crit = this.damage(hit, pr.damage, pr.label, pr.empowered ? '#ffd166' : undefined, pr.src, !!pr.empowered);
           if (pr.src === 'basic') this.onBoltHit();
+          if (pr.src === 'basic' && pr.kind === 'arrow') {
+            this.onArrowHit(crit);
+            if (pr.bleedShare && this.mobs.includes(hit)) this.applyBleed(hit, pr.damage, pr.bleedShare);
+          }
           if (pr.pierce) pr.hit.push(hit.id);
           else alive = false;
         }
@@ -1829,11 +1935,12 @@ export class Game {
     });
   }
 
-  private damage(m: Mob, base: number, label?: string, color?: string, src: DmgSrc = 'skill') {
-    if (!this.mobs.includes(m)) return;
+  /** Deals damage (with every talent modifier and proc). Returns whether it crit. */
+  private damage(m: Mob, base: number, label?: string, color?: string, src: DmgSrc = 'skill', empowered = false): boolean {
+    if (!this.mobs.includes(m)) return false;
     if (m.invuln > 0) {
       if (src !== 'bleed') this.float(m.x, m.y, m.r * 2 + 16, 'Immune', '#9a9a9a', 13);
-      return;
+      return false;
     }
     const t = this.stats.t;
     const critRate = this.stats.critRate + t.chargeCrit * this.charges;
@@ -1864,7 +1971,8 @@ export class Game {
         for (const k of Object.keys(this.skillCd)) this.skillCd[k] -= t.flux;
       }
       if (m.boss && t.stagger && m.staggerUntil <= this.time && m.hp > 0) {
-        m.stagger += 2 * t.stagger;
+        // each stagger makes the next one slower to build (bosses adapt)
+        m.stagger += (2 * t.stagger * (empowered ? 2 : 1)) / (1 + 0.5 * m.staggers);
         if (m.stagger >= 100) this.staggerBoss(m);
       }
       if (crit && t.ricochet && src !== 'proc' && this.rand() < t.ricochet) {
@@ -1877,12 +1985,14 @@ export class Game {
     }
     if (m.boss && m.hp > 0) this.checkPhase(m);
     if (m.hp <= 0) this.killMob(m);
+    return crit;
   }
 
   /** Marksman: a full stagger meter stuns the boss. */
   private staggerBoss(m: Mob) {
     const dur = this.stats.t.killshot ? 5 : 2.5;
     m.stagger = 0;
+    m.staggers++;
     m.staggerUntil = this.time + dur;
     m.state = 'recover';
     m.timer = dur;
@@ -1994,6 +2104,8 @@ export class Game {
 
   private playerDie() {
     const s = this.state;
+    if (this.deadeye) this.endDeadeye();
+    this.focus = 0;
     s.totals.deaths++;
     this.deadTimer = BALANCE.playerDeathDelay;
     this.hp = 0;
@@ -2236,6 +2348,7 @@ export class Game {
     const critF = 1 + st.critRate * (st.critDmg - 1);
     const job = this.job;
     let perSec = ((st.atk * job.basic.mult) / job.basic.interval) * st.atkSpeed * (1 + st.offhandChance * st.offhandRatio);
+    if (job.basic.kind === 'arrow') perSec *= 1 + FOCUS.damage * 0.35; // rough Deadeye uptime
     for (const sk of job.skills) if (this.state.level >= sk.unlock) perSec += (st.atk * sk.mult * (sk.count ?? 1) * 0.6) / sk.cd;
     for (const id of this.state.party) {
       if (!id) continue;
