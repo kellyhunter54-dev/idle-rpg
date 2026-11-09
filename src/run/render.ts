@@ -55,7 +55,8 @@ export class RunRenderer {
     const r = (this.canvas.parentElement ?? this.canvas).getBoundingClientRect();
     this.w = r.width;
     this.h = r.height;
-    this.block = Math.max(2, Math.round(r.width / 400));
+    // ~520 game px across on PC (was 400, felt zoomed in); phones still land on 2
+    this.block = Math.max(2, Math.round(r.width / 520));
     this.d = 1 / this.block;
     this.margin = this.block;
     const M = this.margin;

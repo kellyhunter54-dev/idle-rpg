@@ -7,8 +7,8 @@ export const RUN = {
   miniBossAt: 300,
   arenaTiles: 64,
   maxEnemies: 420,
-  spawnMin: 760,
-  spawnMax: 1050,
+  spawnMin: 880,
+  spawnMax: 1200,
   /** Enemies further than this from the hero are moved back into the ring around them. */
   leash: 1500,
   chests: 22,
