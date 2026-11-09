@@ -189,6 +189,12 @@ export interface WeaponDef {
   homing?: boolean;
   /** the last bounce explodes */
   bounceBlast?: boolean;
+  /** a spinning glaive (drawn as a blade) */
+  glaive?: boolean;
+  /** sticky charge fuse in seconds */
+  fuse?: number;
+  /** volleys fired back to back (Barrage) */
+  volleys?: number;
   /** a fan that goes all the way around */
   ring?: boolean;
   /** arrows stop and hang in the air for this many seconds */
@@ -215,11 +221,12 @@ export const WEAPONS: WeaponDef[] = [
   { id: 'judgment', name: 'Judgment', icon: '⚜️', desc: 'Pillars of light crash down on foes around you.', kind: 'storm', dmg: 34, cd: 2.2, count: 4, area: 1.6, pierce: 0, speed: 0, duration: 0, ups: ['dmg', 'cd', 'count', 'area'], color: '#fff1a8' },
   { id: 'holycleave', name: 'Holy Cleave', icon: '✨', desc: 'Radiant sweeps that slow everything they touch.', kind: 'arc', dmg: 34, cd: 1.4, count: 2, area: 1.5, pierce: 0, speed: 0, duration: 0, ups: ['dmg', 'cd', 'count', 'area'], color: '#fff1a8', slow: true },
   // ---------------- Archer
-  { id: 'longbow', name: 'Longbow', icon: '🏹', desc: 'Your auto attack: arrows at the nearest foe.', kind: 'arrow', dmg: 11, cd: 0.7, count: 1, area: 1, pierce: 1, speed: 900, duration: 0, ups: ['dmg', 'cd', 'count', 'pierce', 'speed'], color: '#e0c08a', shot: true },
-  { id: 'rain', name: 'Arrow Rain', icon: '🌧️', desc: 'Arrows keep raining on a patch of ground for a few seconds.', kind: 'rain', dmg: 4, cd: 3.2, count: 1, area: 1, pierce: 0, speed: 0, duration: 2.5, ups: ['dmg', 'cd', 'count', 'area', 'duration'], color: '#e0c08a', shot: true },
-  { id: 'traps', name: 'Spike Traps', icon: '🪤', desc: 'Throws spike fields among your foes.', kind: 'pool', dmg: 5, cd: 2.6, count: 1, area: 1, pierce: 0, speed: 0, duration: 3.5, ups: ['dmg', 'cd', 'count', 'area', 'duration'], color: '#b08a5a' },
-  { id: 'blast', name: 'Explosive Shot', icon: '💥', desc: 'An arrow that bursts on impact, hitting everything around it.', kind: 'arrow', dmg: 16, cd: 1.6, count: 1, area: 1, pierce: 0, speed: 800, duration: 0, ups: ['dmg', 'cd', 'count', 'area', 'speed'], color: '#ffb35c', shot: true, blast: 80 },
-  { id: 'fan', name: 'Fan of Arrows', icon: '🎐', desc: 'A wide spread of arrows in front of you.', kind: 'arrow', dmg: 13, cd: 1.6, count: 5, area: 1, pierce: 1, speed: 850, duration: 0, ups: ['dmg', 'cd', 'count', 'pierce'], color: '#e0c08a', shot: true, spread: 0.22 },
+  { id: 'longbow', name: 'Longbow', icon: '🏹', desc: 'Your auto attack: arrows at the nearest foe.', kind: 'arrow', dmg: 11, cd: 0.7, count: 1, area: 1, pierce: 0, speed: 900, duration: 0, ups: ['dmg', 'cd', 'count', 'pierce', 'speed'], color: '#e0c08a', shot: true },
+  { id: 'rain', name: 'Arrow Rain', icon: '🌧️', desc: 'Every 10s, arrows rain for 3s on the biggest clump of foes.', kind: 'rain', dmg: 10, cd: 10, count: 1, area: 1, pierce: 0, speed: 0, duration: 3, ups: ['dmg', 'cd', 'count', 'area', 'duration'], color: '#e0c08a', shot: true },
+  { id: 'glaive', name: 'Glaive', icon: '💠', desc: 'Throws a spinning glaive that bounces to 3 more foes (4 hits).', kind: 'arrow', dmg: 45, cd: 10, count: 1, area: 1, pierce: 0, speed: 750, duration: 0, ups: ['dmg', 'cd', 'count', 'area', 'speed'], color: '#cfd8e8', glaive: true, bounce: 3 },
+  { id: 'traps', name: 'Spike Traps', icon: '🪤', desc: 'Throws spike fields among your foes. (Retired: the Archer uses the Glaive now.)', kind: 'pool', dmg: 5, cd: 2.6, count: 1, area: 1, pierce: 0, speed: 0, duration: 3.5, ups: ['dmg', 'cd', 'count', 'area', 'duration'], color: '#b08a5a' },
+  { id: 'blast', name: 'Explosive Shot', icon: '💥', desc: 'Every 15s, an arrow sticks in a foe and explodes 3s later (right away if that foe dies), hitting everything around it.', kind: 'arrow', dmg: 40, cd: 15, count: 1, area: 1, pierce: 0, speed: 800, duration: 0, ups: ['dmg', 'cd', 'count', 'area', 'speed'], color: '#ffb35c', shot: true, stick: 4, fuse: 3 },
+  { id: 'fan', name: 'Fan of Arrows', icon: '🎐', desc: 'Every 8s, a wide spread of arrows in front of you.', kind: 'arrow', dmg: 55, cd: 8, count: 5, area: 1, pierce: 1, speed: 850, duration: 0, ups: ['dmg', 'cd', 'count', 'pierce'], color: '#e0c08a', shot: true, spread: 0.22 },
   // Ranger
   { id: 'thornarrow', name: 'Thorn Arrow', icon: '🌿', desc: 'Arrows tipped with thorns that slow and go through foes.', kind: 'arrow', dmg: 15, cd: 0.6, count: 1, area: 1, pierce: 2, speed: 900, duration: 0, ups: ['dmg', 'cd', 'count', 'pierce'], color: '#9be38a', shot: true, slow: true },
   { id: 'wolves', name: 'Wolf Pack', icon: '🐺', desc: 'Spirit wolves hunt the foes around you.', kind: 'summon', dmg: 16, cd: 0.6, count: 2, area: 1, pierce: 0, speed: 380, duration: 0, ups: ['dmg', 'cd', 'count', 'speed'], color: '#b9c7d6' },
@@ -440,7 +447,7 @@ export const BRANCHES: Record<JobId, BranchDef[]> = {
           { id: 'packleader', name: 'Pack Leader', icon: '🐾', special: 'pack', step: 1, flat: true, text: (v) => `+${v} wolf`, max: 3 },
           { id: 'wild', name: 'Call of the Wild', icon: '🌲', stats: { dmg: 0.1, speed: 0.04 }, max: 5 },
         ] },
-        { title: 'Beastwarden', swaps: [['traps', 'brambles']], passives: [
+        { title: 'Beastwarden', swaps: [], passives: [
           cDur('longhowl', 'Long Howl', '⏳', 'Call of the Pack'),
           { id: 'thornskin', name: 'Thornskin', icon: '🌵', stats: { armor: 0.04, regen: 0.4 }, max: 5 },
           { id: 'harmony', name: 'Harmony', icon: '🍃', stats: { duration: 0.12, area: 0.08 }, max: 5 },
@@ -639,7 +646,7 @@ export interface HeroDef {
 }
 export const HEROES: Record<JobId, HeroDef> = {
   warrior: { job: 'warrior', name: 'Warrior', basic: 'slash', abilities: ['cleave', 'whirl', 'quake', 'hatchet'], passive: 'Sturdy: 10% less damage taken, +0.5 HP regen', stats: { armor: 0.1, regen: 0.5 }, hp: 140, speed: 225 },
-  archer: { job: 'archer', name: 'Archer', basic: 'longbow', abilities: ['rain', 'traps', 'blast', 'fan'], passive: 'Nimble: +10% move speed, +8% crit chance', stats: { speed: 0.1, crit: 0.08 }, hp: 100, speed: 235 },
+  archer: { job: 'archer', name: 'Archer', basic: 'longbow', abilities: ['rain', 'glaive', 'blast', 'fan'], passive: 'Nimble: +10% move speed, +8% crit chance', stats: { speed: 0.1, crit: 0.08 }, hp: 100, speed: 235 },
   mage: { job: 'mage', name: 'Mage', basic: 'missile', abilities: ['spark', 'frost', 'orbs', 'ember'], passive: 'Scholar: +15% size, +15% EXP', stats: { area: 0.15, xp: 0.15 }, hp: 90, speed: 225 },
 };
 

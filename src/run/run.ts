@@ -113,6 +113,8 @@ export interface Shot {
   split?: boolean;
   /** shard bursts on hit */
   frag?: boolean;
+  /** drawn as a spinning blade (Glaive) */
+  spin?: boolean;
 }
 
 export interface Pickup {
@@ -1469,7 +1471,7 @@ export class Run {
     // sticky charges: plant one, or feed the one already in this foe
     if (w >= 0 && def && !this.sub) {
       if (def.stick && def.kind === 'arrow') this.plantCharge(e, dmg * def.stick, w, 0);
-      else for (const c of this.charges) if (c.eid === e.id) c.dmg += dmg * (this.weapons[c.w]?.def.stickFeed ?? 0.15);
+      else for (const c of this.charges) if (c.eid === e.id) c.dmg += dmg * (this.weapons[c.w]?.def.stickFeed ?? 0);
     }
     if (e.boss === 3 && this.jelly) {
       // King Jelly: every slime shares one HP pool
@@ -1487,10 +1489,12 @@ export class Run {
       const g = this.core.gain;
       if (this.coreTagMatch(def)) this.addCore(g.hit + (crit ? g.crit ?? 0 : 0));
     }
+    // totals count damage that landed, not overkill
+    const landed = Math.min(dmg, Math.max(0, e.hp));
     e.hp -= dmg;
     // short flash, and not every hit, so a big crowd doesn't strobe white
     if (e.hitFlash < -0.25) e.hitFlash = 0.07;
-    if (w >= 0 && this.weapons[w]) this.weapons[w].total += dmg;
+    if (w >= 0 && this.weapons[w]) this.weapons[w].total += landed;
     if (knock && !e.boss) {
       const dx = e.x - fromX;
       const dy = e.y - fromY;
@@ -1696,7 +1700,7 @@ export class Run {
           return;
         }
         w.timer = st.cd;
-        w.burst = kind === 'nova' ? 1 + Math.floor((st.count - 1) / 2) : w.def.spread || w.def.ring ? (w.def.doubleTap ? 2 : 1) : st.count;
+        w.burst = kind === 'nova' ? 1 + Math.floor((st.count - 1) / 2) : w.def.spread || w.def.ring ? (w.def.volleys ?? (w.def.doubleTap ? 2 : 1)) : st.count;
         // Echo: sometimes the whole cast happens twice
         if (this.sp('echo') && this.rand() < this.sp('echo')) w.burst *= 2;
         w.burstT = 0;
@@ -1707,7 +1711,7 @@ export class Run {
         if (w.burstT <= 0) {
           this.fire(w, i, st, w.burstDir++);
           w.burst--;
-          w.burstT = kind === 'arc' ? 0.14 : kind === 'nova' ? 0.3 : kind === 'storm' ? 0.07 : w.def.doubleTap ? 0.16 : 0.09;
+          w.burstT = kind === 'arc' ? 0.14 : kind === 'nova' ? 0.3 : kind === 'storm' ? 0.07 : w.def.volleys ? 0.12 : w.def.doubleTap ? 0.16 : 0.09;
         }
       }
     });
@@ -1755,9 +1759,9 @@ export class Run {
       const life = emp ? 1.3 : d.hang ? 0.35 + d.hang : 1.1;
       const arrow = (ang: number, mult = 1) =>
         this.shots.push({
-          kind: 'arrow', x: this.x, y: this.y, vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd, dmg: st.dmg * power * mult, pierce: emp ? 999 : d.hang ? 99 : w.pierce + this.stats.pierce, r: (d.hang ? 48 : 10) * Math.sqrt(st.area) * (emp ? 1.3 : 1),
+          kind: 'arrow', x: this.x, y: this.y, vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd, dmg: st.dmg * power * mult, pierce: emp ? 999 : d.hang ? 99 : w.pierce + this.stats.pierce, r: (d.hang ? 48 : d.glaive ? 18 : 10) * Math.sqrt(st.area) * (emp ? 1.3 : 1),
           life, hit: new Set(), w: i, enemy: false, target: 0, area: st.area, dist: 0, back: false, range: 0, color: emp ? '#ffd166' : d.color, emp,
-          bounces: d.bounce, home: d.homing, hangAt: d.hang ? d.hang : undefined,
+          bounces: d.bounce, home: d.homing, hangAt: d.hang ? d.hang : undefined, spin: d.glaive,
         });
       if (emp) {
         // Split Shot: extra empowered arrows at other foes
@@ -1846,7 +1850,7 @@ export class Run {
     } else if (kind === 'rain') {
       // arrows keep falling on a patch of foes for the whole duration
       const d = w.def;
-      const e = d.track ? this.toughest(700) : this.randomNear(this.x, this.y, 560) ?? this.nearest(this.x, this.y, 800);
+      const e = d.track ? this.toughest(700) : (n === 0 ? this.densest(700) : this.randomNear(this.x, this.y, 560)) ?? this.nearest(this.x, this.y, 800);
       if (!e) return;
       const j = n ? 90 : 0;
       const rx = d.follow ? this.x + (n ? (this.rand() - 0.5) * 160 : 0) : e.x + (this.rand() - 0.5) * j;
@@ -2242,6 +2246,25 @@ export class Run {
     e.stunUntil = Math.max(e.stunUntil ?? 0, this.t + secs);
   }
 
+  /** The foe with the most other foes around it (Arrow Rain aims at clumps). */
+  private densest(range: number): Enemy | null {
+    let best: Enemy | null = null;
+    let bestN = -1;
+    const r2 = range * range;
+    let seen = 0;
+    for (const e of this.enemies) {
+      if (e.dead || dist2(e.x, e.y, this.x, this.y) > r2) continue;
+      if (++seen > 40) break;
+      let n = 0;
+      this.forEnemiesIn(e.x, e.y, 140, () => n++);
+      if (n > bestN) {
+        bestN = n;
+        best = e;
+      }
+    }
+    return best;
+  }
+
   /** A rain cloud (Arrow Rain and its paths). */
   private openRain(x: number, y: number, r: number, dmg: number, dur: number, w: number, target = 0, child = false) {
     const def = this.weapons[w].def;
@@ -2349,7 +2372,7 @@ export class Run {
     const owned = this.weapons[w];
     const def = owned.def;
     const r = 105 * owned.area * (1 + this.stats.area) * (def.boomSize ?? 1) * (def.shaped ? 0.6 : 1);
-    this.charges.push({ eid: e.id, x: e.x, y: e.y, t: def.shaped ? 1.6 : 1.2, dmg, r, w, gen });
+    this.charges.push({ eid: e.id, x: e.x, y: e.y, t: (def.fuse ?? 1.2) + (def.shaped ? 0.5 : 0), dmg, r, w, gen });
   }
 
   private updateCharges(dt: number) {
@@ -2359,8 +2382,8 @@ export class Run {
       if (e && !e.dead) {
         c.x = e.x;
         c.y = e.y;
-      }
-      c.t -= dt;
+        c.t -= dt;
+      } else c.t = 0; // its foe died: blow up right away
       if (c.t > 0) continue;
       const def = this.weapons[c.w]?.def;
       this.fx.push({ kind: 'boom', x: c.x, y: c.y, t: 0, dur: 0.45, r: c.r, color: '#ff8c42' });
@@ -2379,6 +2402,10 @@ export class Run {
         }
       });
       this.sub = false;
+      // forms that hang off the explosion: bomblets, shards, a stunning shockwave
+      if (def?.stun) this.forEnemiesIn(c.x, c.y, c.r, (o) => this.stun(o, def.stun!));
+      if (def?.cluster) this.throwBomblets(c.x, c.y, def.cluster, c.dmg * 0.12, c.w, 1);
+      if (def?.shrapnel) this.throwShards(c.x, c.y, def.shrapnel, c.dmg * 0.05, c.w);
       // Chain Detonation: plant a new charge on the nearest foe
       if (def?.restick && c.gen === 0) {
         const nx = this.nearest(c.x, c.y, 380, new Set([c.eid]));

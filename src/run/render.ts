@@ -752,7 +752,7 @@ export class RunRenderer {
       const sx = this.px(s.x, s.y);
       const sy = this.py(s.x, s.y, 22);
       if (sx < -40 || sx > w + 40 || sy < -40 || sy > h + 40) continue;
-      if (s.kind === 'arrow') {
+      if (s.kind === 'arrow' && !s.spin) {
         const d = this.screenDir(Math.atan2(s.vy, s.vx));
         const L = 9 * B;
         f.strokeStyle = '#1b1410';
@@ -858,7 +858,7 @@ export class RunRenderer {
     this.flushFx();
     this.screenT(ctx);
     for (const s of run.shots) {
-      if (s.life <= 0 || s.kind === 'arrow') continue;
+      if (s.life <= 0 || (s.kind === 'arrow' && !s.spin)) continue;
       const sx = this.px(s.x, s.y);
       const sy = this.py(s.x, s.y, s.enemy ? 18 : 24);
       if (sx < -40 || sx > w + 40 || sy < -40 || sy > h + 40) continue;
@@ -869,6 +869,15 @@ export class RunRenderer {
         ctx.fillStyle = '#ff8c42';
         const d = this.screenDir(Math.atan2(s.vy, s.vx));
         for (let i = 1; i <= 3; i++) ctx.fillRect(Math.round((sx - d.dx * i * 4 * B) / B) * B, Math.round((sy - d.dy * i * 4 * B) / B) * B, B, B);
+      } else if (s.spin) {
+        // Glaive: a spinning blade
+        const img = SP.blade();
+        ctx.save();
+        ctx.translate(Math.round(sx / B) * B, Math.round(sy / B) * B);
+        ctx.rotate(Math.round((time * 18) / (Math.PI / 4)) * (Math.PI / 4));
+        const sc = Math.max(1, Math.round(s.area * 1.4));
+        ctx.drawImage(img, (-img.width / 2) * B * sc, (-img.height / 2) * B * sc, img.width * B * sc, img.height * B * sc);
+        ctx.restore();
       } else if (s.kind === 'axe') {
         const img = SP.axe();
         ctx.save();

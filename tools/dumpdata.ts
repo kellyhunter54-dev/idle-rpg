@@ -102,7 +102,8 @@ for (const j of JOBS)
     b.tiers.forEach((t, i) =>
       advRows.push({
         Class: cap(j), Branch: b.name, Tier: i + 1, Level: ADVANCE_LEVELS[i], Title: t.title,
-        'Ability swaps': t.swaps.map(([o, n]) => `${WEAPON[o]?.name ?? o} > ${WEAPON[n]?.name ?? n}`).join('; ') || '(none)',
+        'Auto attack becomes': t.swaps.filter(([o]) => o === HEROES[j].basic).map(([o, n]) => `${WEAPON[o]?.name ?? o} > ${WEAPON[n]?.name ?? n}`).join('; ') || '(no change)',
+        'Job forms unlocked (path option)': i === 0 ? Object.entries(JOB_FORMS[b.id] ?? {}).map(([base, f]) => `${WEAPON[base].name} > ${WEAPON[f].name}`).join('; ') : '',
         'Passives added': t.passives.map((p) => p.name).join(', '), 'Branch theme': i === 0 ? b.desc : '', Ultimate: i === 0 ? b.core.name : '',
       }),
     );

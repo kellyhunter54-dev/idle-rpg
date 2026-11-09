@@ -1,5 +1,5 @@
 // Archer ability paths: plays a run per full path (form > follow-up > capstone) and reports that ability's damage.
-// npx tsx tools/pathtrial.ts [ability] [minutes] [form] [seed]   (ability: rain | traps | blast | fan; all = every ability)
+// npx tsx tools/pathtrial.ts [ability] [minutes] [form] [seed]   (ability: rain | glaive | blast | fan; all = every ability)
 import { Run } from '../src/run/run';
 import { pathRoots } from '../src/run/paths';
 
@@ -7,7 +7,7 @@ const only = process.argv[2] && process.argv[2] !== 'all' ? process.argv[2] : ''
 const form = process.argv[4] ?? '';
 const seed0 = Number(process.argv[5] ?? 777);
 const mins = Number(process.argv[3] ?? 9);
-const bases = only ? [only] : ['rain', 'traps', 'blast', 'fan'];
+const bases = only ? [only] : ['rain', 'glaive', 'blast', 'fan'];
 
 for (const base of bases) {
   const combos: string[][] = [];
