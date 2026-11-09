@@ -278,3 +278,11 @@ body.runmode .choice-box { touch-action: pan-y; }
 #zoominfo { position: absolute; right: 10px; top: 152px; z-index: 6; font-size: 11px; color: var(--muted); background: #0a0e18cc; border: 2px solid #3b4a66; padding: 1px 6px; pointer-events: none; transition: color 0.3s; }
 #zoominfo.hot { color: var(--trim-hi); border-color: var(--trim-hi); }
 @media (max-width: 720px), (pointer: coarse) { #zoominfo { display: none; } }
+
+/* testing toggles */
+.pause-test { display: flex; align-items: center; justify-content: center; gap: 12px; margin: 8px 0 4px; padding-top: 8px; border-top: 2px solid #3b4a66; }
+.pause-test > span { color: var(--muted); font-size: 12px; letter-spacing: 1px; text-transform: uppercase; }
+.pause-test .btn { min-width: 110px; padding: 4px 10px; font-size: 13px; }
+.pause-test .btn.on { color: #ffd166 !important; }
+#testbadge { position: absolute; right: 10px; top: 178px; z-index: 6; font-size: 12px; color: #ff8a8a; background: #0a0e18d8; border: 2px solid #8a2a2a; padding: 1px 8px; pointer-events: none; }
+@media (max-width: 720px), (pointer: coarse) { #testbadge { right: auto; left: 50%; transform: translateX(-50%); top: auto; bottom: 96px; font-size: 10px; } }

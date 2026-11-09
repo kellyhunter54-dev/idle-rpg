@@ -172,6 +172,7 @@ function startRun(job: JobId) {
     });
   $('autotag').classList.add('hidden');
   run.autoCore = localStorage.getItem('gloomtide-autocore') === '1';
+  applyTest(run);
   ($('autocore') as HTMLInputElement).checked = run.autoCore;
 }
 
@@ -416,7 +417,7 @@ function updateHud(r: Run) {
 
 function showEnd(r: Run) {
   const win = r.ended === 'win';
-  const record = saveBest(r.job, { time: r.t, win, level: r.level, kills: r.kills });
+  const record = r.tested ? false : saveBest(r.job, { time: r.t, win, level: r.level, kills: r.kills });
   setText('endtitle', win ? 'The tide breaks!' : 'Swept away');
   const all = [...r.weapons, ...r.retired.filter((w) => w.total > 0)];
   const tot = all.reduce((a, w) => a + w.total, 0) + r.bleedTotal + r.burnTotal || 1;
@@ -467,6 +468,38 @@ $('restartbtn').addEventListener('click', () => {
   togglePause();
 });
 $('corebtn').addEventListener('click', () => run?.activateCore());
+// ---- testing toggles (pause menu), kept for the next runs too
+const TEST_KEY = 'gloomtide-test';
+const DMG_STEPS = [1, 2, 5];
+function loadTest(): { dmg: number; god: boolean } {
+  try {
+    const t = JSON.parse(localStorage.getItem(TEST_KEY) ?? '{}');
+    return { dmg: DMG_STEPS.includes(t.dmg) ? t.dmg : 1, god: !!t.god };
+  } catch {
+    return { dmg: 1, god: false };
+  }
+}
+function applyTest(r: Run) {
+  const t = loadTest();
+  r.testDmg = t.dmg;
+  r.god = t.god;
+  $('testdmg').textContent = `Damage x${t.dmg}`;
+  $('testdmg').classList.toggle('on', t.dmg !== 1);
+  ($('testgod') as HTMLInputElement).checked = t.god;
+  const parts = [t.dmg !== 1 ? `x${t.dmg} damage` : '', t.god ? 'God mode' : ''].filter(Boolean);
+  $('testbadge').textContent = `TEST: ${parts.join(' · ')}`;
+  $('testbadge').classList.toggle('hidden', !parts.length);
+}
+function saveTest(t: { dmg: number; god: boolean }) {
+  localStorage.setItem(TEST_KEY, JSON.stringify(t));
+  if (run) applyTest(run);
+}
+$('testdmg').addEventListener('click', () => {
+  const t = loadTest();
+  saveTest({ ...t, dmg: DMG_STEPS[(DMG_STEPS.indexOf(t.dmg) + 1) % DMG_STEPS.length] });
+});
+$('testgod').addEventListener('change', (e) => saveTest({ ...loadTest(), god: (e.target as HTMLInputElement).checked }));
+
 $('autocore').addEventListener('change', (e) => {
   const on = (e.target as HTMLInputElement).checked;
   localStorage.setItem('gloomtide-autocore', on ? '1' : '0');

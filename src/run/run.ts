@@ -434,6 +434,11 @@ export class Run {
   coreUntil = 0;
   /** use the ultimate as soon as it's ready */
   autoCore = false;
+  /** testing (pause menu): multiplies all your damage, and god mode ignores damage and death */
+  testDmg = 1;
+  god = false;
+  /** a run that used the testing toggles doesn't count for best results */
+  tested = false;
   private coreBudget = 0;
   private coreBudgetT = 0;
   private coreTick = 0;
@@ -917,6 +922,11 @@ export class Run {
     this.updateFx(dt);
     this.input.jump = false;
     this.input.interact = false;
+    if (this.god) {
+      this.hp = this.stats.maxHp;
+      if (this.jelly) this.jelly.slimed = 0;
+    }
+    if (this.testDmg !== 1 || this.god) this.tested = true;
     if (this.hp <= 0) this.die();
     this.checkUnlocks();
     if (!this.choices && !this.checkAdvance() && !this.checkTalent() && !this.checkPath() && this.pendingLevels > 0) this.openLevelUp();
@@ -997,7 +1007,7 @@ export class Run {
   taken = { contact: 0, shot: 0, slam: 0 };
   /** Returns true if the hit landed (not dodged, blocked or shielded away). */
   hurt(dmg: number, from?: Enemy, src: 'contact' | 'shot' | 'slam' = 'contact'): boolean {
-    if (this.iframes > 0 || this.ended) return false;
+    if (this.iframes > 0 || this.ended || this.god) return false;
     if (this.coreActive && this.core.id === 'divine') {
       this.iframes = RUN.contactIframes;
       return false;
@@ -1401,7 +1411,7 @@ export class Run {
   /** Damage an enemy. w = weapon slot (or -2 for item procs). Returns true if it died. */
   hitEnemy(e: Enemy, base: number, w: number, canCrit = true, knock = 0, fromX = this.x, fromY = this.y): boolean {
     if (e.dead) return false;
-    let dmg = base;
+    let dmg = base * this.testDmg;
     let crit = false;
     // class passives that change damage taken by the foe
     const mark = this.sp('mark');
