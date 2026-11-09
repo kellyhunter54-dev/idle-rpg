@@ -273,3 +273,8 @@ body.runmode .choice-box { touch-action: pan-y; }
   #rstats .st { font-size: 10px; line-height: 12px; }
 }
 #choice.pathpick .choice-box { max-width: 920px; }
+
+/* zoom readout under the minimap (PC) */
+#zoominfo { position: absolute; right: 10px; top: 152px; z-index: 6; font-size: 11px; color: var(--muted); background: #0a0e18cc; border: 2px solid #3b4a66; padding: 1px 6px; pointer-events: none; transition: color 0.3s; }
+#zoominfo.hot { color: var(--trim-hi); border-color: var(--trim-hi); }
+@media (max-width: 720px), (pointer: coarse) { #zoominfo { display: none; } }

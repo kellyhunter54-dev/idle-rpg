@@ -86,6 +86,39 @@ let run: Run | null = null;
 const sharedInput: RunInput = { moveX: 0, moveY: 0, jump: false, interact: false };
 let paused = false;
 let renderer: RunRenderer | null = null;
+
+// ---- zoom (PC): mouse wheel or +/- , 0 resets to automatic
+let zoomHot = 0;
+function showZoom(hot = true) {
+  if (!renderer) return;
+  const z = renderer.zoomInfo;
+  const el = $('zoominfo');
+  el.textContent = `Zoom x${z.block.toFixed(2)} · ${z.view}px view${z.auto ? ' (auto)' : ''}`;
+  el.classList.toggle('hot', hot);
+  clearTimeout(zoomHot);
+  if (hot) zoomHot = window.setTimeout(() => el.classList.remove('hot'), 1200);
+}
+function zoomBy(dir: number) {
+  if (!renderer) return;
+  renderer.zoom(dir);
+  showZoom();
+}
+window.addEventListener(
+  'wheel',
+  (e) => {
+    // only over the game itself, not inside menus that scroll
+    const t = e.target as HTMLElement;
+    if (t.closest('#choice, #pause, #end, .screen, .overlay')) return;
+    e.preventDefault();
+    zoomBy(e.deltaY < 0 ? 1 : -1);
+  },
+  { passive: false },
+);
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'Equal' || e.code === 'NumpadAdd') zoomBy(1);
+  else if (e.code === 'Minus' || e.code === 'NumpadSubtract') zoomBy(-1);
+  else if (e.code === 'Digit0' || e.code === 'Numpad0') zoomBy(0);
+});
 let poll: ((skip: boolean) => void) | null = null;
 let lastChoices: unknown = null;
 let endShown = false;
@@ -124,6 +157,7 @@ function startRun(job: JobId) {
   $('notices').innerHTML = '';
   portrait($('rportrait') as HTMLCanvasElement, job);
   if (!renderer) renderer = new RunRenderer($('canvas') as HTMLCanvasElement);
+  showZoom(false);
   if (!poll)
     poll = setupRunInput(sharedInput, $('battle'), {
       onPause: () => togglePause(),

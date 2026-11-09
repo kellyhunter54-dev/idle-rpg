@@ -51,12 +51,45 @@ export class RunRenderer {
     new ResizeObserver(() => this.resize()).observe(canvas.parentElement ?? canvas);
   }
 
+  /** Pixel scale picked by the mouse wheel (null = automatic). */
+  private zoomBlock: number | null = (() => {
+    try {
+      const v = Number(localStorage.getItem('gloomtide-zoom'));
+      return v >= 1 && v <= 10 ? v : null;
+    } catch {
+      return null;
+    }
+  })();
+
+  private autoBlock(width: number) {
+    return Math.max(2, Math.round(width / 520));
+  }
+
+  /** Zoom in (+1) or out (-1) by a quarter step; 0 goes back to automatic. */
+  zoom(dir: number) {
+    if (dir === 0) this.zoomBlock = null;
+    else this.zoomBlock = Math.min(8, Math.max(1.25, Math.round((this.block + dir * 0.25) * 4) / 4));
+    try {
+      if (this.zoomBlock === null) localStorage.removeItem('gloomtide-zoom');
+      else localStorage.setItem('gloomtide-zoom', String(this.zoomBlock));
+    } catch {
+      /* private mode */
+    }
+    this.resize();
+  }
+
+  /** For the zoom readout: pixel scale, game px across, and whether it is automatic. */
+  get zoomInfo() {
+    return { block: this.block, view: Math.round(this.w / this.block), auto: this.zoomBlock === null, autoBlock: this.autoBlock(this.w) };
+  }
+
   private resize() {
     const r = (this.canvas.parentElement ?? this.canvas).getBoundingClientRect();
     this.w = r.width;
     this.h = r.height;
-    // ~520 game px across on PC (was 400, felt zoomed in); phones still land on 2
-    this.block = Math.max(2, Math.round(r.width / 520));
+    // ~520 game px across on PC (was 400, felt zoomed in); phones still land on 2.
+    // The mouse wheel overrides it (zoomBlock, saved in localStorage gloomtide-zoom).
+    this.block = this.zoomBlock ?? this.autoBlock(r.width);
     this.d = 1 / this.block;
     this.margin = this.block;
     const M = this.margin;
