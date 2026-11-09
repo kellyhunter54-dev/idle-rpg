@@ -485,6 +485,8 @@ export class Run {
   /** Hunter (test hero): an Archer whose only path is the Rain of Fire tree, one tier per level */
   hunter = false;
   private pathLevel = 0;
+  /** tree picks owed after a reset (offered right away, one after another) */
+  private respec = 0;
   testXp = 1;
   god = false;
   /** a run that used the testing toggles doesn't count for best results */
@@ -741,7 +743,7 @@ export class Run {
   private checkPath(): boolean {
     if (this.hunter) {
       // test hero: only Arrow Rain grows, one tier per level
-      if (this.level <= this.pathLevel) return false;
+      if (this.level <= this.pathLevel && this.respec <= 0) return false;
       const k = this.weapons.findIndex((x) => x.base === 'rain');
       if (k < 1) return false;
       const w = this.weapons[k];
@@ -753,7 +755,8 @@ export class Run {
         kind: 'path', id: n.id, name: n.name, icon: n.icon,
         rarity: { ...RUN_RARITIES[Math.min(4, 2 + tier)], color: n.color ?? '#ff7b2e', name: `Tier ${['I', 'II', 'III', 'IV', 'V'][tier]}` },
         level: tier + 1, lines: [n.desc], apply: () => {
-          this.pathLevel = this.level;
+          if (this.respec > 0) this.respec--;
+          else this.pathLevel = this.level;
           this.hunterNodes.add(n.id);
           this.applyPath(k, n);
         },
@@ -2349,6 +2352,32 @@ export class Run {
   // Burn: weak stacking dot (max 5). Ablaze: strong single dot that can't be refreshed (until Ablazed).
   // 1 yard is taken as 10 units (15 yd = 150, 20 yd = 200, 40 yd = 400).
   hunterNodes = new Set<string>();
+  /** Testing: undo every Rain of Fire pick and choose again (as many tiers as you had). */
+  resetHunterTree() {
+    if (!this.hunter) return;
+    const k = this.rainIdx();
+    if (k < 0) return;
+    const had = this.weapons[k].path.length;
+    const d = WEAPON['rain'];
+    const old = this.weapons[k];
+    this.weapons[k] = { ...old, def: d, path: [], dmg: d.dmg, cd: d.cd, count: d.count, area: d.area, pierce: d.pierce, speed: d.speed, duration: d.duration, haste: 0, total: old.total };
+    this.hunterNodes.clear();
+    this.pools = this.pools.filter((p) => p.w !== k);
+    for (const e of this.enemies) {
+      e.hbStacks = 0;
+      e.abUntil = 0;
+      e.bombUntil = 0;
+      e.poisonUntil = 0;
+      e.ampUntil = 0;
+      e.confusedUntil = 0;
+      e.tauntBy = 0;
+    }
+    // picks you had are owed back now; the next level still brings the next tier as usual
+    this.respec = had;
+    this.pathLevel = this.level;
+    this.notice(had ? `Rain of Fire tree reset: pick ${had} again` : 'Rain of Fire tree reset', '#ff7b2e', '🔥');
+    this.checkPath();
+  }
   /** Has the Hunter picked this node? */
   hn(id: string) {
     return this.hunterNodes.has(id);

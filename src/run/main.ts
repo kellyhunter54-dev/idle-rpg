@@ -420,6 +420,7 @@ function updateHud(r: Run) {
   $('slimed').classList.toggle('hidden', sl < 0);
   if (sl >= 0) setText('slimed', `Slimed ${sl} / ${JELLY.lethal}`);
   $('restartbtn').classList.toggle('hidden', !r.inLair);
+  $('resettreebtn').classList.toggle('hidden', !r.hunter);
   $('hint').classList.toggle('hidden', !hint);
   if (hint) setText('hint', hint);
   // notices
@@ -494,6 +495,11 @@ function fmtBig(n: number) {
   return String(Math.round(n));
 }
 
+$('resettreebtn').addEventListener('click', () => {
+  if (!run) return;
+  run.resetHunterTree();
+  togglePause();
+});
 $('restartbtn').addEventListener('click', () => {
   if (!run) return;
   run.restartLair();
