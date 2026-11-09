@@ -202,7 +202,8 @@ function startRun(job: JobId, hunter = false) {
 
 function togglePause() {
   if (!run || run.ended) return;
-  if (run.choices) return;
+  // a waiting choice blocks opening the menu, never closing it
+  if (run.choices && !paused) return;
   paused = !paused;
   $('pause').classList.toggle('hidden', !paused);
   if (paused) {
@@ -497,8 +498,9 @@ function fmtBig(n: number) {
 
 $('resettreebtn').addEventListener('click', () => {
   if (!run) return;
+  // close the menu first, then reset: the tree picks show up as normal cards
+  if (paused) togglePause();
   run.resetHunterTree();
-  togglePause();
 });
 $('restartbtn').addEventListener('click', () => {
   if (!run) return;
