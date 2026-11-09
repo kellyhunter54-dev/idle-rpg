@@ -213,6 +213,8 @@ function chip(icon: string, value: string, title: string, color: string, frac: n
 function shortVal(text: string) {
   const amp = text.match(/\+(\d+)%/);
   if (amp) return `+${amp[1]}%`;
+  const boom = text.match(/^(\d+) damage when/);
+  if (boom) return boom[1];
   const dps = text.match(/^(\d+) damage a second/);
   if (dps) return `${dps[1]}/s`;
   return '';

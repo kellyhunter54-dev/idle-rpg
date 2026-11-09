@@ -272,3 +272,4 @@ body.runmode .choice-box { touch-action: pan-y; }
   #rstats { gap: 0 8px; margin-top: 3px; padding-top: 3px; }
   #rstats .st { font-size: 10px; line-height: 12px; }
 }
+#choice.pathpick .choice-box { max-width: 920px; }

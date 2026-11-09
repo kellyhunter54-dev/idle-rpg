@@ -49,6 +49,14 @@ export interface Enemy {
   shockUntil: number;
   /** frozen in place (Frost paths) */
   frozenUntil: number;
+  /** Soaked (Monsoon rain): takes more damage from everything */
+  soakUntil?: number;
+  soakAmp?: number;
+  /** Snared (Bear Trap): held, and takes more damage from everything */
+  snareUntil?: number;
+  snareAmp?: number;
+  /** stunned (Concussive, Knockdown, Big Bang, a bear trap's hold): can't move */
+  stunUntil?: number;
   /** burn damage waiting to be shown */
   burnShow: number;
   burnShowT: number;
@@ -93,6 +101,18 @@ export interface Shot {
   back: boolean;
   range: number;
   color: string;
+  /** a sub-munition (shrapnel, split arrows): no further procs */
+  sub?: boolean;
+  /** bounces left (Ricochet) */
+  bounces?: number;
+  /** curves toward foes */
+  home?: boolean;
+  /** hangs in the air once its life drops under this (Thorn Wall) */
+  hangAt?: number;
+  /** split arrows (Buckshot) already split */
+  split?: boolean;
+  /** shard bursts on hit */
+  frag?: boolean;
 }
 
 export interface Pickup {
@@ -135,6 +155,31 @@ export interface Pool {
   follow?: boolean;
   fx?: number;
   fy?: number;
+  /** starting radius (zones that grow) */
+  r0?: number;
+  born?: number;
+  /** foe this zone follows (Hunter's Rain) */
+  target?: number;
+  /** armed trap waiting for a foe */
+  armed?: 'mine' | 'snare';
+  /** per-foe tick count (Grinding Spikes) */
+  ramps?: Map<number, number>;
+  /** a zone that already had its finale */
+  done?: boolean;
+  /** spawned by another cloud (Cloudburst) */
+  child?: boolean;
+}
+
+/** A sticky charge in a foe (Explosive Shot path). */
+export interface Charge {
+  eid: number;
+  x: number;
+  y: number;
+  t: number;
+  dmg: number;
+  r: number;
+  w: number;
+  gen: number;
 }
 
 export interface Telegraph {
@@ -192,6 +237,8 @@ export interface Falling {
   r: number;
   dmg: number;
   w: number;
+  /** bomblet (Cluster): small, no meteor rock, gen 1 can split again */
+  bomb?: number;
 }
 
 export interface OwnedWeapon {
@@ -362,6 +409,9 @@ export class Run {
   tier = 0;
   allies: Ally[] = [];
   falling: Falling[] = [];
+  charges: Charge[] = [];
+  /** set while sub-munitions deal damage, so they don't proc again */
+  private sub = false;
   private leechLeft = 0;
   private leechT = 0;
   rampage = 0;
@@ -605,10 +655,13 @@ export class Run {
       const R = def.blast * (owned ? owned.area : 1) * (1 + this.stats.area);
       this.fx.push({ kind: 'boom', x: e.x, y: e.y, t: 0, dur: 0.3, r: R, color: def.color });
       this.forEnemiesIn(e.x, e.y, R, (o) => {
+        if (def.stun) this.stun(o, def.stun);
         if (o === e) return;
         if (owned) owned.total += dmg * 0.5;
-        this.hitEnemy(o, dmg * 0.5, -2, false, 160, e.x, e.y);
+        this.hitEnemy(o, dmg * 0.5, -2, false, def.stun ? 420 : 160, e.x, e.y);
       });
+      if (def.cluster) this.throwBomblets(e.x, e.y, def.cluster, dmg * 0.4, w, 1);
+      if (def.shrapnel) this.throwShards(e.x, e.y, def.shrapnel, dmg * 0.18, w);
     }
     if (def.chain && def.kind !== 'storm' && this.rand() < (zone ? 0.15 : 0.5)) {
       const hit = new Set([e.id]);
@@ -856,6 +909,7 @@ export class Run {
     this.updatePools(dt);
     this.updateCore(dt);
     this.updateFalling(dt);
+    this.updateCharges(dt);
     this.updateAllies(dt);
     this.updateTelegraphs(dt);
     this.updatePickups(dt);
@@ -1213,7 +1267,7 @@ export class Run {
       }
       dx /= d;
       dy /= d;
-      const slow = e.frozenUntil > this.t ? 0 : e.slowUntil > this.t ? 0.55 : 1;
+      const slow = e.frozenUntil > this.t || (e.stunUntil ?? 0) > this.t ? 0 : e.slowUntil > this.t ? 0.55 : 1;
       let sp = e.speed * slow;
       if (e.def?.ranged) {
         if (d < 360) sp *= d < 260 ? -0.7 : 0;
@@ -1371,8 +1425,19 @@ export class Run {
       crit = true;
     }
     if (def?.slow) e.slowUntil = Math.max(e.slowUntil, this.t + 1);
+    // Soaked / Snared: more damage from everything
+    if ((e.soakUntil ?? 0) > this.t) dmg *= 1 + (e.soakAmp ?? 0);
+    if ((e.snareUntil ?? 0) > this.t) dmg *= 1 + (e.snareAmp ?? 0);
     // ability path effects
     if (def) {
+      if (def.soak) {
+        e.soakAmp = Math.max((e.soakUntil ?? 0) > this.t ? e.soakAmp ?? 0 : 0, def.soak);
+        e.soakUntil = this.t + 2;
+      }
+      if (def.ampBleed && e.bleedStacks > 0 && e.bleedUntil > this.t) dmg *= 1 + def.ampBleed;
+      const close = dist2(e.x, e.y, this.x, this.y) < 320 * 320;
+      if (def.closeAmp && close) dmg *= 1 + def.closeAmp;
+      if (def.stun && def.kind === 'arrow' && (!def.closeAmp || close)) this.stun(e, def.stun);
       if (def.ampChill && e.slowUntil > this.t) dmg *= 1 + def.ampChill;
       if (def.ampShock && e.shockUntil > this.t) dmg *= 1 + def.ampShock;
       if (def.ampBurn && e.burnUntil > this.t) dmg *= 1 + def.ampBurn;
@@ -1388,8 +1453,13 @@ export class Run {
       dmg *= 1.2 + this.stats.critDmg;
     }
     this.lastCrit = crit;
-    if (w >= 0 && def && (def.blast || def.chain)) this.pathProcs(e, dmg, w, def);
-    if (w >= 0) this.applyBleed(e, dmg, crit);
+    if (!this.sub && w >= 0 && def && (def.blast || def.chain)) this.pathProcs(e, dmg, w, def);
+    if (w >= 0) this.applyBleed(e, dmg, crit, def);
+    // sticky charges: plant one, or feed the one already in this foe
+    if (w >= 0 && def && !this.sub) {
+      if (def.stick && def.kind === 'arrow') this.plantCharge(e, dmg * def.stick, w, 0);
+      else for (const c of this.charges) if (c.eid === e.id) c.dmg += dmg * (this.weapons[c.w]?.def.stickFeed ?? 0.15);
+    }
     if (e.boss === 3 && this.jelly) {
       // King Jelly: every slime shares one HP pool
       if (this.jelly.done) return false;
@@ -1454,6 +1524,7 @@ export class Run {
     }
     if (e.hp <= 0) {
       this.kill(e);
+      if (def?.spawnOnKill && w >= 0 && !this.sub) this.cloudburst(e, w);
       return true;
     }
     return false;
@@ -1614,7 +1685,7 @@ export class Run {
           return;
         }
         w.timer = st.cd;
-        w.burst = kind === 'nova' ? 1 + Math.floor((st.count - 1) / 2) : w.def.spread ? 1 : st.count;
+        w.burst = kind === 'nova' ? 1 + Math.floor((st.count - 1) / 2) : w.def.spread || w.def.ring ? (w.def.doubleTap ? 2 : 1) : st.count;
         // Echo: sometimes the whole cast happens twice
         if (this.sp('echo') && this.rand() < this.sp('echo')) w.burst *= 2;
         w.burstT = 0;
@@ -1625,7 +1696,7 @@ export class Run {
         if (w.burstT <= 0) {
           this.fire(w, i, st, w.burstDir++);
           w.burst--;
-          w.burstT = kind === 'arc' ? 0.14 : kind === 'nova' ? 0.3 : kind === 'storm' ? 0.07 : 0.09;
+          w.burstT = kind === 'arc' ? 0.14 : kind === 'nova' ? 0.3 : kind === 'storm' ? 0.07 : w.def.doubleTap ? 0.16 : 0.09;
         }
       }
     });
@@ -1661,7 +1732,7 @@ export class Run {
         if (Math.abs(da) <= half || dist2(e.x, e.y, this.x, this.y) < (e.r + 40) ** 2) this.hitEnemy(e, st.dmg, i, true, 380);
       });
     } else if (kind === 'arrow') {
-      const tgt = w.def.id === 'snipe' ? this.toughest(900) : this.nearest(this.x, this.y, 900);
+      const tgt = w.def.id === 'snipe' || w.def.stick ? this.toughest(900) : this.nearest(this.x, this.y, 900);
       let a = tgt ? Math.atan2(tgt.y - this.y, tgt.x - this.x) : this.angle;
       a += (n % 2 ? 1 : -1) * Math.ceil(n / 2) * 0.12;
       // Deadeye: the auto attack fires empowered arrows
@@ -1669,10 +1740,13 @@ export class Run {
       const ts = this.sp('trueshot') > 0;
       const power = emp ? 1 + 0.4 + (ts ? 0.3 : 0) + this.sp('corePower') : 1;
       const spd = w.speed * (emp ? 1.15 : 1);
+      const d = w.def;
+      const life = emp ? 1.3 : d.hang ? 0.35 + d.hang : 1.1;
       const arrow = (ang: number, mult = 1) =>
         this.shots.push({
-          kind: 'arrow', x: this.x, y: this.y, vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd, dmg: st.dmg * power * mult, pierce: emp ? 999 : w.pierce + this.stats.pierce, r: 10 * Math.sqrt(st.area) * (emp ? 1.3 : 1),
-          life: emp ? 1.3 : 1.1, hit: new Set(), w: i, enemy: false, target: 0, area: st.area, dist: 0, back: false, range: 0, color: emp ? '#ffd166' : w.def.color, emp,
+          kind: 'arrow', x: this.x, y: this.y, vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd, dmg: st.dmg * power * mult, pierce: emp ? 999 : d.hang ? 99 : w.pierce + this.stats.pierce, r: (d.hang ? 48 : 10) * Math.sqrt(st.area) * (emp ? 1.3 : 1),
+          life, hit: new Set(), w: i, enemy: false, target: 0, area: st.area, dist: 0, back: false, range: 0, color: emp ? '#ffd166' : d.color, emp,
+          bounces: d.bounce, home: d.homing, hangAt: d.hang ? d.hang : undefined,
         });
       if (emp) {
         // Split Shot: extra empowered arrows at other foes
@@ -1685,9 +1759,13 @@ export class Run {
         }
         if (ts) this.coreMeter = Math.max(0, this.coreMeter - 7);
       }
-      if (w.def.spread) {
+      if (d.ring) {
+        // Arrow Nova: all the way around (a Spiral's second ring is turned half a step)
+        const step = (Math.PI * 2) / st.count;
+        for (let k = 0; k < st.count; k++) arrow(a + k * step + (n % 2) * step * 0.5);
+      } else if (d.spread) {
         // a fan: every arrow leaves at once
-        for (let k = 0; k < st.count; k++) arrow(a + (k - (st.count - 1) / 2) * w.def.spread);
+        for (let k = 0; k < st.count; k++) arrow(a + (k - (st.count - 1) / 2) * d.spread + (n % 2 ? d.spread * 0.5 : 0));
       } else arrow(a);
       // Volley: every 5th auto attack adds a fan of arrows
       const vol = i === 0 ? this.sp('volley') : 0;
@@ -1736,19 +1814,33 @@ export class Run {
     } else if (kind === 'nova') {
       this.fx.push({ kind: 'nova', x: this.x, y: this.y, t: 0, dur: 0.55, r: 250 * st.area, color: w.def.color, hits: new Set(), dmg: st.dmg, slow: st.duration, w: i });
     } else if (kind === 'pool') {
-      const e = this.randomNear(this.x, this.y, 520);
+      const d = w.def;
+      const armed = d.mine ? 'mine' : d.snare ? 'snare' : undefined;
+      // bear traps go under the toughest foe; caltrops land around your feet
+      const e = d.snare ? (n === 0 ? this.toughest(520) : this.randomNear(this.x, this.y, 520)) : d.atFeet ? null : this.randomNear(this.x, this.y, 520);
       const a = this.rand() * Math.PI * 2;
-      const x = e ? e.x : this.x + Math.cos(a) * 200;
-      const y = e ? e.y : this.y + Math.sin(a) * 200;
-      this.pools.push({ x, y, r: 80 * st.area, dmg: st.dmg, until: this.t + st.duration, tick: 0, w: i, every: 0.45, style: 'pool', follow: w.def.follow, fx: x - this.x, fy: y - this.y });
+      const off = d.atFeet ? 30 + this.rand() * 70 : 200;
+      let x = e ? e.x : this.x + Math.cos(a) * off;
+      let y = e ? e.y : this.y + Math.sin(a) * off;
+      if (d.mine && e) {
+        // mines go in the path of a foe coming at you, not under it
+        const k = 0.45 + this.rand() * 0.2;
+        x = this.x + (e.x - this.x) * k + (this.rand() - 0.5) * 60;
+        y = this.y + (e.y - this.y) * k + (this.rand() - 0.5) * 60;
+      }
+      const r = (armed ? 62 : 80) * st.area;
+      // armed traps wait (and the field holds at most 12 of them)
+      if (armed && this.pools.filter((p) => p.w === i && p.armed).length >= 12) return;
+      this.pools.push({ x, y, r, r0: r, born: this.t, dmg: st.dmg, until: this.t + st.duration * (armed ? 4 : 1), tick: 0, w: i, every: 0.45, style: 'pool', follow: d.follow, fx: x - this.x, fy: y - this.y, armed });
     } else if (kind === 'rain') {
       // arrows keep falling on a patch of foes for the whole duration
-      const e = this.randomNear(this.x, this.y, 560) ?? this.nearest(this.x, this.y, 800);
+      const d = w.def;
+      const e = d.track ? this.toughest(700) : this.randomNear(this.x, this.y, 560) ?? this.nearest(this.x, this.y, 800);
       if (!e) return;
       const j = n ? 90 : 0;
-      const rx = w.def.follow ? this.x + (n ? (this.rand() - 0.5) * 160 : 0) : e.x + (this.rand() - 0.5) * j;
-      const ry = w.def.follow ? this.y + (n ? (this.rand() - 0.5) * 160 : 0) : e.y + (this.rand() - 0.5) * j;
-      this.pools.push({ x: rx, y: ry, r: 95 * st.area, dmg: st.dmg, until: this.t + st.duration, tick: 0.15, w: i, every: 0.25, style: 'rain', follow: w.def.follow, fx: rx - this.x, fy: ry - this.y });
+      const rx = d.follow ? this.x + (n ? (this.rand() - 0.5) * 160 : 0) : e.x + (this.rand() - 0.5) * j;
+      const ry = d.follow ? this.y + (n ? (this.rand() - 0.5) * 160 : 0) : e.y + (this.rand() - 0.5) * j;
+      this.openRain(rx, ry, 95 * st.area, st.dmg, st.duration, i, d.track ? e.id : 0);
     } else if (kind === 'beam') {
       // a straight line through everything toward the nearest foe
       const tgt = this.nearest(this.x, this.y, 900);
@@ -1795,6 +1887,11 @@ export class Run {
       out.push({ id: 'chill', icon: '❄️', name: 'Chilled', stacks: 0, left: e.slowUntil - t, dur: 2, color: '#a8e6ff', text: `slowed${fb ? `, takes +${Math.round(fb * 100)}% damage` : ''}` });
     }
     if (e.shockUntil > t) out.push({ id: 'shock', icon: '⚡', name: 'Shocked', stacks: 0, left: e.shockUntil - t, dur: 2, color: '#ffe66d', text: `takes +${Math.round(SHOCKED_AMP * 100)}% damage` });
+    if ((e.soakUntil ?? 0) > t) out.push({ id: 'soak', icon: '💧', name: 'Soaked', stacks: 0, left: e.soakUntil! - t, dur: 2, color: '#7fb8ff', text: `takes +${Math.round((e.soakAmp ?? 0) * 100)}% damage` });
+    if ((e.snareUntil ?? 0) > t) out.push({ id: 'snare', icon: '🦴', name: 'Snared', stacks: 0, left: e.snareUntil! - t, dur: 4, color: '#c8ccd4', text: `takes +${Math.round((e.snareAmp ?? 0) * 100)}% damage` });
+    const ch = this.charges.find((c) => c.eid === e.id);
+    if (ch) out.push({ id: 'charge', icon: '🧨', name: 'Sticky Charge', stacks: 0, left: ch.t, dur: 1.6, color: '#ff6b4a', text: `${Math.round(ch.dmg)} damage when it blows` });
+    if ((e.stunUntil ?? 0) > t) out.push({ id: 'stun', icon: '💫', name: 'Stunned', stacks: 0, left: e.stunUntil! - t, dur: 1.5, color: '#ffe66d', text: 'can\'t move' });
     if (e.marked && this.sp('mark')) out.push({ id: 'mark', icon: '🔻', name: 'Marked', stacks: 0, left: 0, dur: 0, color: '#ff6b6b', text: `takes +${Math.round(this.sp('mark') * 100)}% damage` });
     return out;
   }
@@ -1820,8 +1917,8 @@ export class Run {
   }
 
   /** Bleed talents: each hit adds a stack (crits 2 with Lethal Wounds), max 5, 4 s; Rupture bursts a full wound. */
-  private applyBleed(e: Enemy, dmg: number, crit: boolean) {
-    const share = this.sp('bleed');
+  private applyBleed(e: Enemy, dmg: number, crit: boolean, def?: WeaponDef) {
+    const share = this.sp('bleed') + (def?.bleedHit ?? 0);
     if (!share || e.dead) return;
     // each stack bleeds for 2x the share over its 4 s (share/2 of the hit every second)
     const per = (dmg * share) / 2;
@@ -1861,8 +1958,12 @@ export class Run {
     for (const f of this.falling) {
       f.t += dt;
       if (f.t >= f.dur) {
-        this.fx.push({ kind: 'boom', x: f.x, y: f.y, t: 0, dur: 0.4, r: f.r, color: this.weapons[f.w]?.def.color ?? '#ff7b2e' });
-        this.forEnemiesIn(f.x, f.y, f.r, (e) => this.hitEnemy(e, f.dmg, f.w, true, 300, f.x, f.y));
+        this.fx.push({ kind: 'boom', x: f.x, y: f.y, t: 0, dur: f.bomb ? 0.25 : 0.4, r: f.r, color: f.bomb ? '#ffb35c' : this.weapons[f.w]?.def.color ?? '#ff7b2e' });
+        if (f.bomb) this.sub = true;
+        this.forEnemiesIn(f.x, f.y, f.r, (e) => this.hitEnemy(e, f.dmg, f.w, true, f.bomb ? 180 : 300, f.x, f.y));
+        this.sub = false;
+        // Daisy Chain: first-wave bomblets split once more
+        if (f.bomb === 1 && this.weapons[f.w]?.def.cluster2) this.throwBomblets(f.x, f.y, 2, f.dmg * 0.7, f.w, 2);
       }
     }
     this.falling = this.falling.filter((f) => f.t < f.dur);
@@ -1924,6 +2025,32 @@ export class Run {
           s.vy = Math.sin(cur) * sp;
         } else s.target = 0;
       }
+      // arrows that seek (Seeker, Seeking Shards) or hang in the air (Thorn Wall)
+      if (s.kind === 'arrow' && !s.enemy) {
+        if (s.hangAt !== undefined && s.life < s.hangAt) {
+          // Thorn Wall: the arrows stop and hang where they are, a ring of thorns the horde has to cross
+          if (s.vx || s.vy) {
+            s.vx = 0;
+            s.vy = 0;
+          }
+          // hanging arrows can cut the same foe again every half second
+          s.dist += dt;
+          if (s.dist > 0.3) {
+            s.dist = 0;
+            s.hit.clear();
+          }
+        } else if (s.home) {
+          const tgt = this.nearest(s.x, s.y, 380, s.hit);
+          if (tgt) {
+            const sp = Math.hypot(s.vx, s.vy);
+            let cur = Math.atan2(s.vy, s.vx);
+            const da = Math.atan2(Math.sin(Math.atan2(tgt.y - s.y, tgt.x - s.x) - cur), Math.cos(Math.atan2(tgt.y - s.y, tgt.x - s.x) - cur));
+            cur += Math.max(-7 * dt, Math.min(7 * dt, da));
+            s.vx = Math.cos(cur) * sp;
+            s.vy = Math.sin(cur) * sp;
+          }
+        }
+      }
       if (s.kind === 'axe') {
         const step = Math.hypot(s.vx, s.vy) * dt;
         s.dist += step;
@@ -1968,7 +2095,40 @@ export class Run {
       this.forEnemiesIn(s.x, s.y, s.r, (e) => {
         if (s.life <= 0 || s.hit.has(e.id)) return;
         s.hit.add(e.id);
-        this.hitEnemy(e, s.dmg, s.w, true, s.kind === 'arrow' ? 140 : 220, s.x - s.vx, s.y - s.vy);
+        const def = s.w >= 0 ? this.weapons[s.w]?.def : undefined;
+        if (s.sub) this.sub = true;
+        this.hitEnemy(e, s.dmg, s.w, true, s.hangAt !== undefined && !s.vx && !s.vy ? 0 : s.kind === 'arrow' ? 140 : 220, s.x - s.vx, s.y - s.vy);
+        this.sub = false;
+        if (s.frag) {
+          const big = !s.sub && !!def?.bounceBlast;
+          this.subBlast(e.x, e.y, (big ? 110 : 45) * Math.sqrt(s.area), s.dmg * (big ? 1 : 0.6), s.w, big ? '#ffd166' : '#ffb35c');
+          if (big) s.life = 0;
+        }
+        // Buckshot: the first hit splits the arrow in two
+        if (def?.splitHit && !s.split && !s.sub) {
+          s.split = true;
+          const a = Math.atan2(s.vy, s.vx);
+          const sp = Math.hypot(s.vx, s.vy);
+          for (const da of [-0.45, 0.45])
+            this.shots.push({ ...s, vx: Math.cos(a + da) * sp, vy: Math.sin(a + da) * sp, dmg: s.dmg * 0.5, life: 0.3, pierce: 0, hit: new Set([e.id]), sub: true, split: true, bounces: 0 });
+        }
+        // Ricochet: jump to the closest foe this arrow hasn't hit yet
+        if (s.bounces && s.bounces > 0) {
+          const nx = this.nearest(e.x, e.y, 420, s.hit);
+          if (nx && nx !== e) {
+            s.bounces--;
+            const sp = Math.hypot(s.vx, s.vy);
+            const a = Math.atan2(nx.y - e.y, nx.x - e.x);
+            s.x = e.x;
+            s.y = e.y;
+            s.vx = Math.cos(a) * sp;
+            s.vy = Math.sin(a) * sp;
+            s.life = Math.max(s.life, 0.6);
+            s.dmg *= 1 + (def?.bounceAmp ?? 0);
+            if (s.bounces === 0 && def?.bounceBlast) s.frag = true;
+            return;
+          }
+        }
         if (s.emp && this.lastCrit && this.coreActive) {
           // Trueshot refunds Focus on crits; Second Nature stretches Deadeye
           if (this.sp('trueshot')) this.coreMeter = Math.min(CORE_MAX, this.coreMeter + 10);
@@ -1982,17 +2142,239 @@ export class Run {
 
   private updatePools(dt: number) {
     for (const p of this.pools) {
+      if (p.until <= this.t) continue;
+      const def = this.weapons[p.w]?.def;
       if (p.follow) {
         p.x = this.x + (p.fx ?? 0);
         p.y = this.y + (p.fy ?? 0);
       }
+      // Hunter's Rain: the cloud stays on its foe
+      if (p.target) {
+        const tg = this.enemies.find((e) => e.id === p.target && !e.dead);
+        if (tg) {
+          const dx = tg.x - p.x;
+          const dy = tg.y - p.y;
+          const l = Math.hypot(dx, dy);
+          const mv = Math.min(l, 260 * dt);
+          if (l > 1) {
+            p.x += (dx / l) * mv;
+            p.y += (dy / l) * mv;
+          }
+        } else {
+          const nx = this.toughest(400);
+          p.target = nx && dist2(nx.x, nx.y, p.x, p.y) < 400 * 400 ? nx.id : 0;
+        }
+      }
+      if (def?.grow && p.r0 && p.born !== undefined) {
+        const life = Math.max(0.01, p.until - p.born);
+        p.r = p.r0 * (0.7 + def.grow * Math.min(1, (this.t - p.born) / life));
+      }
+      // armed traps wait for a foe to step in
+      if (p.armed) {
+        let trig: Enemy | null = null;
+        this.forEnemiesIn(p.x, p.y, p.r * 0.7, (e) => {
+          if (!trig) trig = e;
+        });
+        if (trig) this.triggerTrap(p, trig);
+        continue;
+      }
+      // Undertow / Typhoon: drag normal foes toward the middle
+      if (def?.pull) {
+        const pull = def.pull;
+        this.forEnemiesIn(p.x, p.y, p.r * 1.15, (e) => {
+          if (e.boss) return;
+          const dx = p.x - e.x;
+          const dy = p.y - e.y;
+          const l = Math.hypot(dx, dy);
+          if (l < 12) return;
+          const mv = Math.min(l - 10, pull * dt * (e.elite ? 0.4 : 1));
+          e.x += (dx / l) * mv;
+          e.y += (dy / l) * mv;
+        });
+      }
       p.tick -= dt;
       if (p.tick <= 0) {
         p.tick = p.every;
-        this.forEnemiesIn(p.x, p.y, p.r, (e) => this.hitEnemy(e, p.dmg, p.w, true));
+        const ramp = def?.ramp;
+        this.forEnemiesIn(p.x, p.y, p.r, (e) => {
+          let d = p.dmg;
+          if (ramp) {
+            // Grinding Spikes: every tick on the same foe cuts deeper
+            if (!p.ramps) p.ramps = new Map();
+            const n = (p.ramps.get(e.id) ?? 0) + 1;
+            p.ramps.set(e.id, n);
+            d *= Math.min(ramp, 1 + 0.25 * (n - 1));
+          }
+          this.hitEnemy(e, d, p.w, true);
+        });
       }
     }
+    // Tidal Wave / Execution: a big hit as the zone ends
+    for (const p of this.pools) {
+      if (p.until > this.t || p.done || p.armed) continue;
+      p.done = true;
+      const fin = this.weapons[p.w]?.def.finale;
+      if (!fin) continue;
+      this.fx.push({ kind: 'boom', x: p.x, y: p.y, t: 0, dur: 0.45, r: p.r, color: this.weapons[p.w].def.color });
+      this.forEnemiesIn(p.x, p.y, p.r, (e) => this.hitEnemy(e, p.dmg * fin, p.w, true, 260, p.x, p.y));
+    }
     this.pools = this.pools.filter((p) => p.until > this.t);
+  }
+
+  // ---------------------------------------------------------------- archer path mechanics
+  /** Stun a normal foe (bosses are only slowed). */
+  private stun(e: Enemy, secs: number) {
+    if (e.boss) {
+      e.slowUntil = Math.max(e.slowUntil, this.t + secs * 2);
+      return;
+    }
+    e.stunUntil = Math.max(e.stunUntil ?? 0, this.t + secs);
+  }
+
+  /** A rain cloud (Arrow Rain and its paths). */
+  private openRain(x: number, y: number, r: number, dmg: number, dur: number, w: number, target = 0, child = false) {
+    const def = this.weapons[w].def;
+    const p: Pool = { x, y, r, r0: r, born: this.t, dmg, until: this.t + dur, tick: 0.15, w, every: 0.25, style: 'rain', follow: def.follow, fx: x - this.x, fy: y - this.y, target, child };
+    this.pools.push(p);
+    if (def.opener) {
+      this.fx.push({ kind: 'zap', x, y, t: 0, dur: 0.35, r, color: def.color, text: 'arrows' });
+      this.forEnemiesIn(x, y, r, (e) => this.hitEnemy(e, dmg * def.opener!, w, true, 200, x, y));
+    }
+  }
+
+  /** Cloudburst: a kill in the rain opens a new cloud on the nearest foe. */
+  private cloudburst(e: Enemy, w: number) {
+    const owned = this.weapons[w];
+    const def = owned.def;
+    if (this.pools.filter((p) => p.w === w).length >= def.spawnOnKill!) return;
+    const nx = this.nearest(e.x, e.y, 360, new Set([e.id]));
+    if (!nx) return;
+    const st = this.weaponStats(owned);
+    this.openRain(nx.x, nx.y, 95 * st.area * 0.85, st.dmg * (1 + (def.spawnAmp ?? 0)), st.duration * 0.6, w, 0, true);
+  }
+
+  /** A mine goes off or a bear trap snaps. */
+  private triggerTrap(p: Pool, e: Enemy) {
+    const def = this.weapons[p.w]?.def;
+    p.until = 0;
+    p.armed = undefined;
+    p.done = true;
+    if (!def) return;
+    if (def.snare) {
+      // Bear Trap: hold the foe, hit it hard, and mark it Snared
+      const hold = def.snareHold ?? 1.5;
+      if (e.boss) e.slowUntil = Math.max(e.slowUntil, this.t + hold * 2);
+      else e.stunUntil = Math.max(e.stunUntil ?? 0, this.t + hold);
+      e.snareAmp = def.snareAmp ?? 0.25;
+      e.snareUntil = this.t + hold + 2.5;
+      this.fx.push({ kind: 'boom', x: e.x, y: e.y, t: 0, dur: 0.3, r: e.r + 26, color: '#c8ccd4' });
+      this.fx.push({ kind: 'text', x: e.x, y: e.y - 20, t: 0, dur: 0.8, r: 0, color: '#c8ccd4', text: 'SNARED', crit: true });
+      this.hitEnemy(e, p.dmg * def.snare, p.w, true);
+      if (def.snareBleed && !e.dead) for (let k = 0; k < 5; k++) this.applyBleed(e, p.dmg * def.snare, false, { ...def, bleedHit: Math.max(0.5, def.bleedHit ?? 0) });
+      if (def.tether && !e.dead) {
+        this.fx.push({ kind: 'nova', x: e.x, y: e.y, t: 0, dur: 0.35, r: 260, color: '#c8ccd4', hits: new Set(), dmg: 0, slow: 0, w: -2 });
+        this.forEnemiesIn(e.x, e.y, 260, (o) => {
+          if (o === e || o.boss) return;
+          const dx = e.x - o.x;
+          const dy = e.y - o.y;
+          const l = Math.hypot(dx, dy) || 1;
+          const mv = Math.max(0, l - e.r - o.r);
+          o.x += (dx / l) * mv * 0.85;
+          o.y += (dy / l) * mv * 0.85;
+          this.stun(o, 0.6);
+        });
+      }
+      return;
+    }
+    // Landmine
+    const R = p.r * 1.6 * (def.boomSize ?? 1);
+    this.fx.push({ kind: 'boom', x: p.x, y: p.y, t: 0, dur: 0.4, r: R, color: '#ffb35c' });
+    this.forEnemiesIn(p.x, p.y, R, (o) => {
+      if (def.stun) this.stun(o, def.stun);
+      this.hitEnemy(o, p.dmg * (def.mine ?? 6), p.w, true, 360, p.x, p.y);
+    });
+    if (def.shrapnel) this.throwShards(p.x, p.y, def.shrapnel, p.dmg * 1.6, p.w);
+    if (def.chainMine) {
+      // spikes stay behind, and any mine in reach goes off too
+      this.pools.push({ x: p.x, y: p.y, r: p.r * 1.2, dmg: p.dmg, until: this.t + 2.5, tick: 0.1, w: p.w, every: 0.4, style: 'pool' });
+      for (const q of this.pools) if (q.armed === 'mine' && dist2(q.x, q.y, p.x, p.y) < (R * 1.6) ** 2) this.triggerTrap(q, e);
+    }
+  }
+
+  /** Small explosion from a sub-munition (no further procs). */
+  private subBlast(x: number, y: number, r: number, dmg: number, w: number, color: string) {
+    this.fx.push({ kind: 'boom', x, y, t: 0, dur: 0.25, r, color });
+    this.sub = true;
+    this.forEnemiesIn(x, y, r, (o) => this.hitEnemy(o, dmg, w, false, 120, x, y));
+    this.sub = false;
+  }
+
+  /** Cluster: bomblets scatter around and go off a moment later. */
+  private throwBomblets(x: number, y: number, n: number, dmg: number, w: number, gen: number) {
+    const area = this.weapons[w] ? this.weapons[w].area * (1 + this.stats.area) : 1;
+    for (let k = 0; k < n; k++) {
+      const a = (k / n) * Math.PI * 2 + this.rand() * 0.8;
+      const d = (gen === 1 ? 70 : 45) + this.rand() * 70;
+      this.falling.push({ x: x + Math.cos(a) * d, y: y + Math.sin(a) * d, t: 0, dur: 0.3 + this.rand() * 0.25, r: (gen === 1 ? 52 : 38) * Math.sqrt(area), dmg, w, bomb: gen });
+    }
+  }
+
+  /** Shrapnel: shards fly out of an explosion in a ring. */
+  private throwShards(x: number, y: number, n: number, dmg: number, w: number) {
+    const def = this.weapons[w]?.def;
+    const a0 = this.rand() * Math.PI;
+    for (let k = 0; k < n; k++) {
+      const a = a0 + (k / n) * Math.PI * 2;
+      this.shots.push({
+        kind: 'arrow', x, y, vx: Math.cos(a) * 700, vy: Math.sin(a) * 700, dmg, pierce: 1 + (def?.pierce ?? 0), r: 9, life: 0.45, hit: new Set(), w, enemy: false, target: 0, area: 1,
+        dist: 0, back: false, range: 0, color: '#ffcf8a', sub: true, home: def?.homeShards, frag: def?.fragBlast,
+      });
+    }
+  }
+
+  /** Sticky Charge: a bomb in a foe that goes off after a fuse. */
+  private plantCharge(e: Enemy, dmg: number, w: number, gen: number) {
+    if (this.charges.some((c) => c.eid === e.id)) return;
+    const owned = this.weapons[w];
+    const def = owned.def;
+    const r = 105 * owned.area * (1 + this.stats.area) * (def.boomSize ?? 1) * (def.shaped ? 0.6 : 1);
+    this.charges.push({ eid: e.id, x: e.x, y: e.y, t: def.shaped ? 1.6 : 1.2, dmg, r, w, gen });
+  }
+
+  private updateCharges(dt: number) {
+    if (!this.charges.length) return;
+    for (const c of this.charges) {
+      const e = this.enemies.find((o) => o.id === c.eid);
+      if (e && !e.dead) {
+        c.x = e.x;
+        c.y = e.y;
+      }
+      c.t -= dt;
+      if (c.t > 0) continue;
+      const def = this.weapons[c.w]?.def;
+      this.fx.push({ kind: 'boom', x: c.x, y: c.y, t: 0, dur: 0.45, r: c.r, color: '#ff8c42' });
+      this.fx.push({ kind: 'text', x: c.x, y: c.y - 30, t: 0, dur: 0.8, r: 0, color: '#ff8c42', text: 'BOOM', crit: true });
+      this.sub = true;
+      this.forEnemiesIn(c.x, c.y, c.r, (o) => {
+        const stuck = o.id === c.eid;
+        // Shaped Charge: everything goes into the foe it's in
+        const d = def?.shaped ? (stuck ? c.dmg * 2 : c.dmg * 0.2) : stuck ? c.dmg : c.dmg * 0.45;
+        this.hitEnemy(o, d * (def?.demolish && o.boss ? 1.5 : 1), c.w, true, 380, c.x, c.y);
+        if (def?.demolish && !o.boss && !o.dead && o.hp < o.maxHp * def.demolish) {
+          if (this.weapons[c.w]) this.weapons[c.w].total += o.hp;
+          o.hp = 0;
+          this.kill(o);
+          this.fx.push({ kind: 'text', x: o.x, y: o.y, t: 0, dur: 0.6, r: 0, color: '#ff6b6b', text: 'X', crit: true });
+        }
+      });
+      this.sub = false;
+      // Chain Detonation: plant a new charge on the nearest foe
+      if (def?.restick && c.gen === 0) {
+        const nx = this.nearest(c.x, c.y, 380, new Set([c.eid]));
+        if (nx) this.plantCharge(nx, c.dmg * 0.5, c.w, 1);
+      }
+    }
+    this.charges = this.charges.filter((c) => c.t > 0);
   }
 
   private updateTelegraphs(dt: number) {
@@ -2154,6 +2536,7 @@ export class Run {
     this.shots = [];
     this.pools = [];
     this.falling = [];
+    this.charges = [];
     this.telegraphs = [];
     this.jelly = new JellyFight(this, this.level);
     this.map = this.jelly.map;
@@ -2208,6 +2591,7 @@ export class Run {
     this.shots = [];
     this.pools = [];
     this.falling = [];
+    this.charges = [];
     this.telegraphs = [];
     this.inLair = false;
     this.lairCleared = true;

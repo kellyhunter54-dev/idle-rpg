@@ -112,6 +112,87 @@ export interface WeaponDef {
   follow?: boolean;
   /** extra crit chance for this ability */
   crit?: number;
+  // ---- archer path mechanics (paths.ts ARCHER_TREES) ----
+  /** zones: radius grows from 70% to 70% + grow over the zone's life */
+  grow?: number;
+  /** hits leave foes Soaked: take this much more damage from everything for 2 s */
+  soak?: number;
+  /** zones pull normal foes toward the middle (units a second) */
+  pull?: number;
+  /** when a zone ends, everything inside takes this many ticks' damage at once */
+  finale?: number;
+  /** a new zone opens with a hit worth this many ticks */
+  opener?: number;
+  /** rain sits on the toughest foe and follows it */
+  track?: boolean;
+  /** kills inside the rain open a new cloud on the nearest foe, up to this many at once */
+  spawnOnKill?: number;
+  /** each new cloud hits this much harder */
+  spawnAmp?: number;
+  /** traps wait armed until a foe steps on them, then explode for this many times the damage */
+  mine?: number;
+  /** a mine going off sets off mines nearby and leaves spikes behind */
+  chainMine?: boolean;
+  /** explosions / close hits stun normal foes this long (bosses are only slowed) */
+  stun?: number;
+  /** explosion radius multiplier for mines and charges */
+  boomSize?: number;
+  /** bear trap: snaps the first foe for this many times the damage and holds it */
+  snare?: number;
+  /** Snared foes take this much more damage from everything */
+  snareAmp?: number;
+  /** seconds a snared foe is held */
+  snareHold?: number;
+  /** the snap fills the bleed stacks at once */
+  snareBleed?: boolean;
+  /** the snap drags foes nearby to the snared one */
+  tether?: boolean;
+  /** zones land at your feet as you move */
+  atFeet?: boolean;
+  /** zone ticks hit the same foe harder each time (+25% a tick), up to this multiplier */
+  ramp?: number;
+  /** this ability's hits bleed (share of the hit, like the talent) */
+  bleedHit?: number;
+  /** this ability hits bleeding foes harder */
+  ampBleed?: number;
+  /** explosions throw this many bomblets around */
+  cluster?: number;
+  /** bomblets split once more */
+  cluster2?: boolean;
+  /** sticky charge: the arrow sticks and blows up later for this many times its hit */
+  stick?: number;
+  /** share of your other hits on a stuck foe that feeds the charge */
+  stickFeed?: number;
+  /** a charge going off plants another on the nearest foe */
+  restick?: boolean;
+  /** charge blasts finish normal foes under this much HP */
+  demolish?: number;
+  /** charge: all of the payload goes into the stuck foe */
+  shaped?: boolean;
+  /** explosions throw this many shards outward */
+  shrapnel?: number;
+  /** shards burst on hit */
+  fragBlast?: boolean;
+  /** shards seek foes */
+  homeShards?: boolean;
+  /** extra damage within 320 range */
+  closeAmp?: number;
+  /** arrows split in two on their first hit */
+  splitHit?: boolean;
+  /** a second volley right after the first */
+  doubleTap?: boolean;
+  /** arrows bounce to this many more foes */
+  bounce?: number;
+  /** each bounce hits this much harder */
+  bounceAmp?: number;
+  /** arrows curve toward foes */
+  homing?: boolean;
+  /** the last bounce explodes */
+  bounceBlast?: boolean;
+  /** a fan that goes all the way around */
+  ring?: boolean;
+  /** arrows stop and hang in the air for this many seconds */
+  hang?: number;
 }
 
 export const WEAPONS: WeaponDef[] = [

@@ -232,6 +232,44 @@ export class RunRenderer {
     for (const p of run.pools) {
       const left = Math.min(1, (p.until - run.t) * 2) * zoneA;
       const col = run.weapons[p.w]?.def.color ?? '#e0c08a';
+      if (p.armed) {
+        // armed trap: a small device with a faint trigger ring (mine: blinking light, bear trap: steel teeth)
+        f.globalAlpha = 0.25 * zoneA;
+        f.strokeStyle = col;
+        f.lineWidth = 2;
+        f.setLineDash([6, 10]);
+        f.beginPath();
+        f.arc(p.x, p.y, p.r * 0.7, 0, Math.PI * 2);
+        f.stroke();
+        f.setLineDash([]);
+        f.globalAlpha = 1;
+        f.fillStyle = '#1b1410';
+        f.beginPath();
+        f.arc(p.x, p.y, 20, 0, Math.PI * 2);
+        f.fill();
+        if (p.armed === 'mine') {
+          f.fillStyle = '#5a4a3a';
+          f.beginPath();
+          f.arc(p.x, p.y, 15, 0, Math.PI * 2);
+          f.fill();
+          f.fillStyle = Math.floor(time * 3 + p.x) % 2 ? '#ff3b3b' : '#6a1c1c';
+          f.beginPath();
+          f.arc(p.x, p.y, 6, 0, Math.PI * 2);
+          f.fill();
+        } else {
+          f.strokeStyle = '#c8ccd4';
+          f.lineWidth = 5;
+          f.beginPath();
+          f.arc(p.x, p.y, 15, 0, Math.PI * 2);
+          f.stroke();
+          f.fillStyle = '#e6e9f0';
+          for (let k = 0; k < 8; k++) {
+            const a = (k / 8) * Math.PI * 2;
+            f.fillRect(p.x + Math.cos(a) * 9 - 2, p.y + Math.sin(a) * 9 - 2, 4, 4);
+          }
+        }
+        continue;
+      }
       f.globalAlpha = 0.07 * left;
       f.fillStyle = col;
       f.beginPath();
@@ -482,6 +520,17 @@ export class RunRenderer {
       f.beginPath();
       f.arc(m.x, m.y, m.r * (0.4 + 0.6 * p), 0, Math.PI * 2);
       f.fill();
+      if (m.bomb) {
+        // bomblet: a little black ball with a lit fuse, no warning ring (it's yours)
+        f.globalAlpha = 1;
+        f.fillStyle = '#1b1410';
+        f.beginPath();
+        f.arc(m.x, m.y, 10, 0, Math.PI * 2);
+        f.fill();
+        f.fillStyle = Math.floor(time * 14) % 2 ? '#ffd166' : '#ff7b2e';
+        f.fillRect(m.x + 4, m.y - 12, 5, 5);
+        continue;
+      }
       f.globalAlpha = 0.7;
       f.strokeStyle = '#ff7b2e';
       f.lineWidth = 5;
@@ -632,7 +681,7 @@ export class RunRenderer {
           this.blit(ctx, PX.shadowSprite(24), sx, sy + 2 * B, 12, 4, false, alpha);
           this.blit(ctx, img, sx, sy + 3 * B, img.width >> 1, img.height - 1, (v & 8) !== 0, alpha);
         }
-      } else if (it.t === 1) this.drawEnemy(run.enemies[it.i], time, run.t);
+      } else if (it.t === 1) this.drawEnemy(run.enemies[it.i], time, run.t, run);
       else if (it.t === 2) {
         const c = run.chests[it.i];
         const sx = this.px(c.x, c.y);
@@ -820,6 +869,7 @@ export class RunRenderer {
 
     // meteor rocks in the air
     for (const m of run.falling) {
+      if (m.bomb) continue;
       const p = m.t / m.dur;
       const sx = this.px(m.x, m.y) + (1 - p) * 60 * B;
       const sy = this.py(m.x, m.y, (1 - p) * 520);
@@ -874,7 +924,7 @@ export class RunRenderer {
     return false;
   }
 
-  private drawEnemy(e: Enemy, time: number, now = 0) {
+  private drawEnemy(e: Enemy, time: number, now = 0, run?: Run) {
     const ctx = this.ctx;
     const B = this.block;
     const grow = e.spawnT > 0 ? 1 - e.spawnT / 0.6 : 1;
@@ -935,6 +985,38 @@ export class RunRenderer {
       ctx.fillRect((mx - 2) * B, my * B, 5 * B, B);
       ctx.fillRect((mx - 1) * B, (my + 1) * B, 3 * B, B);
       ctx.fillRect(mx * B, (my + 2) * B, B, B);
+    }
+    // stunned / held: little stars circling its head
+    if ((e.stunUntil ?? 0) > now) {
+      ctx.fillStyle = (e.snareUntil ?? 0) > now ? '#e6e9f0' : '#ffe66d';
+      for (let k = 0; k < 3; k++) {
+        const a = time * 6 + (k * Math.PI * 2) / 3;
+        ctx.fillRect(Math.round(sx / B + Math.cos(a) * (r + 2)) * B, Math.round(top / B - 3 + Math.sin(a) * 2) * B, B, B);
+      }
+    }
+    // snared: a steel jaw clamped at its base
+    if ((e.snareUntil ?? 0) > now) {
+      ctx.fillStyle = '#c8ccd4';
+      const by = Math.round(sy / B);
+      const half = Math.round(img.width / 2) + 1;
+      for (let x = -half; x <= half; x += 2) ctx.fillRect((Math.round(sx / B) + x) * B, (by - 1) * B, B, 2 * B);
+    }
+    // soaked: a drip from the top
+    if ((e.soakUntil ?? 0) > now) {
+      ctx.fillStyle = '#7fb8ff';
+      const ph = (time * 2 + e.id * 0.31) % 1;
+      ctx.fillRect(Math.round(sx / B + ((e.id % 5) - 2)) * B, Math.round(top / B + ph * img.height) * B, B, 2 * B);
+    }
+    // sticky charge: a blinking bomb stuck in it (blinks faster as the fuse runs out)
+    const ch = run?.charges.length ? run.charges.find((c) => c.eid === e.id) : undefined;
+    if (ch) {
+      const on = Math.floor(time * (ch.t < 0.5 ? 16 : 6)) % 2 === 0;
+      const cx = Math.round(sx / B + r * 0.4);
+      const cy = Math.round(top / B + img.height * 0.35);
+      ctx.fillStyle = '#1b1410';
+      ctx.fillRect((cx - 1) * B, (cy - 1) * B, 4 * B, 4 * B);
+      ctx.fillStyle = on ? '#ff3b3b' : '#6a1c1c';
+      ctx.fillRect(cx * B, cy * B, 2 * B, 2 * B);
     }
     // bleeding: drops of blood falling off the slime (more with more stacks)
     if (e.bleedStacks > 0 && e.bleedUntil > now) {
