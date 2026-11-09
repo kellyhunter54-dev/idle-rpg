@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
     <title>Gloomtide</title>
-    <meta name="theme-color" content="#0b0a08" />
+    <meta name="theme-color" content="#0b1020" />
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌊</text></svg>" />
     <link rel="stylesheet" href="./src/style.css" />
     <link rel="stylesheet" href="./src/run/run.css" />
@@ -30,18 +30,21 @@
 
         <div id="xpbar"><div id="xpfill"></div><span id="xptext">Lv 1</span></div>
 
-        <header id="rhud" class="hudpanel">
-          <canvas id="rportrait" width="40" height="40"></canvas>
-          <div class="rh-main">
-            <div class="rh-top"><span id="rlvl">Lv 1</span><span class="chip">🪙 <b id="rgold">0</b></span><span class="chip">💀 <b id="rkills">0</b></span></div>
-            <div class="rh-hp"><div id="rhpfill"></div><span id="rhptext">100 / 100</span></div>
-            <div class="rh-res" id="rres"><div id="resfill"></div><span id="restext"></span></div>
-            <div id="advnext"></div>
+        <div id="lefthud">
+          <header id="rhud" class="hudpanel">
+            <canvas id="rportrait" width="40" height="40"></canvas>
+            <div class="rh-main">
+              <div class="rh-top"><span id="rlvl">Lv 1</span><span class="rh-chips"><span class="chip">🪙 <b id="rgold">0</b></span><span class="chip">💀 <b id="rkills">0</b></span></span></div>
+              <div class="rh-hp"><div id="rhpfill"></div><span id="rhptext">100 / 100</span></div>
+              <div class="rh-res" id="rres"><div id="resfill"></div><span id="restext"></span></div>
+              <div id="advnext"></div>
+            </div>
+            <div id="rstats"></div>
+          </header>
+          <div id="loadout">
+            <div class="slots" id="wslots"></div>
+            <div class="slots" id="tslots"></div>
           </div>
-        </header>
-        <div id="loadout">
-          <div class="slots" id="wslots"></div>
-          <div class="slots" id="tslots"></div>
         </div>
 
         <div id="clock" class="hudpanel"><span id="timer">10:00</span><span id="clocksub">until the tide</span></div>

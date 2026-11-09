@@ -168,6 +168,9 @@ function statsTable(r: Run): string {
     ['Move speed', `+${Math.round(s.speed * 100)}%`],
     ['Size', `+${Math.round(s.area * 100)}%`],
     ['Crit', `${Math.round(s.crit * 100)}%`],
+    ['Crit damage', `x${(1.2 + s.critDmg).toFixed(2)}`],
+    ['Extra projectiles', `+${s.count}`],
+    ['Regen', `${s.regen.toFixed(1)} HP/s`],
     ['Damage taken', `-${Math.round(s.armor * 100)}%`],
     ['Luck', String(Math.round(s.luck))],
     ['EXP gain', `+${Math.round(s.xp * 100)}%`],
@@ -224,8 +227,27 @@ function slotHtml(icon: string, level: number | string, title: string, color = '
   return `<div class="rslot" title="${title}"${color ? ` style="--rc:${color}"` : ''}><span>${icon}</span><b>${level}</b></div>`;
 }
 
+const pct = (v: number) => `${v >= 0 ? '+' : ''}${Math.round(v * 100)}%`;
+/** One stat cell; gold when a temporary buff lifts it above your base. */
+function statCell(label: string, value: string, tip: string, boosted = false) {
+  return `<div class="st${boosted ? ' up' : ''}" title="${tip}"><span>${label}</span><b>${value}</b></div>`;
+}
+function statsPanel(r: Run): string {
+  const l = r.liveStats();
+  const up = (a: number, b: number) => a > b + 0.005;
+  return [
+    statCell('DMG', pct(l.dmg), 'Damage bonus on every hit (includes +1.5% per level and active buffs)', up(l.dmg, l.dmgBase)),
+    statCell('CRIT', `${Math.round(l.crit * 100)}% <i>x${l.critMult.toFixed(1)}</i>`, `Crit chance, and crits deal x${l.critMult.toFixed(2)} damage`),
+    statCell('ATK SPD', pct(l.haste), 'Attack speed: abilities recharge this much faster', up(l.haste, l.hasteBase)),
+    statCell('AREA', pct(l.area), 'Size of zones, blasts and orbits', up(l.area, l.areaBase)),
+    statCell('ARMOR', `${Math.round(l.armor * 100)}%`, 'Damage taken is reduced by this much (max 70%)'),
+    statCell('SPEED', pct(l.speed), 'Move speed', l.speed > l.speedBase + 0.005),
+  ].join('');
+}
+
 function updateHud(r: Run) {
   const s = r.stats;
+  setHtml('rstats', statsPanel(r));
   setText('rlvl', `Lv ${r.level} ${r.title}`);
   const next = r.branch ? ADVANCE_LEVELS[r.tier] : ADVANCE_LEVELS[0];
   // class resource + ultimate
@@ -251,7 +273,7 @@ function updateHud(r: Run) {
     cb.title = `${c.name} (F): ${c.desc} Builds ${c.resource}.`;
   }
   $('rres').classList.toggle('full', r.coreReady);
-  setText('advnext', next && r.level < next ? `Job advancement at Lv ${next}` : '');
+  setText('advnext', next && r.level < next ? `Next job advancement: Lv ${next}` : '');
   setText('rgold', String(Math.floor(r.gold)));
   setText('rkills', String(r.kills));
   setWidth('rhpfill', r.hp / s.maxHp);

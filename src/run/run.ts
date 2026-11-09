@@ -1517,7 +1517,8 @@ export class Run {
   }
 
   // ---------------------------------------------------------------- weapons
-  private weaponStats(w: OwnedWeapon) {
+  /** Situational damage and haste on top of stats (moving, low HP, Rampage, ultimate). */
+  private situational() {
     const s = this.stats;
     const frenzy = this.hasProc('frenzy') && this.hp < s.maxHp * 0.5 ? 0.4 : 0;
     const berserk = this.sp('berserk') * (1 - this.hp / s.maxHp);
@@ -1525,9 +1526,42 @@ export class Run {
     const momentum = this.moving ? this.sp('momentum') : 0;
     const steady = this.moving ? 0 : this.sp('steady');
     const ramp = this.t < this.rampageUntil ? this.rampage * this.sp('rampage') : 0;
+    return { dmg: momentum + steady + ramp + this.coreDmg(), haste: frenzy + berserk + kite };
+  }
+
+  /** Totals for the HUD stats panel: what your hits are doing right now. */
+  liveStats() {
+    const s = this.stats;
+    const sit = this.situational();
+    const lvl = 1 + (this.level - 1) * 0.015;
+    const w0 = this.weapons[0];
+    const coreH = w0 ? this.coreHaste(w0) : 0;
+    const area = s.area + (this.coreActive && this.core.id === 'bloodrage' ? 0.2 : 0);
     return {
-      dmg: w.dmg * Math.max(0.1, 1 + s.dmg + momentum + steady + ramp + this.coreDmg()) * (1 + (this.level - 1) * 0.015),
-      cd: w.cd / (1 + w.haste + s.cd + frenzy + berserk + kite + this.coreHaste(w)),
+      dmg: Math.max(0.1, 1 + s.dmg + sit.dmg) * lvl - 1,
+      dmgBase: Math.max(0.1, 1 + s.dmg) * lvl - 1,
+      haste: s.cd + sit.haste + coreH,
+      hasteBase: s.cd,
+      crit: Math.min(1, s.crit),
+      critMult: 1.2 + s.critDmg,
+      area,
+      areaBase: s.area,
+      armor: s.armor,
+      speed: this.moveSpeed / this.hero.speed - 1,
+      speedBase: s.speed,
+      regen: s.regen,
+      luck: s.luck,
+      count: s.count,
+      maxHp: s.maxHp,
+    };
+  }
+
+  private weaponStats(w: OwnedWeapon) {
+    const s = this.stats;
+    const sit = this.situational();
+    return {
+      dmg: w.dmg * Math.max(0.1, 1 + s.dmg + sit.dmg) * (1 + (this.level - 1) * 0.015),
+      cd: w.cd / (1 + w.haste + s.cd + sit.haste + this.coreHaste(w)),
       count: w.count + s.count + (w.def.kind === 'summon' ? this.sp('pack') + this.coreWolves : 0),
       area: w.area * (1 + s.area + (this.coreActive && this.core.id === 'bloodrage' ? 0.2 : 0)),
       duration: w.duration * (1 + s.duration),
