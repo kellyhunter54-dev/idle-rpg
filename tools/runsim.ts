@@ -36,5 +36,7 @@ for (let r = 0; r < runs; r++) {
   }
   const dmg = run.weapons.map((w) => `${w.def.id} ${Math.round(w.total / 1000)}k`).join(', ');
   const allDmg = run.weapons.reduce((a, w) => a + w.total, 0) + run.retired.reduce((a, w) => a + w.total, 0) + run.bleedTotal;
+  const pathlog = run.weapons.slice(1).map((w) => `${w.base}:${w.path.join('>') || '-'}`).join(' ');
+  console.log(`  paths ${pathlog}`);
   console.log(`run ${r} [${run.title}] ult ${uses}x bleed ${Math.round((run.bleedTotal / allDmg) * 100)}% [${run.passives.filter((p) => /^(a_|r_|k_|w_|b_)/.test(p.id)).map((p) => p.id).join(',')}]: ${run.ended || 'timeout'} at ${Math.floor(run.t / 60)}:${String(Math.floor(run.t % 60)).padStart(2, '0')} lv${run.level} kills ${run.kills} bossTime ${Math.round(bossT)}s boss ${run.boss ? Math.round((run.boss.hp / run.boss.maxHp) * 100) + '%' : '-'} | taken c${Math.round(run.taken.contact)} s${Math.round(run.taken.shot)} b${Math.round(run.taken.slam)} | ${dmg} | ${(Date.now() - t0) / 1000}s`);
 }

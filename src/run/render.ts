@@ -885,7 +885,8 @@ export class RunRenderer {
     const r = Math.max(3, Math.round(e.r * 0.27 * grow));
     const frame = Math.round(Math.sin(time * (e.def ? 9 : 5) + e.id));
     const charging = e.move === 'charge' && e.moveT >= 0.55;
-    const img = PX.slime(e.color, r, frame, e.hitFlash > 0 ? 'hit' : charging ? 'wind' : '');
+    const frozen = e.frozenUntil > now;
+    const img = PX.slime(frozen ? '#bfe9ff' : e.color, r, frozen ? 0 : frame, e.hitFlash > 0 ? 'hit' : charging ? 'wind' : '');
     this.blit(ctx, PX.shadowSprite(Math.max(8, r * 2)), sx, sy0 + B, Math.max(8, r * 2) >> 1, 3);
     this.blit(ctx, img, sx, sy + B, img.width >> 1, img.height - 1);
     const top = sy - (img.height - 2) * B;

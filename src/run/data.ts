@@ -97,6 +97,21 @@ export interface WeaponDef {
   shot?: boolean;
   /** arrows: angle between arrows in one volley (all fired at once) */
   spread?: number;
+  // ---- path effects (ability paths add these) ----
+  /** chance a hit freezes a foe in place for 1 s (bosses are only slowed) */
+  freeze?: number;
+  /** lightning hits jump to this many more foes (60% damage) */
+  chain?: number;
+  /** hits explode in this radius for 50% damage */
+  blast?: number;
+  /** this ability hits harder against chilled / shocked / burning foes */
+  ampChill?: number;
+  ampShock?: number;
+  ampBurn?: number;
+  /** pools / rain: the zone follows you */
+  follow?: boolean;
+  /** extra crit chance for this ability */
+  crit?: number;
 }
 
 export const WEAPONS: WeaponDef[] = [
@@ -122,7 +137,7 @@ export const WEAPONS: WeaponDef[] = [
   { id: 'longbow', name: 'Longbow', icon: '🏹', desc: 'Your auto attack: arrows at the nearest foe.', kind: 'arrow', dmg: 11, cd: 0.7, count: 1, area: 1, pierce: 1, speed: 900, duration: 0, ups: ['dmg', 'cd', 'count', 'pierce', 'speed'], color: '#e0c08a', shot: true },
   { id: 'rain', name: 'Arrow Rain', icon: '🌧️', desc: 'Arrows keep raining on a patch of ground for a few seconds.', kind: 'rain', dmg: 4, cd: 3.2, count: 1, area: 1, pierce: 0, speed: 0, duration: 2.5, ups: ['dmg', 'cd', 'count', 'area', 'duration'], color: '#e0c08a', shot: true },
   { id: 'traps', name: 'Spike Traps', icon: '🪤', desc: 'Throws spike fields among your foes.', kind: 'pool', dmg: 5, cd: 2.6, count: 1, area: 1, pierce: 0, speed: 0, duration: 3.5, ups: ['dmg', 'cd', 'count', 'area', 'duration'], color: '#b08a5a' },
-  { id: 'disc', name: 'Ricochet Disc', icon: '🥏', desc: 'A disc that flies out and back through foes.', kind: 'axe', dmg: 14, cd: 1.5, count: 1, area: 1, pierce: 99, speed: 760, duration: 0, ups: ['dmg', 'cd', 'count', 'speed'], color: '#cfd8e3' },
+  { id: 'blast', name: 'Explosive Shot', icon: '💥', desc: 'An arrow that bursts on impact, hitting everything around it.', kind: 'arrow', dmg: 16, cd: 1.6, count: 1, area: 1, pierce: 0, speed: 800, duration: 0, ups: ['dmg', 'cd', 'count', 'area', 'speed'], color: '#ffb35c', shot: true, blast: 80 },
   { id: 'fan', name: 'Fan of Arrows', icon: '🎐', desc: 'A wide spread of arrows in front of you.', kind: 'arrow', dmg: 13, cd: 1.6, count: 5, area: 1, pierce: 1, speed: 850, duration: 0, ups: ['dmg', 'cd', 'count', 'pierce'], color: '#e0c08a', shot: true, spread: 0.22 },
   // Ranger
   { id: 'thornarrow', name: 'Thorn Arrow', icon: '🌿', desc: 'Arrows tipped with thorns that slow and go through foes.', kind: 'arrow', dmg: 15, cd: 0.6, count: 1, area: 1, pierce: 2, speed: 900, duration: 0, ups: ['dmg', 'cd', 'count', 'pierce'], color: '#9be38a', shot: true, slow: true },
@@ -233,6 +248,9 @@ export const PASSIVES: Record<JobId, PassiveDef[]> = {
 export const ADVANCE_LEVELS = [10, 15, 25];
 /** Levels at which the 4 base abilities unlock (the auto attack is there from level 1). */
 export const ABILITY_LEVELS = [2, 4, 6, 10];
+/** Ability path tiers: tier k opens when you are at least PATH_PLAYER[k] and the ability is at least PATH_ABILITY[k]. */
+export const PATH_PLAYER = [10, 15, 25];
+export const PATH_ABILITY = [2, 5, 8];
 export interface BranchTier {
   /** job title at this tier */
   title: string;
@@ -336,7 +354,7 @@ export const BRANCHES: Record<JobId, BranchDef[]> = {
       id: 'ranger', name: 'Ranger', icon: '🐺', color: '#7bc96f', desc: 'Nature and beasts. Wolves fight beside you, the ground turns against foes.',
       core: CORES.ranger,
       tiers: [
-        { title: 'Ranger', swaps: [['longbow', 'thornarrow'], ['disc', 'wolves']], passives: [
+        { title: 'Ranger', swaps: [['longbow', 'thornarrow'], ['blast', 'wolves']], passives: [
           cGain('bond', 'Primal Bond', '🤝', 'Bond'),
           { id: 'packleader', name: 'Pack Leader', icon: '🐾', special: 'pack', step: 1, flat: true, text: (v) => `+${v} wolf`, max: 3 },
           { id: 'wild', name: 'Call of the Wild', icon: '🌲', stats: { dmg: 0.1, speed: 0.04 }, max: 5 },
@@ -362,7 +380,7 @@ export const BRANCHES: Record<JobId, BranchDef[]> = {
           { id: 'headshot', name: 'Headshot', icon: '🎯', special: 'headshot', step: 0.04, text: (v) => `Shots have ${pct(v)} chance to deal triple damage`, max: 5 },
           { id: 'steady', name: 'Steady Hands', icon: '🧘', special: 'steady', step: 0.12, text: (v) => `+${pct(v)} damage while standing still`, max: 5 },
         ] },
-        { title: 'Sniper', swaps: [['disc', 'snipe']], passives: [
+        { title: 'Sniper', swaps: [['blast', 'snipe']], passives: [
           { id: 'splitshot', name: 'Split Shot', icon: '🔱', special: 'split', step: 1, flat: true, text: (v) => `Each empowered shot also fires ${v} arrow${v > 1 ? 's' : ''} at other foes`, max: 2 },
           { id: 'prolong', name: 'Prolonged Focus', icon: '⏳', special: 'coreDur', step: 2, flat: true, text: (v) => `Deadeye lasts ${v}s longer`, max: 2 },
           { id: 'scope', name: 'Long Scope', icon: '🔭', stats: { critDmg: 0.35, crit: 0.03 }, max: 5 },
@@ -540,7 +558,7 @@ export interface HeroDef {
 }
 export const HEROES: Record<JobId, HeroDef> = {
   warrior: { job: 'warrior', name: 'Warrior', basic: 'slash', abilities: ['cleave', 'whirl', 'quake', 'hatchet'], passive: 'Sturdy: 10% less damage taken, +0.5 HP regen', stats: { armor: 0.1, regen: 0.5 }, hp: 140, speed: 225 },
-  archer: { job: 'archer', name: 'Archer', basic: 'longbow', abilities: ['rain', 'traps', 'disc', 'fan'], passive: 'Nimble: +10% move speed, +8% crit chance', stats: { speed: 0.1, crit: 0.08 }, hp: 100, speed: 235 },
+  archer: { job: 'archer', name: 'Archer', basic: 'longbow', abilities: ['rain', 'traps', 'blast', 'fan'], passive: 'Nimble: +10% move speed, +8% crit chance', stats: { speed: 0.1, crit: 0.08 }, hp: 100, speed: 235 },
   mage: { job: 'mage', name: 'Mage', basic: 'missile', abilities: ['spark', 'frost', 'orbs', 'ember'], passive: 'Scholar: +15% size, +15% EXP', stats: { area: 0.15, xp: 0.15 }, hp: 90, speed: 225 },
 };
 

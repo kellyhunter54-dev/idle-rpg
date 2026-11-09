@@ -3,12 +3,13 @@
 import { JobId } from '../data';
 import { GameMap, TILE, Tile, fits, moveCircle } from '../map';
 import { JELLY, JellyFight } from './jelly';
+import { PathNode, pathNext } from './paths';
 
 /** Shocked foes take this much more damage (lightning hits, 2 s). */
 export const SHOCKED_AMP = 0.1;
 import {
   BossDef, ELITE, ENEMIES, EnemyDef, FINAL_BOSS, HEROES, HeroDef, ITEM, ITEMS, ItemDef, PStat, RUN, RUN_RARITIES,
-  ABILITY_LEVELS, ADVANCE_LEVELS, BRANCHES, BRANCH_TALENTS, CLASS_TALENTS, TALENT_LEVELS, BranchDef, CLASS_CORE, CORE_MAX, CORE_RATE, CoreDef, PASSIVE, PASSIVES, PSpecial, PassiveDef, RunRarity, SHRINE_BOONS, SHRINE_RADIUS, SHRINE_TIME, STAT_LABEL, WEAPON, WSTAT_NAME, WSTAT_STEP, WStat,
+  ABILITY_LEVELS, ADVANCE_LEVELS, PATH_ABILITY, PATH_PLAYER, BRANCHES, BRANCH_TALENTS, CLASS_TALENTS, TALENT_LEVELS, BranchDef, CLASS_CORE, CORE_MAX, CORE_RATE, CoreDef, PASSIVE, PASSIVES, PSpecial, PassiveDef, RunRarity, SHRINE_BOONS, SHRINE_RADIUS, SHRINE_TIME, STAT_LABEL, WEAPON, WSTAT_NAME, WSTAT_STEP, WStat,
   WeaponDef, enemyHpScale, fmtStat, rollRarity, spawnRate, xpToNext,
 } from './data';
 
@@ -46,6 +47,8 @@ export interface Enemy {
   bleedShowT: number;
   /** Shocked (lightning hits): takes more damage for a moment */
   shockUntil: number;
+  /** frozen in place (Frost paths) */
+  frozenUntil: number;
   /** burn damage waiting to be shown */
   burnShow: number;
   burnShowT: number;
@@ -128,6 +131,10 @@ export interface Pool {
   every: number;
   /** 'rain': arrows falling on the spot instead of a puddle */
   style: 'pool' | 'rain';
+  /** moves with the hero (Storm Cloud) */
+  follow?: boolean;
+  fx?: number;
+  fy?: number;
 }
 
 export interface Telegraph {
@@ -190,6 +197,9 @@ export interface Falling {
 export interface OwnedWeapon {
   def: WeaponDef;
   level: number;
+  /** the base ability this slot started as (its path tree), and the path ids picked so far */
+  base: string;
+  path: string[];
   dmg: number;
   cd: number;
   count: number;
@@ -217,7 +227,7 @@ export interface OwnedPassive {
 }
 
 export interface Choice {
-  kind: 'weapon' | 'newWeapon' | 'passive' | 'newPassive' | 'boon' | 'gold' | 'advance' | 'talent';
+  kind: 'weapon' | 'newWeapon' | 'passive' | 'newPassive' | 'boon' | 'gold' | 'advance' | 'talent' | 'path';
   id: string;
   name: string;
   icon: string;
@@ -527,7 +537,7 @@ export class Run {
   addWeapon(id: string) {
     const d = WEAPON[id];
     this.weapons.push({
-      def: d, level: 1, dmg: d.dmg, cd: d.cd, count: d.count, area: d.area, pierce: d.pierce, speed: d.speed, duration: d.duration,
+      def: d, level: 1, base: id, path: [], dmg: d.dmg, cd: d.cd, count: d.count, area: d.area, pierce: d.pierce, speed: d.speed, duration: d.duration,
       haste: 0, timer: 0.3, burst: 0, burstT: 0, burstDir: 0, orbitUntil: 0, orbitA: 0, total: 0,
     });
   }
@@ -587,6 +597,74 @@ export class Run {
     return true;
   }
 
+  /** Explode / chain from an ability path. Zone abilities proc less often (they hit many times a second). */
+  private pathProcs(e: Enemy, dmg: number, w: number, def: WeaponDef) {
+    const zone = ['pool', 'rain', 'aura', 'orbit', 'summon'].includes(def.kind);
+    const owned = this.weapons[w];
+    if (def.blast && def.kind !== 'bolt' && this.rand() < (zone ? 0.2 : 1)) {
+      const R = def.blast * (owned ? owned.area : 1) * (1 + this.stats.area);
+      this.fx.push({ kind: 'boom', x: e.x, y: e.y, t: 0, dur: 0.3, r: R, color: def.color });
+      this.forEnemiesIn(e.x, e.y, R, (o) => {
+        if (o === e) return;
+        if (owned) owned.total += dmg * 0.5;
+        this.hitEnemy(o, dmg * 0.5, -2, false, 160, e.x, e.y);
+      });
+    }
+    if (def.chain && def.kind !== 'storm' && this.rand() < (zone ? 0.15 : 0.5)) {
+      const hit = new Set([e.id]);
+      let from = e;
+      for (let c = 0; c < def.chain; c++) {
+        const nx = this.nearest(from.x, from.y, 260, hit);
+        if (!nx || nx === from) break;
+        hit.add(nx.id);
+        this.fx.push({ kind: 'zap', x: nx.x, y: nx.y, t: 0, dur: 0.25, r: 30, color: def.color, text: 'bolt' });
+        if (owned) owned.total += dmg * 0.6;
+        if (def.shock) nx.shockUntil = this.t + 2;
+        this.hitEnemy(nx, dmg * 0.6, -2, false);
+        from = nx;
+      }
+    }
+  }
+
+  /** Ability paths: a base ability whose level and your level are high enough offers its next tier. */
+  private checkPath(): boolean {
+    for (let k = 1; k < this.weapons.length; k++) {
+      const w = this.weapons[k];
+      const tier = w.path.length;
+      if (tier >= PATH_PLAYER.length || this.level < PATH_PLAYER[tier] || w.level < PATH_ABILITY[tier]) continue;
+      const opts = pathNext(w.base, this.branch, w.path);
+      if (!opts.length) continue;
+      this.choiceTitle = `${w.def.name}: path ${'I'.repeat(tier + 1)}`;
+      this.choices = opts.map((n) => ({
+        kind: 'path', id: n.id, name: n.name, icon: n.icon,
+        rarity: { ...RUN_RARITIES[tier === 2 ? 4 : 3], color: n.color ?? w.def.color, name: n.becomes ? 'Job form' : n.cap ? 'Capstone' : tier === 0 ? 'Form' : 'Path' },
+        level: tier + 1, lines: [n.desc], apply: () => this.applyPath(k, n),
+      }));
+      return true;
+    }
+    return false;
+  }
+  private applyPath(k: number, n: PathNode) {
+    let w = this.weapons[k];
+    if (n.becomes) {
+      this.replaceWeapon(w.def.id, n.becomes);
+      w = this.weapons[k];
+    }
+    const m = n.mult ?? {};
+    if (m.dmg) w.dmg *= m.dmg;
+    if (m.area) w.area *= m.area;
+    if (m.duration) w.duration *= m.duration;
+    if (m.speed) w.speed *= m.speed;
+    if (m.count) w.count += m.count;
+    if (m.pierce) w.pierce += m.pierce;
+    if (m.haste) w.haste += m.haste;
+    const changes = n.mod ? n.mod(w.def) : {};
+    const name = n.rename ? n.rename.replace('{n}', w.def.name) : w.def.name;
+    w.def = { ...w.def, ...changes, name };
+    w.path.push(n.id);
+    this.notice(`${w.def.name}: ${n.name}`, n.color ?? w.def.color, n.icon);
+  }
+
   /** Base abilities unlock on their own at ABILITY_LEVELS. */
   private checkUnlocks() {
     const have = this.weapons.length - 1;
@@ -609,7 +687,7 @@ export class Run {
     const od = o.def;
     const ratio = (cur: number, base: number) => (base > 0 ? cur / base : 1);
     this.weapons[i] = {
-      def: nd, level: o.level,
+      def: nd, level: o.level, base: o.base, path: [...o.path],
       dmg: nd.dmg * ratio(o.dmg, od.dmg),
       cd: nd.cd,
       count: Math.max(1, nd.count + (o.count - od.count)),
@@ -630,7 +708,7 @@ export class Run {
       this.choiceTitle = 'Job advancement';
       this.choices = BRANCHES[this.job].map((b) => ({
         kind: 'advance', id: b.id, name: b.name, icon: b.icon, rarity: { ...RUN_RARITIES[3], color: b.color, name: 'Job' }, level: 0,
-        lines: [b.desc, `Ultimate: ${b.core.icon} ${b.core.name} (${b.core.resource})`, ...b.tiers.map((t, i) => `Lv ${ADVANCE_LEVELS[i]} ${t.title}: ${t.swaps.map(([, to]) => `${WEAPON[to].icon} ${WEAPON[to].name}`).join(', ')}`)],
+        lines: [b.desc, `Ultimate: ${b.core.icon} ${b.core.name} (${b.core.resource})`, ...b.tiers[0].swaps.filter(([f]) => f === this.hero.basic).map(([f, to]) => `${WEAPON[f].name} becomes ${WEAPON[to].icon} ${WEAPON[to].name}`), `Unlocks ${b.name} forms in your ability paths`],
         apply: () => {
           this.branch = b;
           this.advance();
@@ -643,7 +721,7 @@ export class Run {
     this.choiceTitle = 'Job advancement';
     this.choices = [{
       kind: 'advance', id: this.branch.id, name: t.title, icon: this.branch.icon, rarity: { ...RUN_RARITIES[4], color: this.branch.color, name: `Tier ${this.tier + 1}` }, level: 0,
-      lines: [...t.swaps.map(([from, to]) => `${WEAPON[from].name} becomes ${WEAPON[to].icon} ${WEAPON[to].name}`), `New passives: ${t.passives.map((p) => p.name).join(', ')}`],
+      lines: [`Ability paths: tier ${this.tier + 1} opens (for abilities at Lv ${PATH_ABILITY[this.tier] ?? 9}+)`, `New passives: ${t.passives.map((p) => p.name).join(', ')}`],
       apply: () => this.advance(),
     }];
     return true;
@@ -651,7 +729,8 @@ export class Run {
   private advance() {
     const t = this.branch!.tiers[this.tier];
     this.tier++;
-    for (const [from, to] of t.swaps) this.replaceWeapon(from, to);
+    // job advancements change your auto attack; the 4 abilities grow through their paths instead
+    for (const [from, to] of t.swaps) if (from === this.hero.basic) this.replaceWeapon(from, to);
     this.notice(`You are now a ${t.title}!`, this.branch!.color, this.branch!.icon);
   }
 
@@ -741,7 +820,7 @@ export class Run {
     c.apply();
     this.choices = null;
     this.checkUnlocks();
-    if (!this.checkAdvance() && !this.checkTalent() && this.pendingLevels > 0) this.openLevelUp();
+    if (!this.checkAdvance() && !this.checkTalent() && !this.checkPath() && this.pendingLevels > 0) this.openLevelUp();
   }
   reroll(): boolean {
     if (!this.choices || this.rerolls <= 0 || this.choiceTitle !== 'Level up!') return false;
@@ -786,7 +865,7 @@ export class Run {
     this.input.interact = false;
     if (this.hp <= 0) this.die();
     this.checkUnlocks();
-    if (!this.choices && !this.checkAdvance() && !this.checkTalent() && this.pendingLevels > 0) this.openLevelUp();
+    if (!this.choices && !this.checkAdvance() && !this.checkTalent() && !this.checkPath() && this.pendingLevels > 0) this.openLevelUp();
   }
 
   notice(text: string, color = '#ffd166', icon?: string) {
@@ -925,7 +1004,7 @@ export class Run {
       id: this.nextId++, def, x, y, r, hp, maxHp: hp, speed: def.speed * (elite ? 0.9 : 1) * (0.92 + this.rand() * 0.16),
       dmg: def.dmg * (1 + this.runT / 600) * (elite ? ELITE.dmgMult : 1), xp: def.xp * (elite ? ELITE.xpMult : 1),
       color: elite ? ELITE.color : def.color, elite, boss: 0, name: '', slowUntil: 0, hitFlash: 0, cd: 1 + this.rand() * 2,
-      kx: 0, ky: 0, dead: false, angle: 0, moving: true, touchCd: 0, move: '', moveT: 0, dirX: 0, dirY: 0, spawnT: 0.35, z: 0, marked: false, burnDps: 0, burnUntil: 0, bleedStacks: 0, bleedPer: 0, bleedUntil: 0, bleedShow: 0, bleedShowT: 0, shockUntil: 0, burnShow: 0, burnShowT: 0,
+      kx: 0, ky: 0, dead: false, angle: 0, moving: true, touchCd: 0, move: '', moveT: 0, dirX: 0, dirY: 0, spawnT: 0.35, z: 0, marked: false, burnDps: 0, burnUntil: 0, bleedStacks: 0, bleedPer: 0, bleedUntil: 0, bleedShow: 0, bleedShowT: 0, shockUntil: 0, frozenUntil: 0, burnShow: 0, burnShowT: 0,
     };
   }
 
@@ -992,7 +1071,7 @@ export class Run {
     const e: Enemy = {
       id: this.nextId++, def: null, x: p.x, y: p.y, r: def.r, hp, maxHp: hp, speed: def.speed, dmg: def.dmg, xp: tier === 1 ? 120 : 400,
       color: def.color, elite: false, boss: tier, name: def.name, slowUntil: 0, hitFlash: 0, cd: 2.5, kx: 0, ky: 0, dead: false,
-      angle: 0, moving: true, touchCd: 0, move: '', moveT: 0, dirX: 0, dirY: 0, spawnT: 0.6, z: 0, marked: false, burnDps: 0, burnUntil: 0, bleedStacks: 0, bleedPer: 0, bleedUntil: 0, bleedShow: 0, bleedShowT: 0, shockUntil: 0, burnShow: 0, burnShowT: 0,
+      angle: 0, moving: true, touchCd: 0, move: '', moveT: 0, dirX: 0, dirY: 0, spawnT: 0.6, z: 0, marked: false, burnDps: 0, burnUntil: 0, bleedStacks: 0, bleedPer: 0, bleedUntil: 0, bleedShow: 0, bleedShowT: 0, shockUntil: 0, frozenUntil: 0, burnShow: 0, burnShowT: 0,
     };
     this.enemies.push(e);
     this.boss = e;
@@ -1134,7 +1213,7 @@ export class Run {
       }
       dx /= d;
       dy /= d;
-      const slow = e.slowUntil > this.t ? 0.55 : 1;
+      const slow = e.frozenUntil > this.t ? 0 : e.slowUntil > this.t ? 0.55 : 1;
       let sp = e.speed * slow;
       if (e.def?.ranged) {
         if (d < 360) sp *= d < 260 ? -0.7 : 0;
@@ -1292,13 +1371,24 @@ export class Run {
       crit = true;
     }
     if (def?.slow) e.slowUntil = Math.max(e.slowUntil, this.t + 1);
+    // ability path effects
+    if (def) {
+      if (def.ampChill && e.slowUntil > this.t) dmg *= 1 + def.ampChill;
+      if (def.ampShock && e.shockUntil > this.t) dmg *= 1 + def.ampShock;
+      if (def.ampBurn && e.burnUntil > this.t) dmg *= 1 + def.ampBurn;
+      if (def.freeze && !e.boss && e.frozenUntil < this.t && this.rand() < def.freeze) {
+        e.frozenUntil = this.t + 1;
+        e.slowUntil = Math.max(e.slowUntil, this.t + 2);
+      }
+    }
     const sharp = this.sp('sharpshot');
     if (sharp && dist2(e.x, e.y, this.x, this.y) > 380 * 380) dmg *= 1 + sharp;
-    if (canCrit && this.rand() < this.stats.crit) {
+    if (canCrit && this.rand() < this.stats.crit + (def?.crit ?? 0)) {
       crit = true;
       dmg *= 1.2 + this.stats.critDmg;
     }
     this.lastCrit = crit;
+    if (w >= 0 && def && (def.blast || def.chain)) this.pathProcs(e, dmg, w, def);
     if (w >= 0) this.applyBleed(e, dmg, crit);
     if (e.boss === 3 && this.jelly) {
       // King Jelly: every slime shares one HP pool
@@ -1590,11 +1680,11 @@ export class Run {
       const e = this.randomNear(this.x, this.y, 620);
       if (!e) return;
       const R = 70 * st.area;
-      const style = w.def.shock ? 'bolt' : w.def.id === 'judgment' ? 'pillar' : 'arrows';
+      const style = w.def.id === 'judgment' ? 'pillar' : w.def.shot ? 'arrows' : 'bolt';
       this.fx.push({ kind: 'zap', x: e.x, y: e.y, t: 0, dur: 0.3, r: R, color: w.def.color, text: style });
       this.forEnemiesIn(e.x, e.y, R, (o) => this.hitEnemy(o, st.dmg, i, true, 120, e.x, e.y));
       // Overload: the spark jumps on to more foes
-      const chain = w.def.shock ? this.sp('chain') : 0;
+      const chain = (w.def.shock ? this.sp('chain') : 0) + (w.def.chain ?? 0);
       let from = e;
       const hit = new Set([e.id]);
       for (let c = 0; c < chain; c++) {
@@ -1616,13 +1706,15 @@ export class Run {
       const a = this.rand() * Math.PI * 2;
       const x = e ? e.x : this.x + Math.cos(a) * 200;
       const y = e ? e.y : this.y + Math.sin(a) * 200;
-      this.pools.push({ x, y, r: 80 * st.area, dmg: st.dmg, until: this.t + st.duration, tick: 0, w: i, every: 0.45, style: 'pool' });
+      this.pools.push({ x, y, r: 80 * st.area, dmg: st.dmg, until: this.t + st.duration, tick: 0, w: i, every: 0.45, style: 'pool', follow: w.def.follow, fx: x - this.x, fy: y - this.y });
     } else if (kind === 'rain') {
       // arrows keep falling on a patch of foes for the whole duration
       const e = this.randomNear(this.x, this.y, 560) ?? this.nearest(this.x, this.y, 800);
       if (!e) return;
       const j = n ? 90 : 0;
-      this.pools.push({ x: e.x + (this.rand() - 0.5) * j, y: e.y + (this.rand() - 0.5) * j, r: 95 * st.area, dmg: st.dmg, until: this.t + st.duration, tick: 0.15, w: i, every: 0.25, style: 'rain' });
+      const rx = w.def.follow ? this.x + (n ? (this.rand() - 0.5) * 160 : 0) : e.x + (this.rand() - 0.5) * j;
+      const ry = w.def.follow ? this.y + (n ? (this.rand() - 0.5) * 160 : 0) : e.y + (this.rand() - 0.5) * j;
+      this.pools.push({ x: rx, y: ry, r: 95 * st.area, dmg: st.dmg, until: this.t + st.duration, tick: 0.15, w: i, every: 0.25, style: 'rain', follow: w.def.follow, fx: rx - this.x, fy: ry - this.y });
     } else if (kind === 'beam') {
       // a straight line through everything toward the nearest foe
       const tgt = this.nearest(this.x, this.y, 900);
@@ -1856,6 +1948,10 @@ export class Run {
 
   private updatePools(dt: number) {
     for (const p of this.pools) {
+      if (p.follow) {
+        p.x = this.x + (p.fx ?? 0);
+        p.y = this.y + (p.fy ?? 0);
+      }
       p.tick -= dt;
       if (p.tick <= 0) {
         p.tick = p.every;
@@ -2003,7 +2099,7 @@ export class Run {
     const e: Enemy = {
       id: this.nextId++, def: null, x, y, r, hp: 1, maxHp: 1, speed: 0, dmg: 0, xp: 0, color: JELLY.color, elite: false, boss: 3, name,
       slowUntil: 0, hitFlash: 0, cd: 0, kx: 0, ky: 0, dead: false, angle: 0, moving: false, touchCd: 0, move: '', moveT: 0, dirX: 0, dirY: 0,
-      spawnT: 0.4, z: 0, marked: false, burnDps: 0, burnUntil: 0, bleedStacks: 0, bleedPer: 0, bleedUntil: 0, bleedShow: 0, bleedShowT: 0, shockUntil: 0, burnShow: 0, burnShowT: 0,
+      spawnT: 0.4, z: 0, marked: false, burnDps: 0, burnUntil: 0, bleedStacks: 0, bleedPer: 0, bleedUntil: 0, bleedShow: 0, bleedShowT: 0, shockUntil: 0, frozenUntil: 0, burnShow: 0, burnShowT: 0,
     };
     this.enemies.push(e);
     return e;
@@ -2292,7 +2388,7 @@ export class Run {
   autoPick() {
     if (!this.choices) return;
     const score = (c: Choice) =>
-      (c.kind === 'advance' || c.kind === 'talent' ? 20 + this.rand() : c.kind === 'newWeapon' ? 5 : c.kind === 'weapon' ? 4 : c.kind === 'newPassive' ? 3.5 : 3) + RUN_RARITIES.indexOf(c.rarity) * 0.8 + (c.id === 'glass' ? -2 : 0);
+      (c.kind === 'advance' || c.kind === 'talent' || c.kind === 'path' ? 20 + this.rand() : c.kind === 'newWeapon' ? 5 : c.kind === 'weapon' ? 4 : c.kind === 'newPassive' ? 3.5 : 3) + RUN_RARITIES.indexOf(c.rarity) * 0.8 + (c.id === 'glass' ? -2 : 0);
     let best = 0;
     this.choices.forEach((c, i) => {
       if (score(c) > score(this.choices![best])) best = i;

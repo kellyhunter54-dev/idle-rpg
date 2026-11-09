@@ -5,8 +5,9 @@ import * as PX from '../pixel';
 import { ABILITY_LEVELS, ADVANCE_LEVELS, CLASS_CORE, CORE_MAX, BRANCHES, HEROES, ITEM, PASSIVE, PASSIVES, RUN, RUN_RARITIES, WEAPON } from './data';
 import { setupRunInput } from './input';
 import { JELLY } from './jelly';
+import { pathNode } from './paths';
 import { RunRenderer } from './render';
-import { Run } from './run';
+import { Run, RunInput } from './run';
 
 const $ = (id: string) => document.getElementById(id)!;
 const BEST_KEY = 'gloomtide-best';
@@ -82,6 +83,7 @@ function showTitle() {
 
 // ---------------------------------------------------------------- the run
 let run: Run | null = null;
+const sharedInput: RunInput = { moveX: 0, moveY: 0, jump: false, interact: false };
 let paused = false;
 let renderer: RunRenderer | null = null;
 let poll: ((skip: boolean) => void) | null = null;
@@ -111,6 +113,9 @@ function startRun(job: JobId) {
   $('end').classList.add('hidden');
   $('pause').classList.add('hidden');
   run = new Run(job);
+  // one input object for every run: the controls are wired to it once (a new run used to get a fresh one and never moved)
+  Object.assign(sharedInput, { moveX: 0, moveY: 0, jump: false, interact: false });
+  run.input = sharedInput;
   (window as unknown as { __run: Run }).__run = run;
   paused = false;
   endShown = false;
@@ -120,7 +125,7 @@ function startRun(job: JobId) {
   portrait($('rportrait') as HTMLCanvasElement, job);
   if (!renderer) renderer = new RunRenderer($('canvas') as HTMLCanvasElement);
   if (!poll)
-    poll = setupRunInput(run.input, $('battle'), {
+    poll = setupRunInput(sharedInput, $('battle'), {
       onPause: () => togglePause(),
       onCard: (i) => run?.choices && pickCard(i),
       onReroll: () => run?.reroll(),
@@ -141,7 +146,12 @@ function togglePause() {
   if (run.choices) return;
   paused = !paused;
   $('pause').classList.toggle('hidden', !paused);
-  if (paused) $('pausestats').innerHTML = statsTable(run);
+  if (paused) {
+    const builds = run.weapons
+      .map((w, k) => `<div class="build-row"><span>${w.def.icon} ${w.def.name}${k ? '' : ' (auto)'}</span><i>${w.path.length ? pathNames(run!, w).join(' → ') : k ? 'no path yet' : ''}</i></div>`)
+      .join('');
+    $('pausestats').innerHTML = `<div class="builds">${builds}</div>` + statsTable(run);
+  }
 }
 
 function pickCard(i: number) {
@@ -171,9 +181,9 @@ function renderCards(r: Run) {
   setText('choicetitle', r.choiceTitle);
   r.choices!.forEach((c, i) => {
     const el = document.createElement('button');
-    el.className = `card r-${c.rarity.id}${c.kind === 'advance' || c.kind === 'talent' ? ' adv' : ''}`;
+    el.className = `card r-${c.rarity.id}${c.kind === 'advance' || c.kind === 'talent' || c.kind === 'path' ? ' adv' : ''}`;
     el.style.setProperty('--rc', c.rarity.color);
-    const tag = c.kind === 'talent' ? 'PICK ONE' : c.kind === 'advance' ? c.rarity.name.toUpperCase() : c.kind === 'newWeapon' ? 'NEW ABILITY' : c.kind === 'newPassive' ? 'NEW PASSIVE' : c.kind === 'passive' ? `Lv ${c.level} / ${PASSIVE[c.id].max}` : c.level ? `Lv ${c.level}` : c.kind === 'boon' ? 'BOON' : '';
+    const tag = c.kind === 'path' ? `TIER ${c.level}` : c.kind === 'talent' ? 'PICK ONE' : c.kind === 'advance' ? c.rarity.name.toUpperCase() : c.kind === 'newWeapon' ? 'NEW ABILITY' : c.kind === 'newPassive' ? 'NEW PASSIVE' : c.kind === 'passive' ? `Lv ${c.level} / ${PASSIVE[c.id].max}` : c.level ? `Lv ${c.level}` : c.kind === 'boon' ? 'BOON' : '';
     el.innerHTML = `
       <div class="card-top"><span class="card-rar">${c.kind === 'advance' ? '' : c.rarity.name}</span><span class="card-tag">${tag}</span></div>
       <div class="card-icon">${c.icon}</div>
@@ -187,6 +197,7 @@ function renderCards(r: Run) {
   reroll.textContent = `Reroll (${r.rerolls})`;
   reroll.disabled = r.rerolls <= 0 || r.choiceTitle !== 'Level up!';
   reroll.classList.toggle('hidden', r.choiceTitle !== 'Level up!' && r.choiceTitle !== 'Shrine boon');
+  $('choice').classList.toggle('pathpick', r.choices![0]?.kind === 'path');
   $('skipbtn').classList.toggle('hidden', r.choiceTitle !== 'Level up!');
 }
 
@@ -202,6 +213,11 @@ function shortVal(text: string) {
   const dps = text.match(/^(\d+) damage a second/);
   if (dps) return `${dps[1]}/s`;
   return '';
+}
+
+/** Names of the path picks on an ability, in order. */
+function pathNames(r: Run, w: Run['weapons'][number]): string[] {
+  return w.path.map((_, i) => pathNode(w.base, r.branch, w.path, i)?.name ?? '?');
 }
 
 function slotHtml(icon: string, level: number | string, title: string, color = '') {
@@ -255,7 +271,11 @@ function updateHud(r: Run) {
   // auto attack + the 4 abilities (locked ones dimmed with their unlock level)
   const ws = [0, 1, 2, 3, 4].map((k) => {
     const w = r.weapons[k];
-    if (w) return slotHtml(w.def.icon, w.level, `${k ? '' : 'Auto attack. '}${w.def.name}: ${w.def.desc}`, k ? '' : '#c9a227');
+    if (w) {
+      const pips = w.path.length ? ` ${'◆'.repeat(w.path.length)}` : '';
+      const tip = `${k ? '' : 'Auto attack. '}${w.def.name}: ${w.def.desc}${w.path.length ? ` Path: ${pathNames(r, w).join(' → ')}` : ''}`;
+      return slotHtml(w.def.icon, `${w.level}${pips}`, tip, k ? (w.path.length ? w.def.color : '') : '#c9a227');
+    }
     const d = WEAPON[r.hero.abilities[k - 1]];
     return `<div class="rslot locked" title="${d.name}: unlocks at Lv ${ABILITY_LEVELS[k - 1]}"><span>${d.icon}</span><b>${ABILITY_LEVELS[k - 1]}</b></div>`;
   });
