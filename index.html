@@ -53,6 +53,16 @@
         <div id="hint" class="hidden"></div>
         <div id="buffs"></div>
         <div id="testbadge" class="hidden"></div>
+        <div id="cavepanel" class="hudpanel hidden">
+          <div class="cp-title">Training cave <span id="cavecount"></span></div>
+          <div class="cp-row"><span>Mob HP</span>
+            <button class="btn alt" data-hp="1">x1</button><button class="btn alt" data-hp="5">x5</button><button class="btn alt" data-hp="10">x10</button><button class="btn alt" data-hp="50">x50</button><button class="btn alt" data-hp="100">x100</button>
+          </div>
+          <div class="cp-row"><span>Spawn</span>
+            <button class="btn alt" data-spawn="10">+10</button><button class="btn alt" data-spawn="50">+50</button><button class="btn alt" id="caveelite">+Elite</button><button class="btn alt" id="caveclear">Clear</button>
+          </div>
+          <div class="cp-note">Mobs also keep coming on their own.</div>
+        </div>
         <button id="corebtn" title="Ultimate (F)"><span id="coreicon"></span><b id="corename"></b><i>F</i></button>
         <div id="itemrow"></div>
         <div id="autotag" class="hidden">AUTO</div>

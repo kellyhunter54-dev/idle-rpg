@@ -334,7 +334,7 @@ function updateHud(r: Run) {
     cb.title = `${c.name} (F): ${c.desc} Builds ${c.resource}.`;
   }
   $('rres').classList.toggle('full', r.coreReady);
-  setText('advnext', next && r.level < next ? `Next job advancement: Lv ${next}` : '');
+  setText('advnext', r.hunter ? 'Test hero: Rain of Fire tree only' : next && r.level < next ? `Next job advancement: Lv ${next}` : '');
   setText('rgold', String(Math.floor(r.gold)));
   setText('rkills', String(r.kills));
   setWidth('rhpfill', r.hp / s.maxHp);
@@ -344,7 +344,7 @@ function updateHud(r: Run) {
   setText('xptext', `Lv ${r.level}`);
   if (r.runT < RUN.length) {
     setText('timer', fmtTime(r.timeLeft));
-    setText('clocksub', r.inLair ? 'paused in the lair' : r.lairCleared ? 'until the tide' : 'King Jelly\'s lair is open');
+    setText('clocksub', r.inCave ? 'paused in the cave' : r.inLair ? 'paused in the lair' : r.lairCleared ? 'until the tide' : 'King Jelly\'s lair is open');
   } else {
     setText('timer', r.boss ? 'TIDE' : `+${fmtTime(r.overtime)}`);
     setText('clocksub', 'beat the Gloom Tide');
@@ -405,7 +405,15 @@ function updateHud(r: Run) {
   if (near) hint = r.gold >= r.chestCost ? `E: open chest (${r.chestCost} gold)` : `Chest: needs ${r.chestCost} gold`;
   const sh = r.shrines.find((x) => !x.used && x.charge > 0);
   if (!hint && sh) hint = 'Stay in the shrine...';
-  if (!hint && !r.inLair && !r.lairCleared && Math.hypot(r.lairDoor.x - r.x, r.lairDoor.y - r.y) < 90) hint = "E: enter King Jelly's lair (the run clock pauses inside)";
+  if (!hint && !r.inLair && !r.inCave && Math.hypot(r.caveDoor.x - r.x, r.caveDoor.y - r.y) < 90) hint = 'E: enter the training cave (testing; the run clock pauses inside)';
+  if (!hint && r.inCave && r.map.exit && Math.hypot(r.map.exit.x - r.x, r.map.exit.y - r.y) < 90) hint = 'E: leave the training cave';
+  // training cave panel
+  $('cavepanel').classList.toggle('hidden', !r.inCave);
+  if (r.inCave) {
+    for (const b of document.querySelectorAll<HTMLElement>('#cavepanel [data-hp]')) b.classList.toggle('on', Number(b.dataset.hp) === r.caveHp);
+    setText('cavecount', `${r.enemies.filter((e) => !e.dead).length} mobs`);
+  }
+  if (!hint && !r.inLair && !r.inCave && !r.lairCleared && Math.hypot(r.lairDoor.x - r.x, r.lairDoor.y - r.y) < 90) hint = "E: enter King Jelly's lair (the run clock pauses inside)";
   if (!hint && r.inLair && r.jelly?.done) hint = Math.hypot(r.jelly.exit.x - r.x, r.jelly.exit.y - r.y) < 90 ? 'E: leave the lair' : 'Grab the chests, then walk to the golden portal';
   // Slimed stacks under the boss bar
   const sl = r.inLair && r.jelly && !r.jelly.done ? r.jelly.slimed : -1;
@@ -527,6 +535,12 @@ $('testdmg').addEventListener('click', () => {
   const t = loadTest();
   saveTest({ ...t, dmg: DMG_STEPS[(DMG_STEPS.indexOf(t.dmg) + 1) % DMG_STEPS.length] });
 });
+// ---- training cave controls
+for (const b of document.querySelectorAll<HTMLElement>('#cavepanel [data-hp]')) b.addEventListener('click', () => run?.setCaveHp(Number(b.dataset.hp)));
+for (const b of document.querySelectorAll<HTMLElement>('#cavepanel [data-spawn]')) b.addEventListener('click', () => run?.caveSpawn(Number(b.dataset.spawn)));
+$('caveelite').addEventListener('click', () => run?.caveSpawn(1, true));
+$('caveclear').addEventListener('click', () => run?.caveClear());
+
 $('testxp').addEventListener('click', () => {
   const t = loadTest();
   saveTest({ ...t, xp: XP_STEPS[(XP_STEPS.indexOf(t.xp) + 1) % XP_STEPS.length] });

@@ -1,7 +1,7 @@
 // Run mode simulation: one survivors-style run on an open arena. No DOM code here, so the
 // headless balance sim (tools/runsim.ts) can drive it.
 import { JobId } from '../data';
-import { GameMap, TILE, Tile, fits, moveCircle } from '../map';
+import { GameMap, TILE, Tile, fits, moveCircle, generateTrainingCave } from '../map';
 import { JELLY, JellyFight } from './jelly';
 import { PathNode, pathNext, HUNTER_TREE, treeNext } from './paths';
 
@@ -459,6 +459,10 @@ export class Run {
   rampage = 0;
   // ---- the lair (King Jelly): the door is on the map from the start; go in whenever you're ready
   lairDoor = { x: 0, y: 0 };
+  /** Training cave (testing): door on the map, mob HP multiplier inside */
+  caveDoor = { x: 0, y: 0 };
+  inCave = false;
+  caveHp = 1;
   lairCleared = false;
   inLair = false;
   jelly: JellyFight | null = null;
@@ -563,6 +567,8 @@ export class Run {
     const taken: { x: number; y: number }[] = [];
     this.lairDoor = this.openSpot(900, taken, 0);
     taken.push(this.lairDoor);
+    this.caveDoor = this.openSpot(700, taken, 0);
+    taken.push(this.caveDoor);
     for (let i = 0; i < RUN.shrines; i++) {
       const p = this.openSpot(500, taken, 900);
       taken.push(p);
@@ -978,8 +984,9 @@ export class Run {
     this.t += dt;
     if (this.auto) this.autoSteer();
     this.updateHero(dt);
-    if (this.inLair) this.lairSpent += dt;
-    else this.spawn(dt);
+    if (this.inLair || this.inCave) this.lairSpent += dt;
+    // the training cave keeps its own natural spawn
+    if (!this.inLair) this.spawn(dt);
     this.rebuildGrid();
     this.updateEnemies(dt);
     if (this.inLair && this.jelly && !this.jelly.done) this.jelly.update(dt);
@@ -1119,14 +1126,15 @@ export class Run {
 
   // ---------------------------------------------------------------- spawning
   private spawnPoint(r: number): { x: number; y: number } | null {
-    for (let i = 0; i < 12; i++) {
+    for (let i = 0; i < (this.inCave ? 30 : 12); i++) {
       // a bit ahead of where the hero is running, so the field in front never empties out
       let a = this.rand() * Math.PI * 2;
       if (this.moving && this.rand() < 0.4) a = this.angle + (this.rand() - 0.5) * 1.6;
-      const d = RUN.spawnMin + this.rand() * (RUN.spawnMax - RUN.spawnMin);
+      const d = this.inCave ? 520 + this.rand() * 380 : RUN.spawnMin + this.rand() * (RUN.spawnMax - RUN.spawnMin);
       const x = this.x + Math.cos(a) * d;
       const y = this.y + Math.sin(a) * d;
-      if (x < TILE * 3 || y < TILE * 3 || x > this.arenaSize - TILE * 3 || y > this.arenaSize - TILE * 3) continue;
+      const size = this.inCave ? this.map.w * TILE : this.arenaSize;
+      if (x < TILE * 2 || y < TILE * 2 || x > size - TILE * 2 || y > size - TILE * 2) continue;
       if (!fits(this.map, x, y, r)) continue;
       return { x, y };
     }
@@ -1137,7 +1145,7 @@ export class Run {
     const curse = this.stats.curse;
     const hpScale = enemyHpScale(this.runT) * (1 + curse * 0.6) * (1 + this.overtime * RUN.overtimeHp);
     const r = elite ? def.r * ELITE.rMult : def.r;
-    const hp = def.hp * hpScale * (elite ? ELITE.hpMult : 1);
+    const hp = def.hp * hpScale * (elite ? ELITE.hpMult : 1) * (this.inCave ? this.caveHp : 1);
     return {
       id: this.nextId++, def, x, y, r, hp, maxHp: hp, speed: def.speed * (elite ? 0.9 : 1) * (0.92 + this.rand() * 0.16),
       dmg: def.dmg * (1 + this.runT / 600) * (elite ? ELITE.dmgMult : 1), xp: def.xp * (elite ? ELITE.xpMult : 1),
@@ -2346,6 +2354,10 @@ export class Run {
     return this.hunterNodes.has(id);
   }
   private ablazeCount = 0;
+  /** Burn lasts 5 s, 15 s with Delayed Burn. */
+  private burnDur() {
+    return this.hn('delayedburn') ? 15 : 5;
+  }
   private rainIdx() {
     return this.weapons.findIndex((w) => w.base === 'rain');
   }
@@ -2377,7 +2389,7 @@ export class Run {
     const stacks = Math.min(5, before + n);
     e.hbPer = Math.max(live ? e.hbPer ?? 0 : 0, per);
     e.hbGen = Math.max(live ? e.hbGen ?? 0 : 0, gen);
-    e.hbUntil = this.t + (this.hn('delayedburn') ? 12 : 4);
+    e.hbUntil = this.t + this.burnDur();
     e.hbStacks = stacks;
     // Delayed Burn: every stack applied sets off a smaller Flash Point
     if (this.hn('delayedburn') && stacks > before && stacks < 5) this.flashPoint(e, 0.25 * (stacks / 5), 'mini');
@@ -2462,11 +2474,11 @@ export class Run {
     // Burn
     if ((e.hbStacks ?? 0) > 0) {
       if ((e.hbUntil ?? 0) <= t) {
-        if (this.hn('everlastingash') && e.hbStacks! >= 5) e.hbUntil = t + 4;
+        if (this.hn('everlastingash') && e.hbStacks! >= 5) e.hbUntil = t + this.burnDur();
         else if (this.hn('creepingash')) {
           if (e.hbStacks! < 5) {
             e.hbStacks!++;
-            e.hbUntil = t + 4;
+            e.hbUntil = t + this.burnDur();
           } else {
             this.jumpBurn(e, 1, 150);
             e.hbStacks = 0;
@@ -2711,7 +2723,7 @@ export class Run {
 
   private hunterDebuffs(e: Enemy, out: { id: string; icon: string; name: string; stacks: number; left: number; dur: number; color: string; text: string }[]) {
     const t = this.t;
-    if ((e.hbStacks ?? 0) > 0 && (e.hbUntil ?? 0) > t) out.push({ id: 'hburn', icon: '🔥', name: 'Burn', stacks: e.hbStacks!, left: e.hbUntil! - t, dur: this.hn('delayedburn') ? 12 : 4, color: '#ff9a3c', text: `${Math.round(e.hbStacks! * (e.hbPer ?? 0) * 0.6)} damage a second` });
+    if ((e.hbStacks ?? 0) > 0 && (e.hbUntil ?? 0) > t) out.push({ id: 'hburn', icon: '🔥', name: 'Burn', stacks: e.hbStacks!, left: e.hbUntil! - t, dur: this.burnDur(), color: '#ff9a3c', text: `${Math.round(e.hbStacks! * (e.hbPer ?? 0) * 0.6)} damage a second` });
     if ((e.abUntil ?? 0) > t) out.push({ id: 'ablaze', icon: '☀️', name: 'Ablaze', stacks: 0, left: e.abUntil! - t, dur: 6, color: '#ff5a1f', text: `${Math.round(e.abDps ?? 0)} damage a second` });
     if ((e.bombUntil ?? 0) > t) out.push({ id: 'bomb', icon: '💣', name: 'Living Bomb', stacks: 0, left: e.bombUntil! - t, dur: 12, color: '#ff3b3b', text: 'blows up every 3s' });
     if ((e.heatUntil ?? 0) > t) out.push({ id: 'heat', icon: '🌡️', name: 'Heat Wave', stacks: 0, left: e.heatUntil! - t, dur: 0.5, color: '#ffb066', text: 'takes 2x damage, 4x from fire' });
@@ -2753,7 +2765,7 @@ export class Run {
   private openRain(x: number, y: number, r: number, dmg: number, dur: number, w: number, target = 0, child = false) {
     const def = this.weapons[w].def;
     const heat = this.hunter && this.hn('heatwave');
-    const p: Pool = { x, y, r, r0: r, born: this.t, dmg, until: this.t + dur, tick: 0.15, w, every: this.hunter && this.hn('wildfire') ? 0.5 : 0.25, style: heat ? 'heat' : 'rain', follow: def.follow, fx: x - this.x, fy: y - this.y, target, child };
+    const p: Pool = { x, y, r, r0: r, born: this.t, dmg, until: this.t + dur, tick: 0.15, w, every: this.hunter && this.hn('wildfire') ? (this.hn('delayedburn') ? 3 : 0.5) : 0.25, style: heat ? 'heat' : 'rain', follow: def.follow, fx: x - this.x, fy: y - this.y, target, child };
     this.pools.push(p);
     // Smoldering Ground: a pool of fire stays behind
     if (this.hunter && this.hn('smolder')) {
@@ -2968,7 +2980,11 @@ export class Run {
 
   private updateObjects(dt: number) {
     // the lair: E at the door to go in, E at the exit portal once King Jelly is down
-    if (!this.inLair && !this.lairCleared && dist2(this.lairDoor.x, this.lairDoor.y, this.x, this.y) < 90 * 90) {
+    if (!this.inLair && !this.inCave && dist2(this.caveDoor.x, this.caveDoor.y, this.x, this.y) < 90 * 90) {
+      if (this.input.interact) this.enterCave();
+    } else if (this.inCave && this.map.exit && dist2(this.map.exit.x, this.map.exit.y, this.x, this.y) < 90 * 90) {
+      if (this.input.interact) this.exitCave();
+    } else if (!this.inLair && !this.inCave && !this.lairCleared && dist2(this.lairDoor.x, this.lairDoor.y, this.x, this.y) < 90 * 90) {
       if (this.input.interact) this.enterLair();
     } else if (this.inLair && this.jelly?.done && dist2(this.jelly.exit.x, this.jelly.exit.y, this.x, this.y) < 90 * 90) {
       if (this.input.interact || this.auto) this.exitLair();
@@ -3054,6 +3070,81 @@ export class Run {
     this.enemies.push(e);
     return e;
   }
+  // ---------------------------------------------------------------- training cave (testing)
+  /** Walk into the training cave: the world waits outside, the run clock pauses. */
+  enterCave() {
+    if (this.inCave || this.inLair) return;
+    this.world = { map: this.map, enemies: this.enemies, pickups: this.pickups, chests: this.chests, shrines: this.shrines, boss: this.boss, x: this.x, y: this.y };
+    this.enemies = [];
+    this.pickups = [];
+    this.chests = [];
+    this.shrines = [];
+    this.shots = [];
+    this.pools = [];
+    this.falling = [];
+    this.charges = [];
+    this.telegraphs = [];
+    this.boss = null;
+    this.map = generateTrainingCave();
+    this.x = this.map.entrances[0].x;
+    this.y = this.map.entrances[0].y;
+    this.inCave = true;
+    for (const a of this.allies) {
+      a.x = this.x;
+      a.y = this.y;
+    }
+    this.notice('The training cave. Mobs keep coming on their own; use the panel to change their HP or bring more.', '#8fb8ff', '🕳️');
+  }
+  exitCave() {
+    if (!this.inCave || !this.world) return;
+    const w = this.world;
+    this.map = w.map;
+    this.enemies = w.enemies;
+    this.pickups = w.pickups;
+    this.chests = w.chests;
+    this.shrines = w.shrines;
+    this.boss = w.boss;
+    this.x = w.x;
+    this.y = w.y + 120;
+    this.shots = [];
+    this.pools = [];
+    this.falling = [];
+    this.charges = [];
+    this.telegraphs = [];
+    this.inCave = false;
+    this.world = null;
+    for (const a of this.allies) {
+      a.x = this.x;
+      a.y = this.y;
+    }
+  }
+  /** Mob HP multiplier in the cave; mobs already there are scaled too. */
+  setCaveHp(m: number) {
+    const k = m / this.caveHp;
+    this.caveHp = m;
+    if (!this.inCave) return;
+    for (const e of this.enemies)
+      if (!e.dead && !e.boss) {
+        e.hp *= k;
+        e.maxHp *= k;
+      }
+  }
+  /** Bring n more mobs (or elites) into the cave right away. */
+  caveSpawn(n: number, elite = false) {
+    if (!this.inCave) return;
+    for (let i = 0; i < n; i++) {
+      if (this.enemies.length >= RUN.maxEnemies + 200) break;
+      const def = this.pickEnemyDef();
+      const p = this.spawnPoint(def.r * (elite ? ELITE.rMult : 1));
+      if (p) this.enemies.push(this.makeEnemy(def, p.x, p.y, elite));
+    }
+  }
+  /** Clear every mob in the cave (no EXP). */
+  caveClear() {
+    if (!this.inCave) return;
+    this.enemies = [];
+  }
+
   enterLair() {
     if (this.inLair || this.lairCleared) return;
     this.world = { map: this.map, enemies: this.enemies, pickups: this.pickups, chests: this.chests, shrines: this.shrines, boss: this.boss, x: this.x, y: this.y };

@@ -289,3 +289,17 @@ body.runmode .choice-box { touch-action: pan-y; }
 
 /* Hunter test card */
 .hero-card.test .hc-test { font-size: 11px; color: #ff8a8a; border: 2px solid #8a2a2a; padding: 0 4px; vertical-align: middle; }
+
+/* training cave panel (right side, under the minimap) */
+#cavepanel { position: absolute; right: 10px; top: 206px; z-index: 6; padding: 8px 10px; width: 300px; font-size: 12px; pointer-events: auto; }
+#cavepanel .cp-title { color: var(--trim-hi); font-size: 14px; margin-bottom: 6px; display: flex; justify-content: space-between; }
+#cavepanel .cp-title span { color: var(--muted); font-size: 11px; }
+#cavepanel .cp-row { display: flex; align-items: center; gap: 4px; margin: 4px 0; flex-wrap: nowrap; }
+#cavepanel .cp-row > span { width: 48px; color: var(--muted); }
+#cavepanel .btn { padding: 2px 6px !important; font-size: 12px; min-width: 0 !important; width: auto !important; }
+#cavepanel .btn.on { color: #ffd166 !important; }
+#cavepanel .cp-note { color: var(--muted); font-size: 10px; margin-top: 4px; }
+@media (max-width: 720px), (pointer: coarse) {
+  #cavepanel { top: auto; bottom: 120px; right: 6px; width: 200px; font-size: 10px; padding: 6px; }
+  #cavepanel .btn { padding: 2px 4px; font-size: 11px; }
+}

@@ -499,3 +499,39 @@ export function generateCave(): GameMap {
     kind: 'cave', palette: 4, exit,
   };
 }
+
+/** Gloomtide training cave: one big open cavern with rough rock edges and a few rock clumps. */
+export function generateTrainingCave(): GameMap {
+  const w = 50;
+  const h = 50;
+  const rand = mulberry32(777);
+  const tiles = new Uint8Array(w * h);
+  const variant = new Uint8Array(w * h);
+  for (let i = 0; i < variant.length; i++) variant[i] = Math.floor(rand() * 4);
+  const cx = w / 2;
+  const cy = h / 2;
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      // a rough oval: the edge wobbles a little
+      const a = Math.atan2(y - cy, x - cx);
+      const edge = 0.92 + Math.sin(a * 5) * 0.03 + Math.sin(a * 11 + 1) * 0.02 + (rand() - 0.5) * 0.03;
+      const d = Math.hypot((x - cx) / (w / 2 - 1), (y - cy) / (h / 2 - 1));
+      tiles[y * w + x] = d > edge ? Tile.Rock : Tile.Floor;
+    }
+  // a few rock clumps to dodge around (kept away from the entrance)
+  for (let k = 0; k < 7; k++) {
+    const rx = 12 + Math.floor(rand() * (w - 22));
+    const ry = 8 + Math.floor(rand() * (h - 16));
+    if (Math.abs(rx - 6) < 8 && Math.abs(ry - cy) < 6) continue;
+    const r = 1 + Math.floor(rand() * 2);
+    for (let y = ry - r; y <= ry + r; y++) for (let x = rx - r; x <= rx + r; x++) if ((x - rx) ** 2 + (y - ry) ** 2 <= r * r + 1) tiles[y * w + x] = Tile.Rock;
+  }
+  // the way in on the west side
+  for (let y = cy - 2; y <= cy + 2; y++) for (let x = 2; x <= 10; x++) tiles[y * w + x] = Tile.Floor;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (x < 1 || y < 1 || x >= w - 1 || y >= h - 1) tiles[y * w + x] = Tile.Rock;
+  const floor: number[] = [];
+  for (let i = 0; i < tiles.length; i++) if (tiles[i] === Tile.Floor) floor.push(i);
+  const entrance = { x: 7.5 * TILE, y: (cy + 0.5) * TILE };
+  const exit = { x: 3.5 * TILE, y: (cy + 0.5) * TILE };
+  return { w, h, tiles, variant, zoneW: w, zones: 1, entrances: [entrance], altars: [], zoneFloor: [floor], kind: 'cave', palette: 4, exit };
+}

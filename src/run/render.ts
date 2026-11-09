@@ -221,7 +221,8 @@ export class RunRenderer {
     const minTy = Math.max(0, Math.floor(tr.y / TILE) - 1);
     const maxTy = Math.min(map.h - 1, Math.ceil(bl.y / TILE) + 1);
 
-    const lair = map.kind === 'lair';
+    // the training cave reuses the lair's stone floor, walls and torches
+    const lair = map.kind === 'lair' || map.kind === 'cave';
     // ---- floor ----
     for (let ty = minTy; ty <= maxTy; ty++)
       for (let tx = minTx; tx <= maxTx; tx++) {
@@ -479,6 +480,25 @@ export class RunRenderer {
         }
       }
       f.restore();
+    }
+    // the training cave: a blue swirl on the map, and the way out inside
+    {
+      const d = lair ? (run.inCave ? map.exit : null) : run.caveDoor;
+      if (d) {
+        f.globalAlpha = 0.9;
+        f.fillStyle = '#121826';
+        f.beginPath();
+        f.arc(d.x, d.y, 70, 0, Math.PI * 2);
+        f.fill();
+        f.strokeStyle = '#8fb8ff';
+        f.lineWidth = 7;
+        for (let k = 0; k < 3; k++) {
+          f.globalAlpha = 0.7 - k * 0.2;
+          f.beginPath();
+          f.arc(d.x, d.y, 26 + ((time * 25 + k * 16) % 46), 0, Math.PI * 2);
+          f.stroke();
+        }
+      }
     }
     // the lair door on the world map: a swirling dark pool
     if (!lair && !run.lairCleared) {
@@ -1241,7 +1261,9 @@ export class RunRenderer {
       o.fillRect(Math.round(x0 + wx * s - r), Math.round(y0 + wy * s - r), r * 2, r * 2);
     };
     for (const sh of run.shrines) if (!sh.used) dot(sh.x, sh.y, '#8fd3ff', 2);
-    if (!run.inLair && !run.lairCleared) dot(run.lairDoor.x, run.lairDoor.y, '#6ccf5a', 3);
+    if (!run.inLair && !run.inCave && !run.lairCleared) dot(run.lairDoor.x, run.lairDoor.y, '#6ccf5a', 3);
+    if (!run.inLair && !run.inCave) dot(run.caveDoor.x, run.caveDoor.y, '#8fb8ff', 3);
+    if (run.inCave && run.map.exit) dot(run.map.exit.x, run.map.exit.y, "#8fb8ff", 3);
     for (const c of run.chests) if (!c.opened) dot(c.x, c.y, c.free ? '#fff1a8' : '#e0b84a', 1.5);
     for (const e of run.enemies) if (!e.dead && (e.elite || e.boss)) dot(e.x, e.y, e.boss ? '#ff3b3b' : '#e0b84a', e.boss ? 3 : 2);
     dot(run.x, run.y, '#ffffff', 2);

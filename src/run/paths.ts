@@ -249,11 +249,11 @@ export const HUNTER_TREE = (): PathNode[] => [
   H('rainfire', 'Rain of Fire', '🔥', 'Fire damage. 10% increased damage.', {
     color: '#ff7b2e', rename: 'Rain of Fire', mult: { dmg: 1.1 }, mod: () => ({ fire: true, color: '#ff7b2e' }),
     next: () => [
-      H('wildfire', 'Wild Fire', '🔥', '0 arrow damage. Mobs in the rain gain a stacking Burn (a stack every 0.5s, max 5).', {
+      H('wildfire', 'Wild Fire', '🔥', '0 arrow damage. Mobs in the rain gain a stacking Burn (a stack every 0.5s, max 5, lasts 5s).', {
         next: () => [
           H('flashpoint', 'Flash Point', '💥', 'Consumes 5 Burn stacks to explode: massive damage to that mob, 50% of it as AoE around.', {
             next: () => [
-              H('delayedburn', 'Delayed Burn', '⏳', 'Burn lasts 3x as long. Each stack applied triggers a Flash Point scaled by the stack count. Still only consumes at 5 stacks.', {
+              H('delayedburn', 'Delayed Burn', '⏳', 'Burn is applied every 3s instead of every 0.5s and lasts 3x as long (15s). Each stack applied triggers a Flash Point scaled by the stack count. Still only consumes at 5 stacks.', {
                 next: cap(H('repeatingburn', 'Repeating Burn', '🔁', 'When a Burn reaches 5 stacks it resets to 1 stack. The AoE is no longer reduced.')),
               }),
               H('livingbomb', 'Living Bomb', '💣', 'Instead of consuming, 5 stacks turn into a Living Bomb for 12s (no Burn stacks meanwhile). It triggers Flash Point every 3s, and the final explosion deals double damage.', {
