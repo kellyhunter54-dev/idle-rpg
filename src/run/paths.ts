@@ -239,31 +239,90 @@ const ARCHER_TREES: Record<string, () => PathNode[]> = {
   },
 };
 
-// ---------------------------------------------------------------- Hunter (test hero): Kelly's Rain of Fire tree
-// The only path the Hunter is offered (Arrow Rain), one tier per level for quick testing.
+// ---------------------------------------------------------------- Hunter (test hero): Kelly's Rain of Fire tree (Temp Talents sheet)
+// The only upgrades the Hunter gets: one pick per level. Tier 4 picks lead to exactly one tier 5 capstone.
+// Effects live in run.ts (Run.hn(id)); nodes here only carry names, text and plain stat changes.
+// Burn = weak stacking dot (max 5). Ablaze = strong single dot that can't be refreshed (until Ablazed).
+const H = (id: string, name: string, icon: string, desc: string, rest: Partial<PathNode> = {}): PathNode => ({ id, name, icon, desc, ...rest });
+const cap = (n: PathNode): (() => PathNode[]) => () => [n];
 export const HUNTER_TREE = (): PathNode[] => [
-  X('rainfire', 'Rain of Fire', '🔥', 'The rain turns to fire: all its damage is fire, and +10% damage.', {
+  H('rainfire', 'Rain of Fire', '🔥', 'Fire damage. 10% increased damage.', {
     color: '#ff7b2e', rename: 'Rain of Fire', mult: { dmg: 1.1 }, mod: () => ({ fire: true, color: '#ff7b2e' }),
     next: () => [
-      X('wildfire', 'Wildfire', '🔥', 'The arrows no longer hit. Foes in the fire gain a stack of Ablaze every 0.5s (burning, up to 5 stacks).', {
-        mod: () => ({ wildfire: true }),
+      H('wildfire', 'Wild Fire', '🔥', '0 arrow damage. Mobs in the rain gain a stacking Burn (a stack every 0.5s, max 5).', {
         next: () => [
-          X('flashpoint', 'Flash Point', '💥', 'Reaching 5 Ablaze stacks consumes them and explodes: massive damage to that foe and 50% fire damage to foes around it.', { mod: () => ({ flashPoint: true }) }),
-          X('spreadash', 'Spread Ash', '🌫️', 'A foe that dies while Ablaze passes its stacks to the nearest foe, with the duration refreshed.', { mod: () => ({ spreadAsh: true }) }),
+          H('flashpoint', 'Flash Point', '💥', 'Consumes 5 Burn stacks to explode: massive damage to that mob, 50% of it as AoE around.', {
+            next: () => [
+              H('delayedburn', 'Delayed Burn', '⏳', 'Burn lasts 3x as long. Each stack applied triggers a Flash Point scaled by the stack count. Still only consumes at 5 stacks.', {
+                next: cap(H('repeatingburn', 'Repeating Burn', '🔁', 'When a Burn reaches 5 stacks it resets to 1 stack. The AoE is no longer reduced.')),
+              }),
+              H('livingbomb', 'Living Bomb', '💣', 'Instead of consuming, 5 stacks turn into a Living Bomb for 12s (no Burn stacks meanwhile). It triggers Flash Point every 3s, and the final explosion deals double damage.', {
+                next: cap(H('unlimitedbomb', 'Unlimited Bomb', '♾️', 'Living Bomb explosions add 1 Burn stack to every mob hit. The final explosion adds 2.')),
+              }),
+            ],
+          }),
+          H('spreadash', 'Spreading Ash', '🌫️', 'Mobs dying with Burn spread 1 stack to a mob within 15 yards (one without a Burn), refreshing it.', {
+            next: () => [
+              H('creepingash', 'Creeping Ash', '🐌', 'A 5 stack Burn jumps to 1 target as 1 stack when it expires. A Burn about to expire below 5 stacks gains a stack and refreshes instead.', {
+                next: cap(H('everlastingash', 'Everlasting Ash', '♾️', 'A 5 stack Burn no longer expires.')),
+              }),
+              H('jumpingash', 'Jumping Ash', '🦘', 'Ash jumps to 2 targets, and the range is 40 yards.', {
+                next: cap(H('jumpingash2', 'Jumping Ash v2', '📈', 'Each jump increases the Burn damage by 2%.')),
+              }),
+            ],
+          }),
         ],
       }),
-      X('smolder', 'Smoldering Ground', '♨️', 'The rain lasts half as long, but leaves burning ground for 8s. Foes inside or walking in are set Ablaze.', {
-        mult: { duration: 0.5 }, mod: () => ({ smolder: true }),
+      H('smolder', 'Smoldering Ground', '♨️', 'Rain of Fire lasts 1 second and leaves a pool of fire for 8s. Mobs who enter it are set Ablaze.', {
+        mult: { duration: 1 / 3 },
         next: () => [
-          X('spreadground', 'Spreading Ground', '🌋', 'The burning ground grows every second (for up to 10s), and every foe it sets ablaze adds 2s to it.', { mod: () => ({ spreadGround: true }) }),
-          X('eruption', 'Eruption', '🌋', 'Instead of fading, the burning ground explodes, setting foes around it (outside the zone too) ablaze.', { mod: () => ({ eruption: true }) }),
+          H('spreadground', 'Spreading Ground', '🌋', 'Each mob inside adds 2s to the ground, up to 15s. Every 2s the ground grows 5%.', {
+            next: () => [
+              H('movingground', 'Moving Ground', '🏃', 'The ground lasts twice as long, and every 5s sends out a fire patch that chases the closest mob not Ablaze, setting it Ablaze on contact.', {
+                next: cap(H('scorchedearth', 'Scorched Earth', '🔥', 'Sends 3 fire patches, and they chase twice as fast.')),
+              }),
+              H('lethalground', 'Lethal Ground', '☠️', 'No longer sets Ablaze. The ground deals damage instead, +5% for each second added to its duration.', {
+                next: cap(H('everlastingground', 'Everlasting Ground', '♾️', 'Mobs that die on the ground feed it: +2s each. No cap.')),
+              }),
+            ],
+          }),
+          H('ember', 'Detonating Ember', '💥', 'When the ground expires it explodes, sending a shockwave 20 yards out that sets everything caught Ablaze.', {
+            next: () => [
+              H('ablazed', 'Ablazed', '🔥', 'Ablaze can now be refreshed: fire attacks against an Ablazed mob refresh it.', {
+                next: cap(H('ablazedv2', 'Ablazed v2', '🔥', 'Ablaze damage +5% for each mob that is Ablaze. All fire damage applies Ablaze.')),
+              }),
+              H('swiftablaze', 'Swift Ablaze', '⏱️', 'Applying Ablaze reduces the cooldown of Rain of Fire by 1 second.', {
+                next: cap(H('detonate', 'Ablazed (Detonate)', '💥', "Ablazed mobs explode when hit by your auto attack: 100% of the Ablaze's full damage to that mob and 50% as AoE.")),
+              }),
+            ],
+          }),
         ],
       }),
-      X('heatwave', 'Heatwave', '🌡️', 'The arrows become a heat cloud. Foes inside take 2x damage from your attacks and 4x from fire.', {
-        mod: () => ({ heatwave: true, color: '#ffb066' }),
+      H('heatwave', 'Heat Wave', '🌡️', 'No more arrows: a gas/heat cloud for 10s. Mobs inside take 2x damage from normal attacks and 4x from fire.', {
+        color: '#ffb066', mult: { duration: 10 / 3 }, mod: () => ({ color: '#ffb066' }),
         next: () => [
-          X('vapor', 'Ignited Vapor', '🔥', 'Hitting a foe inside the cloud ignites it: a fast pulse of fire damage to everything inside.', { mod: () => ({ vapor: true }) }),
-          X('suffocate', 'Suffocation', '😵', 'Foes in the cloud are slowed, and stunned for 1s if they stay inside for 2s.', { mod: () => ({ suffocate: true }) }),
+          H('vapor', 'Ignited Vapor', '🔥', 'Attacking a mob in the cloud makes the gas ignite, dealing fire damage to every mob inside (at most twice a second).', {
+            next: () => [
+              H('growinggas', 'Growing Gas', '🌫️', 'The cloud grows over time and lasts twice as long.', {
+                mult: { duration: 2 },
+                next: cap(H('overheating', 'Overheating Gas', '♨️', 'The cloud deals fire damage to every mob inside.')),
+              }),
+              H('lethalvapor', 'Lethal Vapor', '☠️', 'The cloud is twice as big. Mobs lingering inside for 7s are Poisoned for 10s (a dot).', {
+                mult: { area: 2 },
+                next: cap(H('poisonamp', 'Poison Amplification', '🧪', 'Poisoned mobs take double the Heat Wave effect (4x from attacks, 8x from fire).')),
+              }),
+            ],
+          }),
+          H('suffocate', 'Suffocation', '😵', 'Mobs inside are slowed 50%. After 3s inside they are stunned for 1.5s.', {
+            next: () => [
+              H('confused', 'Confused', '💫', 'After the stun ends, mobs (not bosses) become deranged and attack other mobs for 3s.', {
+                next: cap(H('taunt', 'Ablazed v2 (Taunt)', '📣', 'If a deranged mob gets a kill, it taunts every mob within 15 yards and stays deranged until killed.')),
+              }),
+              H('dmgamp', 'Damage Amp', '🎯', 'After the stun ends, mobs take 4x damage from everything for 4s.', {
+                next: cap(H('dmgamp2', 'Damage Amp x2', '🎯', "Mobs that can't be stunned (bosses) get a 10s debuff instead: 15x damage taken from all abilities.")),
+              }),
+            ],
+          }),
         ],
       }),
     ],

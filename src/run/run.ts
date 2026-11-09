@@ -57,17 +57,36 @@ export interface Enemy {
   snareAmp?: number;
   /** stunned (Concussive, Knockdown, Big Bang, a bear trap's hold): can't move */
   stunUntil?: number;
-  /** Ablaze (Hunter's Rain of Fire): stacking burn, per-stack damage a second */
-  ablazeStacks?: number;
-  ablazePer?: number;
-  ablazeUntil?: number;
-  ablazeW?: number;
-  /** inside a Heatwave cloud (takes 2x from attacks, 4x from fire) */
+  // ---- Hunter (test hero) statuses. Burn: weak stacking dot. Ablaze: strong single dot.
+  hbStacks?: number;
+  hbPer?: number;
+  hbUntil?: number;
+  hbGen?: number;
+  abUntil?: number;
+  abDps?: number;
+  /** Living Bomb: ends at bombUntil, Flash Point every 3 s */
+  bombUntil?: number;
+  bombNext?: number;
+  /** inside a Heat Wave cloud */
   heatUntil?: number;
   heatCloud?: Pool;
-  /** time spent in a Suffocation cloud */
+  /** Suffocation: time inside, and a stun from it waiting to end */
   chokeT?: number;
   chokeLast?: number;
+  chokeStun?: boolean;
+  /** Lethal Vapor: time inside, and the poison */
+  vaporT?: number;
+  poisonUntil?: number;
+  poisonDps?: number;
+  /** Damage Amp: takes ampMult x damage until ampUntil */
+  ampUntil?: number;
+  ampMult?: number;
+  /** Confused: attacks other mobs; tauntBy = the deranged mob it chases */
+  confusedUntil?: number;
+  confTarget?: number;
+  tauntBy?: number;
+  /** the deranged mob that last hit this one (Taunt) */
+  lastHitBy?: number;
   /** burn damage waiting to be shown */
   burnShow: number;
   burnShowT: number;
@@ -185,6 +204,12 @@ export interface Pool {
   lit?: Set<number>;
   /** Ignited Vapor cooldown */
   igniteAt?: number;
+  /** burning ground: seconds added, next fire patch; patches chase a foe */
+  added?: number;
+  nextPatch?: number;
+  patch?: boolean;
+  chase?: number;
+  ticks?: number;
 }
 
 /** A sticky charge in a foe (Explosive Shot path). */
@@ -656,6 +681,7 @@ export class Run {
 
   /** Level 7 / 13 / 20 / 30 / 40: pick one of two talents (13+ need a job). */
   private checkTalent(): boolean {
+    if (this.hunter) return false; // test hero: only its tree
     const k = this.talentsTaken;
     if (k >= TALENT_LEVELS.length || this.level < TALENT_LEVELS[k]) return false;
     const pair = k === 0 ? CLASS_TALENTS[this.job] : this.branch ? BRANCH_TALENTS[this.branch.id]?.[k - 1] : undefined;
@@ -716,12 +742,13 @@ export class Run {
       const opts = treeNext(HUNTER_TREE(), w.path);
       if (!opts.length) return false;
       const tier = w.path.length;
-      this.choiceTitle = `${w.def.name}: path ${'I'.repeat(tier + 1)}`;
+      this.choiceTitle = `${w.def.name}: tier ${['I', 'II', 'III', 'IV', 'V'][tier]}`;
       this.choices = opts.map((n) => ({
         kind: 'path', id: n.id, name: n.name, icon: n.icon,
-        rarity: { ...RUN_RARITIES[tier === 2 ? 4 : 3], color: n.color ?? '#ff7b2e', name: tier === 0 ? 'Form' : 'Path' },
+        rarity: { ...RUN_RARITIES[Math.min(4, 2 + tier)], color: n.color ?? '#ff7b2e', name: `Tier ${['I', 'II', 'III', 'IV', 'V'][tier]}` },
         level: tier + 1, lines: [n.desc], apply: () => {
           this.pathLevel = this.level;
+          this.hunterNodes.add(n.id);
           this.applyPath(k, n);
         },
       }));
@@ -733,7 +760,7 @@ export class Run {
       if (tier >= PATH_PLAYER.length || this.level < PATH_PLAYER[tier] || w.level < PATH_ABILITY[tier]) continue;
       const opts = pathNext(w.base, this.branch, w.path);
       if (!opts.length) continue;
-      this.choiceTitle = `${w.def.name}: path ${'I'.repeat(tier + 1)}`;
+      this.choiceTitle = `${w.def.name}: tier ${['I', 'II', 'III', 'IV', 'V'][tier]}`;
       this.choices = opts.map((n) => ({
         kind: 'path', id: n.id, name: n.name, icon: n.icon,
         rarity: { ...RUN_RARITIES[tier === 2 ? 4 : 3], color: n.color ?? w.def.color, name: n.becomes ? 'Job form' : n.cap ? 'Capstone' : tier === 0 ? 'Form' : 'Path' },
@@ -802,6 +829,7 @@ export class Run {
 
   /** Level 10: pick a branch. Level 15 / 25: the next tier of it. */
   private checkAdvance(): boolean {
+    if (this.hunter) return false; // test hero: no job advancement
     if (!this.branch) {
       if (this.level < ADVANCE_LEVELS[0]) return false;
       this.choiceTitle = 'Job advancement';
@@ -934,6 +962,11 @@ export class Run {
     if (this.pendingLevels > 0) this.openLevelUp();
   }
   private openLevelUp() {
+    if (this.hunter) {
+      // test hero: no level-up cards, only its tree (checkPath)
+      this.pendingLevels = 0;
+      return;
+    }
     this.pendingLevels--;
     this.choiceTitle = 'Level up!';
     this.choices = this.makeLevelChoices();
@@ -1252,6 +1285,11 @@ export class Run {
     if (bh && bleeding) this.heal(bh * Math.min(10, bleeding) * dt);
   }
   private updateEnemiesInner(dt: number, onBleed: () => void) {
+    if (this.hunter && this.hn('ablazedv2')) {
+      let n = 0;
+      for (const e of this.enemies) if (!e.dead && (e.abUntil ?? 0) > this.t) n++;
+      this.ablazeCount = n;
+    }
     for (const e of this.enemies) {
       if (e.dead) continue;
       e.hitFlash -= dt;
@@ -1276,27 +1314,7 @@ export class Run {
           }
         }
       }
-      if ((e.ablazeUntil ?? 0) > this.t && !e.dead && e.ablazeStacks) {
-        const b = e.ablazeStacks * (e.ablazePer ?? 0) * dt * ((e.heatUntil ?? 0) > this.t ? 4 : 1);
-        this.burnTotal += b;
-        const ow = this.weapons[e.ablazeW ?? -1];
-        if (ow) ow.total += Math.min(b, Math.max(0, e.hp));
-        e.burnShow += b;
-        if (this.t >= e.burnShowT) {
-          e.burnShowT = this.t + 0.5;
-          if (e.burnShow >= 1 && this.fx.length < 240)
-            this.fx.push({ kind: 'text', x: e.x + (this.rand() - 0.5) * 24, y: e.y, t: 0, dur: 0.7, r: 0, color: '#ff7b2e', text: String(Math.round(e.burnShow)) });
-          e.burnShow = 0;
-        }
-        if (e.boss === 3 && this.jelly) this.jelly.damage(b);
-        else {
-          e.hp -= b;
-          if (e.hp <= 0) {
-            this.kill(e);
-            continue;
-          }
-        }
-      }
+      if (this.hunter && !e.dead && this.hunterDots(e, dt)) continue;
       if (e.burnUntil > this.t && !e.dead) {
         const b = e.burnDps * dt;
         this.burnTotal += b;
@@ -1325,8 +1343,9 @@ export class Run {
         this.updateBoss(e, dt);
         continue;
       }
-      let dx = this.x - e.x;
-      let dy = this.y - e.y;
+      const foe = this.hunter ? this.hunterFoeTarget(e) : null;
+      let dx = (foe ? foe.x : this.x) - e.x;
+      let dy = (foe ? foe.y : this.y) - e.y;
       const d = Math.hypot(dx, dy) || 1;
       // fell too far behind: move back into the ring around the hero
       if (d > RUN.leash) {
@@ -1385,7 +1404,19 @@ export class Run {
       }
       e.angle = Math.atan2(dy, dx);
       // contact
-      if (this.air <= 0) {
+      if (foe) {
+        // Confused / taunted: it attacks the other mob instead of you
+        const rr = e.r + foe.r;
+        if (e.touchCd <= 0 && dist2(e.x, e.y, foe.x, foe.y) < rr * rr) {
+          e.touchCd = 0.5;
+          foe.lastHitBy = e.id;
+          if ((e.confusedUntil ?? 0) > this.t) this.hitEnemy(foe, this.rainDmg() * 2, this.rainIdx(), false, 120, e.x, e.y);
+          else {
+            foe.hp -= e.dmg * 3;
+            if (foe.hp <= 0 && !foe.dead) this.kill(foe);
+          }
+        }
+      } else if (this.air <= 0) {
         const rr = e.r * 0.85 + this.r;
         if (dist2(e.x, e.y, this.x, this.y) < rr * rr) this.hurt(e.dmg, e);
       }
@@ -1497,22 +1528,7 @@ export class Run {
       crit = true;
     }
     if (def?.slow) e.slowUntil = Math.max(e.slowUntil, this.t + 1);
-    // Heatwave cloud: 2x from attacks, 4x from fire
-    if ((e.heatUntil ?? 0) > this.t) {
-      dmg *= def?.fire ? 4 : 2;
-      const cloud = e.heatCloud;
-      const cdef = cloud ? this.weapons[cloud.w]?.def : undefined;
-      if (cloud && cdef?.vapor && !this.sub && cloud.until > this.t && (cloud.igniteAt ?? 0) <= this.t) {
-        // Ignited Vapor: the cloud flashes, burning everything inside
-        cloud.igniteAt = this.t + 0.5;
-        this.fx.push({ kind: 'boom', x: cloud.x, y: cloud.y, t: 0, dur: 0.3, r: cloud.r, color: '#ff7b2e' });
-        this.sub = true;
-        this.forEnemiesIn(cloud.x, cloud.y, cloud.r, (o) => {
-          if (o !== e) this.hitEnemy(o, cloud.dmg * 2.5, cloud.w, false, 0);
-        });
-        this.sub = false;
-      }
-    }
+    if (this.hunter) dmg = this.hunterHit(e, dmg, w, def);
     // Soaked / Snared: more damage from everything
     if ((e.soakUntil ?? 0) > this.t) dmg *= 1 + (e.soakAmp ?? 0);
     if ((e.snareUntil ?? 0) > this.t) dmg *= 1 + (e.snareAmp ?? 0);
@@ -1623,18 +1639,7 @@ export class Run {
   private kill(e: Enemy) {
     if (e.boss === 3) return;
     e.dead = true;
-    // Spread Ash: the burn jumps to the nearest foe
-    if ((e.ablazeUntil ?? 0) > this.t && e.ablazeStacks && this.weapons[e.ablazeW ?? -1]?.def.spreadAsh) {
-      const nx = this.nearest(e.x, e.y, 300, new Set([e.id]));
-      if (nx) {
-        const before = (nx.ablazeUntil ?? 0) > this.t ? nx.ablazeStacks ?? 0 : 0;
-        nx.ablazeStacks = Math.max(before, e.ablazeStacks);
-        nx.ablazePer = Math.max(nx.ablazePer ?? 0, e.ablazePer ?? 0);
-        nx.ablazeUntil = this.t + 4;
-        nx.ablazeW = e.ablazeW;
-        this.fx.push({ kind: 'boom', x: nx.x, y: nx.y, t: 0, dur: 0.3, r: 34, color: '#9a8a7a' });
-      }
-    }
+    if (this.hunter) this.hunterDeath(e);
     this.kills++;
     if (this.core.gain.kill && !this.coreActive) this.addCore(this.core.gain.kill);
     const bl = this.sp('bloodlust');
@@ -1989,8 +1994,7 @@ export class Run {
       out.push({ id: 'chill', icon: '❄️', name: 'Chilled', stacks: 0, left: e.slowUntil - t, dur: 2, color: '#a8e6ff', text: `slowed${fb ? `, takes +${Math.round(fb * 100)}% damage` : ''}` });
     }
     if (e.shockUntil > t) out.push({ id: 'shock', icon: '⚡', name: 'Shocked', stacks: 0, left: e.shockUntil - t, dur: 2, color: '#ffe66d', text: `takes +${Math.round(SHOCKED_AMP * 100)}% damage` });
-    if ((e.ablazeUntil ?? 0) > t && e.ablazeStacks) out.push({ id: 'ablaze', icon: '🔥', name: 'Ablaze', stacks: e.ablazeStacks, left: e.ablazeUntil! - t, dur: 4, color: '#ff7b2e', text: `${Math.round(e.ablazeStacks * (e.ablazePer ?? 0))} damage a second` });
-    if ((e.heatUntil ?? 0) > t) out.push({ id: 'heat', icon: '🌡️', name: 'Heatwave', stacks: 0, left: e.heatUntil! - t, dur: 0.5, color: '#ffb066', text: 'takes 2x damage, 4x from fire' });
+    if (this.hunter) this.hunterDebuffs(e, out);
     if ((e.soakUntil ?? 0) > t) out.push({ id: 'soak', icon: '💧', name: 'Soaked', stacks: 0, left: e.soakUntil! - t, dur: 2, color: '#7fb8ff', text: `takes +${Math.round((e.soakAmp ?? 0) * 100)}% damage` });
     if ((e.snareUntil ?? 0) > t) out.push({ id: 'snare', icon: '🦴', name: 'Snared', stacks: 0, left: e.snareUntil! - t, dur: 4, color: '#c8ccd4', text: `takes +${Math.round((e.snareAmp ?? 0) * 100)}% damage` });
     const ch = this.charges.find((c) => c.eid === e.id);
@@ -2296,13 +2300,12 @@ export class Run {
           e.y += (dy / l) * mv;
         });
       }
-      // Spreading Ground: burning ground grows every second for 10 s
-      if (p.style === 'fire' && def?.spreadGround && p.r0 && p.born !== undefined) p.r = p.r0 * (1 + 0.08 * Math.min(10, Math.floor(this.t - p.born)));
+      if (this.hunter && (p.style === 'heat' || p.style === 'fire' || (p.style === 'rain' && this.hn('wildfire')))) {
+        this.hunterPool(p, dt);
+        continue;
+      }
       p.tick -= dt;
-      if (p.tick <= 0 && (p.style === 'heat' || p.style === 'fire' || (p.style === 'rain' && def?.wildfire))) {
-        p.tick = p.every;
-        this.firePoolTick(p, def!);
-      } else if (p.tick <= 0) {
+      if (p.tick <= 0) {
         p.tick = p.every;
         const ramp = def?.ramp;
         this.forEnemiesIn(p.x, p.y, p.r, (e) => {
@@ -2322,14 +2325,8 @@ export class Run {
     for (const p of this.pools) {
       if (p.until > this.t || p.done || p.armed) continue;
       p.done = true;
-      if (p.style === 'fire' && this.weapons[p.w]?.def.eruption) {
-        // Eruption: the ground blows up, setting everything around it ablaze
-        const R = p.r * 2;
-        this.fx.push({ kind: 'boom', x: p.x, y: p.y, t: 0, dur: 0.5, r: R, color: '#ff5a1f' });
-        this.forEnemiesIn(p.x, p.y, R, (e) => {
-          this.hitEnemy(e, p.dmg * 6, p.w, true, 240, p.x, p.y);
-          if (!e.dead) this.applyAblaze(e, p.dmg, p.w, 3);
-        });
+      if (this.hunter && p.style === 'fire') {
+        this.hunterGroundEnds(p);
         continue;
       }
       const fin = this.weapons[p.w]?.def.finale;
@@ -2340,59 +2337,387 @@ export class Run {
     this.pools = this.pools.filter((p) => p.until > this.t);
   }
 
-  // ---------------------------------------------------------------- Hunter: Rain of Fire
-  /** One tick of a fire zone: Wildfire rain, burning ground, or a heat cloud. */
-  private firePoolTick(p: Pool, def: WeaponDef) {
-    if (p.style === 'heat') {
-      this.forEnemiesIn(p.x, p.y, p.r, (e) => {
-        e.heatUntil = this.t + p.every + 0.1;
-        e.heatCloud = p;
-        if (def.suffocate) {
-          e.slowUntil = Math.max(e.slowUntil, this.t + 0.4);
-          if ((e.chokeLast ?? 0) < this.t - p.every - 0.15) e.chokeT = 0;
-          e.chokeLast = this.t;
-          e.chokeT = (e.chokeT ?? 0) + p.every;
-          if (e.chokeT >= 2) {
-            e.chokeT = 0;
-            this.stun(e, 1);
-          }
-        }
-      });
-      return;
+  // ---------------------------------------------------------------- Hunter (test hero): Kelly's Rain of Fire tree
+  // Burn: weak stacking dot (max 5). Ablaze: strong single dot that can't be refreshed (until Ablazed).
+  // 1 yard is taken as 10 units (15 yd = 150, 20 yd = 200, 40 yd = 400).
+  hunterNodes = new Set<string>();
+  /** Has the Hunter picked this node? */
+  hn(id: string) {
+    return this.hunterNodes.has(id);
+  }
+  private ablazeCount = 0;
+  private rainIdx() {
+    return this.weapons.findIndex((w) => w.base === 'rain');
+  }
+  /** The rain's per-tick damage right now (what the dots and blasts scale from). */
+  private rainDmg() {
+    const k = this.rainIdx();
+    return k >= 0 ? this.weaponStats(this.weapons[k]).dmg : 10;
+  }
+  private credit(dmg: number, e: Enemy) {
+    const ow = this.weapons[this.rainIdx()];
+    if (ow) ow.total += Math.min(dmg, Math.max(0, e.hp));
+  }
+  /** Damage multiplier on a foe from Heat Wave and Damage Amp. */
+  private heatMult(e: Enemy, fire: boolean) {
+    let m = 1;
+    if ((e.heatUntil ?? 0) > this.t) {
+      m *= fire ? 4 : 2;
+      if (this.hn('poisonamp') && (e.poisonUntil ?? 0) > this.t) m *= 2;
     }
-    // Wildfire rain and burning ground set foes Ablaze
-    this.forEnemiesIn(p.x, p.y, p.r, (e) => {
-      if (p.style === 'fire' && def.spreadGround && p.lit && !p.lit.has(e.id)) {
-        p.lit.add(e.id);
-        if (p.born !== undefined) p.until = Math.min(p.born + 20, p.until + 2);
-      }
-      this.applyAblaze(e, p.dmg, p.w, 1);
-    });
+    if ((e.ampUntil ?? 0) > this.t) m *= e.ampMult ?? 1;
+    return m;
   }
 
-  /** Ablaze: a stacking burn (5 stacks max, 4 s, refreshed by new stacks). */
-  private applyAblaze(e: Enemy, per: number, w: number, stacks: number) {
+  /** Adds Burn stacks (Wild Fire, Spreading Ash, Unlimited Bomb). */
+  private addBurn(e: Enemy, n: number, per: number, gen = 0) {
+    if (e.dead || (e.bombUntil ?? 0) > this.t) return;
+    const live = (e.hbUntil ?? 0) > this.t && (e.hbStacks ?? 0) > 0;
+    const before = live ? e.hbStacks! : 0;
+    const stacks = Math.min(5, before + n);
+    e.hbPer = Math.max(live ? e.hbPer ?? 0 : 0, per);
+    e.hbGen = Math.max(live ? e.hbGen ?? 0 : 0, gen);
+    e.hbUntil = this.t + (this.hn('delayedburn') ? 12 : 4);
+    e.hbStacks = stacks;
+    // Delayed Burn: every stack applied sets off a smaller Flash Point
+    if (this.hn('delayedburn') && stacks > before && stacks < 5) this.flashPoint(e, 0.25 * (stacks / 5), 'mini');
+    if (stacks >= 5) {
+      if (this.hn('livingbomb')) {
+        e.hbStacks = 0;
+        e.hbUntil = 0;
+        e.bombUntil = this.t + 12;
+        e.bombNext = this.t + 3;
+        this.fx.push({ kind: 'text', x: e.x, y: e.y - 24, t: 0, dur: 0.8, r: 0, color: '#ff5a1f', text: 'LIVING BOMB', crit: true });
+      } else if (this.hn('flashpoint')) {
+        e.hbStacks = this.hn('repeatingburn') ? 1 : 0;
+        if (!e.hbStacks) e.hbUntil = 0;
+        this.flashPoint(e, 1, 'full');
+      }
+    }
+  }
+
+  /** Flash Point: a big hit on the foe and an AoE around it. */
+  private flashPoint(e: Enemy, scale: number, kind: 'full' | 'mini' | 'bomb' | 'final') {
+    const dmg = (e.hbPer ?? this.rainDmg()) * 40 * scale;
+    const R = 120;
+    const aoe = this.hn('repeatingburn') ? 1 : 0.5;
+    this.fx.push({ kind: 'boom', x: e.x, y: e.y, t: 0, dur: 0.35, r: kind === 'mini' ? 60 : R, color: '#ff5a1f' });
+    if (kind === 'full') this.fx.push({ kind: 'text', x: e.x, y: e.y - 24, t: 0, dur: 0.8, r: 0, color: '#ff7b2e', text: 'FLASH POINT', crit: true });
+    const k = this.rainIdx();
+    const add = this.hn('unlimitedbomb') && (kind === 'bomb' || kind === 'final') ? (kind === 'final' ? 2 : 1) : 0;
+    this.sub = true;
+    this.hitEnemy(e, dmg, k, true, 160, e.x, e.y);
+    if (kind !== 'mini')
+      this.forEnemiesIn(e.x, e.y, R, (o) => {
+        if (o !== e) this.hitEnemy(o, dmg * aoe, k, true, 160, e.x, e.y);
+      });
+    this.sub = false;
+    if (add)
+      this.forEnemiesIn(e.x, e.y, R, (o) => {
+        if (!o.dead) this.addBurn(o, add, e.hbPer ?? this.rainDmg(), e.hbGen ?? 0);
+      });
+  }
+
+  /** Ablaze: a strong dot. Can't be refreshed while it burns, unless Ablazed. */
+  private applyAblaze(e: Enemy) {
     if (e.dead) return;
-    const live = (e.ablazeUntil ?? 0) > this.t;
-    e.ablazeStacks = Math.min(5, (live ? e.ablazeStacks ?? 0 : 0) + stacks);
-    e.ablazePer = Math.max(live ? e.ablazePer ?? 0 : 0, per);
-    e.ablazeUntil = this.t + 4;
-    e.ablazeW = w;
-    const def = this.weapons[w]?.def;
-    if (def?.flashPoint && e.ablazeStacks >= 5) {
-      // Flash Point: the stacks go off at once
-      const big = e.ablazePer * 30;
-      e.ablazeStacks = 0;
-      e.ablazeUntil = 0;
-      this.fx.push({ kind: 'boom', x: e.x, y: e.y, t: 0, dur: 0.4, r: 110, color: '#ff5a1f' });
-      this.fx.push({ kind: 'text', x: e.x, y: e.y - 24, t: 0, dur: 0.8, r: 0, color: '#ff7b2e', text: 'FLASH POINT', crit: true });
+    if ((e.abUntil ?? 0) > this.t && !this.hn('ablazed')) return;
+    e.abUntil = this.t + 6;
+    e.abDps = this.rainDmg() * 2.5;
+    // Swift Ablaze: each one shaves a second off the rain
+    if (this.hn('swiftablaze')) {
+      const w = this.weapons[this.rainIdx()];
+      if (w) w.timer = Math.max(0, w.timer - 1);
+    }
+  }
+
+  /** Spreading / Creeping / Jumping Ash: put a stack on foes that have no Burn. */
+  private jumpBurn(from: Enemy, count: number, range: number) {
+    const gen = (from.hbGen ?? 0) + 1;
+    const per = from.hbPer ?? this.rainDmg();
+    const taken = new Set<number>([from.id]);
+    for (let n = 0; n < count; n++) {
+      let best: Enemy | null = null;
+      let bd = range * range;
+      this.forEnemiesIn(from.x, from.y, range, (o) => {
+        if (taken.has(o.id) || ((o.hbUntil ?? 0) > this.t && (o.hbStacks ?? 0) > 0)) return;
+        const d = dist2(o.x, o.y, from.x, from.y);
+        if (d < bd) {
+          bd = d;
+          best = o;
+        }
+      });
+      if (!best) return;
+      const b = best as Enemy;
+      taken.add(b.id);
+      this.addBurn(b, 1, per, gen);
+      this.fx.push({ kind: 'boom', x: b.x, y: b.y, t: 0, dur: 0.3, r: 28, color: '#9a8a7a' });
+    }
+  }
+
+  /** Per-frame Burn / Ablaze / Poison / Living Bomb / stun-end on one foe. Returns true if it died. */
+  private hunterDots(e: Enemy, dt: number): boolean {
+    const t = this.t;
+    let total = 0;
+    // Burn
+    if ((e.hbStacks ?? 0) > 0) {
+      if ((e.hbUntil ?? 0) <= t) {
+        if (this.hn('everlastingash') && e.hbStacks! >= 5) e.hbUntil = t + 4;
+        else if (this.hn('creepingash')) {
+          if (e.hbStacks! < 5) {
+            e.hbStacks!++;
+            e.hbUntil = t + 4;
+          } else {
+            this.jumpBurn(e, 1, 150);
+            e.hbStacks = 0;
+          }
+        } else e.hbStacks = 0;
+      }
+      if ((e.hbStacks ?? 0) > 0) total += e.hbStacks! * (e.hbPer ?? 0) * 0.6 * Math.pow(this.hn('jumpingash2') ? 1.02 : 1, e.hbGen ?? 0) * this.heatMult(e, true);
+    }
+    // Ablaze
+    if ((e.abUntil ?? 0) > t) total += (e.abDps ?? 0) * (this.hn('ablazedv2') ? 1 + 0.05 * this.ablazeCount : 1) * this.heatMult(e, true);
+    // Poison (Lethal Vapor)
+    if ((e.poisonUntil ?? 0) > t) total += (e.poisonDps ?? 0) * this.heatMult(e, false);
+    // Living Bomb
+    if (e.bombUntil) {
+      if (t >= e.bombUntil) {
+        e.bombUntil = 0;
+        this.flashPoint(e, 2, 'final');
+      } else if (t >= (e.bombNext ?? 0)) {
+        e.bombNext = (e.bombNext ?? t) + 3;
+        this.flashPoint(e, 1, 'bomb');
+      }
+      if (e.dead) return true;
+    }
+    // a Suffocation stun just ended: Confused / Damage Amp
+    if (e.chokeStun && (e.stunUntil ?? 0) <= t) {
+      e.chokeStun = false;
+      if (this.hn('confused') && !e.boss) e.confusedUntil = t + 3;
+      if (this.hn('dmgamp')) {
+        e.ampUntil = t + 4;
+        e.ampMult = 4;
+      }
+    }
+    if (total <= 0) return false;
+    const b = total * dt;
+    this.burnTotal += b;
+    this.credit(b, e);
+    e.burnShow += b;
+    if (t >= e.burnShowT) {
+      e.burnShowT = t + 0.5;
+      if (e.burnShow >= 1 && this.fx.length < 240)
+        this.fx.push({ kind: 'text', x: e.x + (this.rand() - 0.5) * 24, y: e.y, t: 0, dur: 0.7, r: 0, color: '#ff7b2e', text: String(Math.round(e.burnShow)) });
+      e.burnShow = 0;
+    }
+    if (e.boss === 3 && this.jelly) this.jelly.damage(b);
+    else {
+      e.hp -= b;
+      if (e.hp <= 0) {
+        this.kill(e);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Hit-time effects: Heat Wave / Damage Amp, Ignited Vapor, Ablazed refresh and spread, Detonate. */
+  private hunterHit(e: Enemy, dmg: number, w: number, def?: WeaponDef): number {
+    const fire = !!def?.fire;
+    dmg *= this.heatMult(e, fire);
+    // Damage Amp x2 on bosses only applies to abilities (anything that isn't a dot tick)
+    // Ignited Vapor: a hit on a mob in the cloud makes the gas flash
+    const cloud = e.heatCloud;
+    if (!this.sub && this.hn('vapor') && cloud && (e.heatUntil ?? 0) > this.t && cloud.until > this.t && (cloud.igniteAt ?? 0) <= this.t) {
+      cloud.igniteAt = this.t + 0.5;
+      this.fx.push({ kind: 'boom', x: cloud.x, y: cloud.y, t: 0, dur: 0.3, r: cloud.r, color: '#ff7b2e' });
       this.sub = true;
-      this.hitEnemy(e, big, w, true, 200, e.x, e.y);
-      this.forEnemiesIn(e.x, e.y, 110, (o) => {
-        if (o !== e) this.hitEnemy(o, big * 0.5, w, true, 200, e.x, e.y);
+      this.forEnemiesIn(cloud.x, cloud.y, cloud.r, (o) => {
+        if (o !== e) this.hitEnemy(o, cloud.dmg * 2.5, cloud.w, false, 0);
       });
       this.sub = false;
     }
+    if (fire && (e.abUntil ?? 0) > this.t && this.hn('ablazed')) e.abUntil = this.t + 6;
+    if (fire && this.hn('ablazedv2')) this.applyAblaze(e);
+    // Ablazed (Detonate): your auto attack blows up an Ablaze
+    if (w === 0 && this.hn('detonate') && (e.abUntil ?? 0) > this.t && !this.sub) {
+      const big = (e.abDps ?? 0) * 6;
+      e.abUntil = 0;
+      this.fx.push({ kind: 'boom', x: e.x, y: e.y, t: 0, dur: 0.35, r: 120, color: '#ff5a1f' });
+      this.sub = true;
+      const k = this.rainIdx();
+      this.forEnemiesIn(e.x, e.y, 120, (o) => {
+        if (o !== e) this.hitEnemy(o, big * 0.5, k, false, 160, e.x, e.y);
+      });
+      this.sub = false;
+      dmg += big;
+    }
+    return dmg;
+  }
+
+  private hunterDeath(e: Enemy) {
+    // Spreading Ash / Jumping Ash
+    if (this.hn('spreadash') && (e.hbStacks ?? 0) > 0 && (e.hbUntil ?? 0) > this.t) this.jumpBurn(e, this.hn('jumpingash') ? 2 : 1, this.hn('jumpingash') ? 400 : 150);
+    // Everlasting Ground: deaths feed the ground
+    if (this.hn('everlastingground'))
+      for (const p of this.pools) if (p.style === 'fire' && !p.patch && p.until > this.t && dist2(p.x, p.y, e.x, e.y) < p.r * p.r) {
+        p.until += 2;
+        p.added = (p.added ?? 0) + 2;
+      }
+    // Taunt: a deranged mob that gets a kill stays deranged and pulls the crowd
+    if (e.lastHitBy !== undefined) {
+      const killer = this.enemies.find((o) => o.id === e.lastHitBy && !o.dead);
+      if (killer && this.hn('taunt') && (killer.confusedUntil ?? 0) > this.t) {
+        killer.confusedUntil = Infinity;
+        this.fx.push({ kind: 'text', x: killer.x, y: killer.y - 24, t: 0, dur: 0.8, r: 0, color: '#ff8a8a', text: 'TAUNT', crit: true });
+        this.forEnemiesIn(killer.x, killer.y, 150, (o) => {
+          if (o !== killer && !o.boss) o.tauntBy = killer.id;
+        });
+      }
+    }
+  }
+
+  /** Heat Wave cloud, Wild Fire rain, burning ground and fire patches. */
+  private hunterPool(p: Pool, dt: number) {
+    const t = this.t;
+    if (p.patch) {
+      // a fire patch chases the closest mob that isn't Ablaze
+      let tg = this.enemies.find((o) => o.id === p.chase && !o.dead && (o.abUntil ?? 0) <= t);
+      if (!tg) {
+        let bd = 600 * 600;
+        tg = undefined;
+        for (const o of this.enemies) {
+          if (o.dead || (o.abUntil ?? 0) > t) continue;
+          const d = dist2(o.x, o.y, p.x, p.y);
+          if (d < bd) {
+            bd = d;
+            tg = o;
+          }
+        }
+        p.chase = tg?.id ?? 0;
+      }
+      if (tg) {
+        const dx = tg.x - p.x;
+        const dy = tg.y - p.y;
+        const l = Math.hypot(dx, dy) || 1;
+        const sp = (this.hn('scorchedearth') ? 300 : 150) * dt;
+        p.x += (dx / l) * Math.min(l, sp);
+        p.y += (dy / l) * Math.min(l, sp);
+        if (l < p.r + tg.r) this.applyAblaze(tg);
+      }
+      return;
+    }
+    if (p.style === 'heat' && this.hn('growinggas') && p.r0 && p.born !== undefined) p.r = p.r0 * (1 + 0.6 * Math.min(1, (t - p.born) / Math.max(0.1, p.until - p.born)));
+    if (p.style === 'fire') {
+      // Spreading Ground: +5% size every 2 s
+      if (this.hn('spreadground') && p.r0 && p.born !== undefined) p.r = p.r0 * (1 + 0.05 * Math.floor((t - p.born) / 2));
+      // Moving Ground: fire patches every 5 s
+      if (this.hn('movingground') && t >= (p.nextPatch ?? Infinity)) {
+        p.nextPatch = (p.nextPatch ?? t) + 5;
+        const n = this.hn('scorchedearth') ? 3 : 1;
+        for (let k = 0; k < n; k++) this.pools.push({ x: p.x, y: p.y, r: 34, dmg: p.dmg, until: t + 6, tick: 0, w: p.w, every: 1, style: 'fire', patch: true, chase: 0 });
+      }
+    }
+    p.tick -= dt;
+    if (p.tick > 0) return;
+    p.tick = p.every;
+    p.ticks = (p.ticks ?? 0) + 1;
+    if (p.style === 'heat') {
+      const overheat = this.hn('overheating') && p.ticks % 2 === 0;
+      this.forEnemiesIn(p.x, p.y, p.r, (e) => {
+        e.heatUntil = t + p.every + 0.1;
+        e.heatCloud = p;
+        if (this.hn('lethalvapor')) {
+          e.vaporT = (e.vaporT ?? 0) + p.every;
+          if (e.vaporT >= 7 && (e.poisonUntil ?? 0) <= t) {
+            e.poisonUntil = t + 10;
+            e.poisonDps = p.dmg * 1.5;
+            e.vaporT = 0;
+          }
+        }
+        if (this.hn('suffocate')) {
+          e.slowUntil = Math.max(e.slowUntil, t + 0.4);
+          if ((e.chokeLast ?? 0) < t - p.every - 0.15) e.chokeT = 0;
+          e.chokeLast = t;
+          e.chokeT = (e.chokeT ?? 0) + p.every;
+          if (e.chokeT >= 3) {
+            e.chokeT = 0;
+            if (e.boss) {
+              // can't be stunned: Damage Amp x2 instead
+              if (this.hn('dmgamp2')) {
+                e.ampUntil = t + 10;
+                e.ampMult = 15;
+              }
+            } else {
+              this.stun(e, 1.5);
+              e.chokeStun = true;
+            }
+          }
+        }
+        if (overheat) this.hitEnemy(e, p.dmg, p.w, false, 0);
+      });
+      return;
+    }
+    if (p.style === 'rain') {
+      // Wild Fire: no hits, a Burn stack every 0.5 s
+      this.forEnemiesIn(p.x, p.y, p.r, (e) => this.addBurn(e, 1, p.dmg));
+      return;
+    }
+    // burning ground
+    const lethal = this.hn('lethalground');
+    const cap = this.hn('everlastingground') ? Infinity : 15 * (this.hn('movingground') ? 2 : 1);
+    this.forEnemiesIn(p.x, p.y, p.r, (e) => {
+      if (this.hn('spreadground') && p.lit && !p.lit.has(e.id)) {
+        p.lit.add(e.id);
+        const life = p.until - (p.born ?? t);
+        const add = Math.max(0, Math.min(2, cap - life));
+        p.until += add;
+        p.added = (p.added ?? 0) + add;
+      }
+      if (lethal) this.hitEnemy(e, p.dmg * 1.5 * (1 + 0.05 * (p.added ?? 0)), p.w, false, 0);
+      else this.applyAblaze(e);
+    });
+  }
+
+  /** Burning ground ends: Detonating Ember goes off. */
+  private hunterGroundEnds(p: Pool) {
+    if (p.patch || !this.hn('ember')) return;
+    const R = 200;
+    this.fx.push({ kind: 'boom', x: p.x, y: p.y, t: 0, dur: 0.5, r: R, color: '#ff5a1f' });
+    this.fx.push({ kind: 'nova', x: p.x, y: p.y, t: 0, dur: 0.4, r: R, color: '#ff7b2e', hits: new Set(), dmg: 0, slow: 0, w: -2 });
+    this.forEnemiesIn(p.x, p.y, R, (e) => {
+      if (dist2(e.x, e.y, p.x, p.y) < p.r * p.r) this.hitEnemy(e, p.dmg * 6, p.w, true, 240, p.x, p.y);
+      if (!e.dead) this.applyAblaze(e);
+    });
+  }
+
+  /** Who a confused or taunted mob goes after (null = the hero). */
+  private hunterFoeTarget(e: Enemy): Enemy | null {
+    if ((e.confusedUntil ?? 0) > this.t) {
+      let tg = this.enemies.find((o) => o.id === e.confTarget && !o.dead);
+      if (!tg) {
+        tg = this.nearest(e.x, e.y, 500, new Set([e.id])) ?? undefined;
+        e.confTarget = tg?.id;
+      }
+      return tg ?? null;
+    }
+    if (e.tauntBy) {
+      const tg = this.enemies.find((o) => o.id === e.tauntBy && !o.dead);
+      if (tg) return tg;
+      e.tauntBy = 0;
+    }
+    return null;
+  }
+
+  private hunterDebuffs(e: Enemy, out: { id: string; icon: string; name: string; stacks: number; left: number; dur: number; color: string; text: string }[]) {
+    const t = this.t;
+    if ((e.hbStacks ?? 0) > 0 && (e.hbUntil ?? 0) > t) out.push({ id: 'hburn', icon: '🔥', name: 'Burn', stacks: e.hbStacks!, left: e.hbUntil! - t, dur: this.hn('delayedburn') ? 12 : 4, color: '#ff9a3c', text: `${Math.round(e.hbStacks! * (e.hbPer ?? 0) * 0.6)} damage a second` });
+    if ((e.abUntil ?? 0) > t) out.push({ id: 'ablaze', icon: '☀️', name: 'Ablaze', stacks: 0, left: e.abUntil! - t, dur: 6, color: '#ff5a1f', text: `${Math.round(e.abDps ?? 0)} damage a second` });
+    if ((e.bombUntil ?? 0) > t) out.push({ id: 'bomb', icon: '💣', name: 'Living Bomb', stacks: 0, left: e.bombUntil! - t, dur: 12, color: '#ff3b3b', text: 'blows up every 3s' });
+    if ((e.heatUntil ?? 0) > t) out.push({ id: 'heat', icon: '🌡️', name: 'Heat Wave', stacks: 0, left: e.heatUntil! - t, dur: 0.5, color: '#ffb066', text: 'takes 2x damage, 4x from fire' });
+    if ((e.poisonUntil ?? 0) > t) out.push({ id: 'poison', icon: '🧪', name: 'Poisoned', stacks: 0, left: e.poisonUntil! - t, dur: 10, color: '#9be36b', text: `${Math.round(e.poisonDps ?? 0)} damage a second` });
+    if ((e.ampUntil ?? 0) > t) out.push({ id: 'amp', icon: '🎯', name: 'Damage Amp', stacks: 0, left: e.ampUntil! - t, dur: e.ampMult === 15 ? 10 : 4, color: '#ff8a8a', text: `takes ${e.ampMult}x damage` });
+    if ((e.confusedUntil ?? 0) > t) out.push({ id: 'confused', icon: '💫', name: 'Deranged', stacks: 0, left: Math.min(99, e.confusedUntil! - t), dur: 3, color: '#c77dff', text: 'attacks other mobs' });
   }
 
   // ---------------------------------------------------------------- archer path mechanics
@@ -2427,10 +2752,14 @@ export class Run {
   /** A rain cloud (Arrow Rain and its paths). */
   private openRain(x: number, y: number, r: number, dmg: number, dur: number, w: number, target = 0, child = false) {
     const def = this.weapons[w].def;
-    const p: Pool = { x, y, r, r0: r, born: this.t, dmg, until: this.t + dur, tick: 0.15, w, every: def.wildfire ? 0.5 : 0.25, style: def.heatwave ? 'heat' : 'rain', follow: def.follow, fx: x - this.x, fy: y - this.y, target, child };
+    const heat = this.hunter && this.hn('heatwave');
+    const p: Pool = { x, y, r, r0: r, born: this.t, dmg, until: this.t + dur, tick: 0.15, w, every: this.hunter && this.hn('wildfire') ? 0.5 : 0.25, style: heat ? 'heat' : 'rain', follow: def.follow, fx: x - this.x, fy: y - this.y, target, child };
     this.pools.push(p);
-    // Smoldering Ground: burning ground stays behind for 8 s
-    if (def.smolder) this.pools.push({ x, y, r, r0: r, born: this.t, dmg, until: this.t + 8, tick: 0.2, w, every: 0.5, style: 'fire', lit: new Set() });
+    // Smoldering Ground: a pool of fire stays behind
+    if (this.hunter && this.hn('smolder')) {
+      const life = 8 * (this.hn('movingground') ? 2 : 1);
+      this.pools.push({ x, y, r, r0: r, born: this.t, dmg, until: this.t + life, tick: 0.1, w, every: 0.5, style: 'fire', lit: new Set(), added: 0, nextPatch: this.t + 5 });
+    }
     if (def.opener) {
       this.fx.push({ kind: 'zap', x, y, t: 0, dur: 0.35, r, color: def.color, text: 'arrows' });
       this.forEnemiesIn(x, y, r, (e) => this.hitEnemy(e, dmg * def.opener!, w, true, 200, x, y));
@@ -2665,6 +2994,7 @@ export class Run {
       s.charge = Math.max(0, s.charge + (inside ? dt : -dt * 0.5));
       if (s.charge >= SHRINE_TIME) {
         s.used = true;
+        if (this.hunter) continue; // test hero: no boons
         this.choiceTitle = 'Shrine boon';
         this.choices = this.makeShrineChoices();
       }
@@ -2672,6 +3002,11 @@ export class Run {
   }
 
   private openChest(c: Chest) {
+    if (this.hunter) {
+      // test hero: no items, just a little gold back
+      this.gold += 5;
+      return;
+    }
     const rar = rollRarity(this.stats.luck + (c.free ? 25 : 0), this.rand);
     let idx = RUN_RARITIES.indexOf(rar);
     let pool: ItemDef[] = [];

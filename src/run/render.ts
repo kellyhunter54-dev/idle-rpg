@@ -1041,8 +1041,8 @@ export class RunRenderer {
       ctx.fillRect((ex + gap) * B, ey * B, B, eh * B);
     }
     // burning: embers rising off it
-    if (e.burnUntil > now || (e.ablazeUntil ?? 0) > now) {
-      for (let k = 0; k < 3 + Math.min(3, e.ablazeStacks ?? 0); k++) {
+    if (e.burnUntil > now || (e.hbUntil ?? 0) > now || (e.abUntil ?? 0) > now) {
+      for (let k = 0; k < 3 + Math.min(3, e.hbStacks ?? 0) + ((e.abUntil ?? 0) > now ? 3 : 0); k++) {
         const ph = (time * 1.4 + k * 0.37 + e.id * 0.13) % 1;
         const dx = Math.round(((k * 5 + e.id) % 7) - 3 + (k - 1) * r * 0.4);
         ctx.fillStyle = ph < 0.5 ? '#ffd166' : '#ff7b2e';
@@ -1075,6 +1075,23 @@ export class RunRenderer {
       ctx.fillRect((mx - 2) * B, my * B, 5 * B, B);
       ctx.fillRect((mx - 1) * B, (my + 1) * B, 3 * B, B);
       ctx.fillRect(mx * B, (my + 2) * B, B, B);
+    }
+    // Hunter: Living Bomb (blinking), Poisoned (green drip), Deranged (purple swirl)
+    if ((e.bombUntil ?? 0) > now) {
+      ctx.fillStyle = Math.floor(time * 6) % 2 ? '#ff3b3b' : '#ffd166';
+      ctx.fillRect(Math.round(sx / B - 1) * B, Math.round(top / B - 4) * B, 3 * B, 3 * B);
+    }
+    if ((e.poisonUntil ?? 0) > now) {
+      ctx.fillStyle = '#9be36b';
+      const ph = (time * 1.5 + e.id * 0.23) % 1;
+      ctx.fillRect(Math.round(sx / B + ((e.id % 3) - 1) * 2) * B, Math.round(top / B + ph * img.height) * B, B, 2 * B);
+    }
+    if ((e.confusedUntil ?? 0) > now) {
+      ctx.fillStyle = '#c77dff';
+      for (let k = 0; k < 2; k++) {
+        const a = -time * 7 + k * Math.PI;
+        ctx.fillRect(Math.round(sx / B + Math.cos(a) * (r + 1)) * B, Math.round(top / B - 2 + Math.sin(a) * 2) * B, B, B);
+      }
     }
     // stunned / held: little stars circling its head
     if ((e.stunUntil ?? 0) > now) {
