@@ -471,32 +471,41 @@ $('corebtn').addEventListener('click', () => run?.activateCore());
 // ---- testing toggles (pause menu), kept for the next runs too
 const TEST_KEY = 'gloomtide-test';
 const DMG_STEPS = [1, 2, 5];
-function loadTest(): { dmg: number; god: boolean } {
+const XP_STEPS = [1, 2, 5, 10];
+type TestOpts = { dmg: number; xp: number; god: boolean };
+function loadTest(): TestOpts {
   try {
     const t = JSON.parse(localStorage.getItem(TEST_KEY) ?? '{}');
-    return { dmg: DMG_STEPS.includes(t.dmg) ? t.dmg : 1, god: !!t.god };
+    return { dmg: DMG_STEPS.includes(t.dmg) ? t.dmg : 1, xp: XP_STEPS.includes(t.xp) ? t.xp : 1, god: !!t.god };
   } catch {
-    return { dmg: 1, god: false };
+    return { dmg: 1, xp: 1, god: false };
   }
 }
 function applyTest(r: Run) {
   const t = loadTest();
   r.testDmg = t.dmg;
   r.god = t.god;
+  r.testXp = t.xp;
+  $('testxp').textContent = `EXP x${t.xp}`;
+  $('testxp').classList.toggle('on', t.xp !== 1);
   $('testdmg').textContent = `Damage x${t.dmg}`;
   $('testdmg').classList.toggle('on', t.dmg !== 1);
   ($('testgod') as HTMLInputElement).checked = t.god;
-  const parts = [t.dmg !== 1 ? `x${t.dmg} damage` : '', t.god ? 'God mode' : ''].filter(Boolean);
+  const parts = [t.dmg !== 1 ? `x${t.dmg} damage` : '', t.xp !== 1 ? `x${t.xp} EXP` : '', t.god ? 'God mode' : ''].filter(Boolean);
   $('testbadge').textContent = `TEST: ${parts.join(' · ')}`;
   $('testbadge').classList.toggle('hidden', !parts.length);
 }
-function saveTest(t: { dmg: number; god: boolean }) {
+function saveTest(t: TestOpts) {
   localStorage.setItem(TEST_KEY, JSON.stringify(t));
   if (run) applyTest(run);
 }
 $('testdmg').addEventListener('click', () => {
   const t = loadTest();
   saveTest({ ...t, dmg: DMG_STEPS[(DMG_STEPS.indexOf(t.dmg) + 1) % DMG_STEPS.length] });
+});
+$('testxp').addEventListener('click', () => {
+  const t = loadTest();
+  saveTest({ ...t, xp: XP_STEPS[(XP_STEPS.indexOf(t.xp) + 1) % XP_STEPS.length] });
 });
 $('testgod').addEventListener('change', (e) => saveTest({ ...loadTest(), god: (e.target as HTMLInputElement).checked }));
 

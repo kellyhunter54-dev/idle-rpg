@@ -436,6 +436,7 @@ export class Run {
   autoCore = false;
   /** testing (pause menu): multiplies all your damage, and god mode ignores damage and death */
   testDmg = 1;
+  testXp = 1;
   god = false;
   /** a run that used the testing toggles doesn't count for best results */
   tested = false;
@@ -926,7 +927,7 @@ export class Run {
       this.hp = this.stats.maxHp;
       if (this.jelly) this.jelly.slimed = 0;
     }
-    if (this.testDmg !== 1 || this.god) this.tested = true;
+    if (this.testDmg !== 1 || this.testXp !== 1 || this.god) this.tested = true;
     if (this.hp <= 0) this.die();
     this.checkUnlocks();
     if (!this.choices && !this.checkAdvance() && !this.checkTalent() && !this.checkPath() && this.pendingLevels > 0) this.openLevelUp();
@@ -2439,7 +2440,7 @@ export class Run {
   }
 
   gainXp(v: number) {
-    this.xp += v;
+    this.xp += v * this.testXp;
     while (this.xp >= this.xpNeed) {
       this.xp -= this.xpNeed;
       this.level++;
