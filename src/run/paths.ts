@@ -264,7 +264,7 @@ export const HUNTER_TREE = (): PathNode[] => [
           H('spreadash', 'Spreading Ash', '🌫️', 'Mobs dying with Burn spread 1 stack to a mob within 15 yards (one without a Burn), refreshing it.', {
             next: () => [
               H('creepingash', 'Creeping Ash', '🐌', 'A 5 stack Burn jumps to 1 target as 1 stack when it expires. A Burn about to expire below 5 stacks gains a stack and refreshes instead.', {
-                next: cap(H('everlastingash', 'Everlasting Ash', '♾️', 'A 5 stack Burn no longer expires, and the stack cap is lifted. Every 5 stacks, 1 stack jumps to another mob (this one keeps its stacks).')),
+                next: cap(H('everlastingash', 'Everlasting Ash', '♾️', 'Burn never expires: each time it would, it gains a stack and refreshes instead, forever (no stack cap). Every 5 stacks, 1 stack jumps to another mob (this one keeps its stacks).')),
               }),
               H('jumpingash', 'Jumping Ash', '🦘', 'Ash jumps to 2 targets, and the range is 40 yards.', {
                 next: cap(H('jumpingash2', 'Jumping Ash v2', '📈', 'Each jump increases the Burn damage by 2%.')),

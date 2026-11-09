@@ -2510,8 +2510,14 @@ export class Run {
     // Burn
     if ((e.hbStacks ?? 0) > 0) {
       if ((e.hbUntil ?? 0) <= t) {
-        if (this.hn('everlastingash') && e.hbStacks! >= 5) e.hbUntil = t + this.burnDur();
-        else if (this.hn('creepingash')) {
+        if (this.hn('everlastingash')) {
+          // Everlasting Ash: it never runs out; every time it would, it gains a stack (no cap)
+          const before = e.hbStacks!;
+          e.hbStacks = before + 1;
+          e.hbUntil = t + this.burnDur();
+          // ...and every 5 stacks reached sends 1 stack to another mob (this one keeps its stacks)
+          if (Math.floor(e.hbStacks / 5) > Math.floor(before / 5)) this.jumpBurn(e, 1, 150);
+        } else if (this.hn('creepingash')) {
           if (e.hbStacks! < 5) {
             e.hbStacks!++;
             e.hbUntil = t + this.burnDur();
