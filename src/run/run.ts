@@ -3,7 +3,7 @@
 import { JobId } from '../data';
 import { GameMap, TILE, Tile, fits, moveCircle } from '../map';
 import { JELLY, JellyFight } from './jelly';
-import { PathNode, pathNext } from './paths';
+import { PathNode, pathNext, HUNTER_TREE, treeNext } from './paths';
 
 /** Shocked foes take this much more damage (lightning hits, 2 s). */
 export const SHOCKED_AMP = 0.1;
@@ -57,6 +57,17 @@ export interface Enemy {
   snareAmp?: number;
   /** stunned (Concussive, Knockdown, Big Bang, a bear trap's hold): can't move */
   stunUntil?: number;
+  /** Ablaze (Hunter's Rain of Fire): stacking burn, per-stack damage a second */
+  ablazeStacks?: number;
+  ablazePer?: number;
+  ablazeUntil?: number;
+  ablazeW?: number;
+  /** inside a Heatwave cloud (takes 2x from attacks, 4x from fire) */
+  heatUntil?: number;
+  heatCloud?: Pool;
+  /** time spent in a Suffocation cloud */
+  chokeT?: number;
+  chokeLast?: number;
   /** burn damage waiting to be shown */
   burnShow: number;
   burnShowT: number;
@@ -152,7 +163,7 @@ export interface Pool {
   /** seconds between damage ticks */
   every: number;
   /** 'rain': arrows falling on the spot instead of a puddle */
-  style: 'pool' | 'rain';
+  style: 'pool' | 'rain' | 'heat' | 'fire';
   /** moves with the hero (Storm Cloud) */
   follow?: boolean;
   fx?: number;
@@ -170,6 +181,10 @@ export interface Pool {
   done?: boolean;
   /** spawned by another cloud (Cloudburst) */
   child?: boolean;
+  /** foes this burning ground already set ablaze (Spreading Ground) */
+  lit?: Set<number>;
+  /** Ignited Vapor cooldown */
+  igniteAt?: number;
 }
 
 /** A sticky charge in a foe (Explosive Shot path). */
@@ -438,6 +453,9 @@ export class Run {
   autoCore = false;
   /** testing (pause menu): multiplies all your damage, and god mode ignores damage and death */
   testDmg = 1;
+  /** Hunter (test hero): an Archer whose only path is the Rain of Fire tree, one tier per level */
+  hunter = false;
+  private pathLevel = 0;
   testXp = 1;
   god = false;
   /** a run that used the testing toggles doesn't count for best results */
@@ -689,6 +707,26 @@ export class Run {
 
   /** Ability paths: a base ability whose level and your level are high enough offers its next tier. */
   private checkPath(): boolean {
+    if (this.hunter) {
+      // test hero: only Arrow Rain grows, one tier per level
+      if (this.level <= this.pathLevel) return false;
+      const k = this.weapons.findIndex((x) => x.base === 'rain');
+      if (k < 1) return false;
+      const w = this.weapons[k];
+      const opts = treeNext(HUNTER_TREE(), w.path);
+      if (!opts.length) return false;
+      const tier = w.path.length;
+      this.choiceTitle = `${w.def.name}: path ${'I'.repeat(tier + 1)}`;
+      this.choices = opts.map((n) => ({
+        kind: 'path', id: n.id, name: n.name, icon: n.icon,
+        rarity: { ...RUN_RARITIES[tier === 2 ? 4 : 3], color: n.color ?? '#ff7b2e', name: tier === 0 ? 'Form' : 'Path' },
+        level: tier + 1, lines: [n.desc], apply: () => {
+          this.pathLevel = this.level;
+          this.applyPath(k, n);
+        },
+      }));
+      return true;
+    }
     for (let k = 1; k < this.weapons.length; k++) {
       const w = this.weapons[k];
       const tier = w.path.length;
@@ -929,7 +967,7 @@ export class Run {
       this.hp = this.stats.maxHp;
       if (this.jelly) this.jelly.slimed = 0;
     }
-    if (this.testDmg !== 1 || this.testXp !== 1 || this.god) this.tested = true;
+    if (this.testDmg !== 1 || this.testXp !== 1 || this.god || this.hunter) this.tested = true;
     if (this.hp <= 0) this.die();
     this.checkUnlocks();
     if (!this.choices && !this.checkAdvance() && !this.checkTalent() && !this.checkPath() && this.pendingLevels > 0) this.openLevelUp();
@@ -1238,6 +1276,27 @@ export class Run {
           }
         }
       }
+      if ((e.ablazeUntil ?? 0) > this.t && !e.dead && e.ablazeStacks) {
+        const b = e.ablazeStacks * (e.ablazePer ?? 0) * dt * ((e.heatUntil ?? 0) > this.t ? 4 : 1);
+        this.burnTotal += b;
+        const ow = this.weapons[e.ablazeW ?? -1];
+        if (ow) ow.total += Math.min(b, Math.max(0, e.hp));
+        e.burnShow += b;
+        if (this.t >= e.burnShowT) {
+          e.burnShowT = this.t + 0.5;
+          if (e.burnShow >= 1 && this.fx.length < 240)
+            this.fx.push({ kind: 'text', x: e.x + (this.rand() - 0.5) * 24, y: e.y, t: 0, dur: 0.7, r: 0, color: '#ff7b2e', text: String(Math.round(e.burnShow)) });
+          e.burnShow = 0;
+        }
+        if (e.boss === 3 && this.jelly) this.jelly.damage(b);
+        else {
+          e.hp -= b;
+          if (e.hp <= 0) {
+            this.kill(e);
+            continue;
+          }
+        }
+      }
       if (e.burnUntil > this.t && !e.dead) {
         const b = e.burnDps * dt;
         this.burnTotal += b;
@@ -1438,6 +1497,22 @@ export class Run {
       crit = true;
     }
     if (def?.slow) e.slowUntil = Math.max(e.slowUntil, this.t + 1);
+    // Heatwave cloud: 2x from attacks, 4x from fire
+    if ((e.heatUntil ?? 0) > this.t) {
+      dmg *= def?.fire ? 4 : 2;
+      const cloud = e.heatCloud;
+      const cdef = cloud ? this.weapons[cloud.w]?.def : undefined;
+      if (cloud && cdef?.vapor && !this.sub && cloud.until > this.t && (cloud.igniteAt ?? 0) <= this.t) {
+        // Ignited Vapor: the cloud flashes, burning everything inside
+        cloud.igniteAt = this.t + 0.5;
+        this.fx.push({ kind: 'boom', x: cloud.x, y: cloud.y, t: 0, dur: 0.3, r: cloud.r, color: '#ff7b2e' });
+        this.sub = true;
+        this.forEnemiesIn(cloud.x, cloud.y, cloud.r, (o) => {
+          if (o !== e) this.hitEnemy(o, cloud.dmg * 2.5, cloud.w, false, 0);
+        });
+        this.sub = false;
+      }
+    }
     // Soaked / Snared: more damage from everything
     if ((e.soakUntil ?? 0) > this.t) dmg *= 1 + (e.soakAmp ?? 0);
     if ((e.snareUntil ?? 0) > this.t) dmg *= 1 + (e.snareAmp ?? 0);
@@ -1548,6 +1623,18 @@ export class Run {
   private kill(e: Enemy) {
     if (e.boss === 3) return;
     e.dead = true;
+    // Spread Ash: the burn jumps to the nearest foe
+    if ((e.ablazeUntil ?? 0) > this.t && e.ablazeStacks && this.weapons[e.ablazeW ?? -1]?.def.spreadAsh) {
+      const nx = this.nearest(e.x, e.y, 300, new Set([e.id]));
+      if (nx) {
+        const before = (nx.ablazeUntil ?? 0) > this.t ? nx.ablazeStacks ?? 0 : 0;
+        nx.ablazeStacks = Math.max(before, e.ablazeStacks);
+        nx.ablazePer = Math.max(nx.ablazePer ?? 0, e.ablazePer ?? 0);
+        nx.ablazeUntil = this.t + 4;
+        nx.ablazeW = e.ablazeW;
+        this.fx.push({ kind: 'boom', x: nx.x, y: nx.y, t: 0, dur: 0.3, r: 34, color: '#9a8a7a' });
+      }
+    }
     this.kills++;
     if (this.core.gain.kill && !this.coreActive) this.addCore(this.core.gain.kill);
     const bl = this.sp('bloodlust');
@@ -1902,6 +1989,8 @@ export class Run {
       out.push({ id: 'chill', icon: '❄️', name: 'Chilled', stacks: 0, left: e.slowUntil - t, dur: 2, color: '#a8e6ff', text: `slowed${fb ? `, takes +${Math.round(fb * 100)}% damage` : ''}` });
     }
     if (e.shockUntil > t) out.push({ id: 'shock', icon: '⚡', name: 'Shocked', stacks: 0, left: e.shockUntil - t, dur: 2, color: '#ffe66d', text: `takes +${Math.round(SHOCKED_AMP * 100)}% damage` });
+    if ((e.ablazeUntil ?? 0) > t && e.ablazeStacks) out.push({ id: 'ablaze', icon: '🔥', name: 'Ablaze', stacks: e.ablazeStacks, left: e.ablazeUntil! - t, dur: 4, color: '#ff7b2e', text: `${Math.round(e.ablazeStacks * (e.ablazePer ?? 0))} damage a second` });
+    if ((e.heatUntil ?? 0) > t) out.push({ id: 'heat', icon: '🌡️', name: 'Heatwave', stacks: 0, left: e.heatUntil! - t, dur: 0.5, color: '#ffb066', text: 'takes 2x damage, 4x from fire' });
     if ((e.soakUntil ?? 0) > t) out.push({ id: 'soak', icon: '💧', name: 'Soaked', stacks: 0, left: e.soakUntil! - t, dur: 2, color: '#7fb8ff', text: `takes +${Math.round((e.soakAmp ?? 0) * 100)}% damage` });
     if ((e.snareUntil ?? 0) > t) out.push({ id: 'snare', icon: '🦴', name: 'Snared', stacks: 0, left: e.snareUntil! - t, dur: 4, color: '#c8ccd4', text: `takes +${Math.round((e.snareAmp ?? 0) * 100)}% damage` });
     const ch = this.charges.find((c) => c.eid === e.id);
@@ -2207,8 +2296,13 @@ export class Run {
           e.y += (dy / l) * mv;
         });
       }
+      // Spreading Ground: burning ground grows every second for 10 s
+      if (p.style === 'fire' && def?.spreadGround && p.r0 && p.born !== undefined) p.r = p.r0 * (1 + 0.08 * Math.min(10, Math.floor(this.t - p.born)));
       p.tick -= dt;
-      if (p.tick <= 0) {
+      if (p.tick <= 0 && (p.style === 'heat' || p.style === 'fire' || (p.style === 'rain' && def?.wildfire))) {
+        p.tick = p.every;
+        this.firePoolTick(p, def!);
+      } else if (p.tick <= 0) {
         p.tick = p.every;
         const ramp = def?.ramp;
         this.forEnemiesIn(p.x, p.y, p.r, (e) => {
@@ -2228,12 +2322,77 @@ export class Run {
     for (const p of this.pools) {
       if (p.until > this.t || p.done || p.armed) continue;
       p.done = true;
+      if (p.style === 'fire' && this.weapons[p.w]?.def.eruption) {
+        // Eruption: the ground blows up, setting everything around it ablaze
+        const R = p.r * 2;
+        this.fx.push({ kind: 'boom', x: p.x, y: p.y, t: 0, dur: 0.5, r: R, color: '#ff5a1f' });
+        this.forEnemiesIn(p.x, p.y, R, (e) => {
+          this.hitEnemy(e, p.dmg * 6, p.w, true, 240, p.x, p.y);
+          if (!e.dead) this.applyAblaze(e, p.dmg, p.w, 3);
+        });
+        continue;
+      }
       const fin = this.weapons[p.w]?.def.finale;
       if (!fin) continue;
       this.fx.push({ kind: 'boom', x: p.x, y: p.y, t: 0, dur: 0.45, r: p.r, color: this.weapons[p.w].def.color });
       this.forEnemiesIn(p.x, p.y, p.r, (e) => this.hitEnemy(e, p.dmg * fin, p.w, true, 260, p.x, p.y));
     }
     this.pools = this.pools.filter((p) => p.until > this.t);
+  }
+
+  // ---------------------------------------------------------------- Hunter: Rain of Fire
+  /** One tick of a fire zone: Wildfire rain, burning ground, or a heat cloud. */
+  private firePoolTick(p: Pool, def: WeaponDef) {
+    if (p.style === 'heat') {
+      this.forEnemiesIn(p.x, p.y, p.r, (e) => {
+        e.heatUntil = this.t + p.every + 0.1;
+        e.heatCloud = p;
+        if (def.suffocate) {
+          e.slowUntil = Math.max(e.slowUntil, this.t + 0.4);
+          if ((e.chokeLast ?? 0) < this.t - p.every - 0.15) e.chokeT = 0;
+          e.chokeLast = this.t;
+          e.chokeT = (e.chokeT ?? 0) + p.every;
+          if (e.chokeT >= 2) {
+            e.chokeT = 0;
+            this.stun(e, 1);
+          }
+        }
+      });
+      return;
+    }
+    // Wildfire rain and burning ground set foes Ablaze
+    this.forEnemiesIn(p.x, p.y, p.r, (e) => {
+      if (p.style === 'fire' && def.spreadGround && p.lit && !p.lit.has(e.id)) {
+        p.lit.add(e.id);
+        if (p.born !== undefined) p.until = Math.min(p.born + 20, p.until + 2);
+      }
+      this.applyAblaze(e, p.dmg, p.w, 1);
+    });
+  }
+
+  /** Ablaze: a stacking burn (5 stacks max, 4 s, refreshed by new stacks). */
+  private applyAblaze(e: Enemy, per: number, w: number, stacks: number) {
+    if (e.dead) return;
+    const live = (e.ablazeUntil ?? 0) > this.t;
+    e.ablazeStacks = Math.min(5, (live ? e.ablazeStacks ?? 0 : 0) + stacks);
+    e.ablazePer = Math.max(live ? e.ablazePer ?? 0 : 0, per);
+    e.ablazeUntil = this.t + 4;
+    e.ablazeW = w;
+    const def = this.weapons[w]?.def;
+    if (def?.flashPoint && e.ablazeStacks >= 5) {
+      // Flash Point: the stacks go off at once
+      const big = e.ablazePer * 30;
+      e.ablazeStacks = 0;
+      e.ablazeUntil = 0;
+      this.fx.push({ kind: 'boom', x: e.x, y: e.y, t: 0, dur: 0.4, r: 110, color: '#ff5a1f' });
+      this.fx.push({ kind: 'text', x: e.x, y: e.y - 24, t: 0, dur: 0.8, r: 0, color: '#ff7b2e', text: 'FLASH POINT', crit: true });
+      this.sub = true;
+      this.hitEnemy(e, big, w, true, 200, e.x, e.y);
+      this.forEnemiesIn(e.x, e.y, 110, (o) => {
+        if (o !== e) this.hitEnemy(o, big * 0.5, w, true, 200, e.x, e.y);
+      });
+      this.sub = false;
+    }
   }
 
   // ---------------------------------------------------------------- archer path mechanics
@@ -2268,8 +2427,10 @@ export class Run {
   /** A rain cloud (Arrow Rain and its paths). */
   private openRain(x: number, y: number, r: number, dmg: number, dur: number, w: number, target = 0, child = false) {
     const def = this.weapons[w].def;
-    const p: Pool = { x, y, r, r0: r, born: this.t, dmg, until: this.t + dur, tick: 0.15, w, every: 0.25, style: 'rain', follow: def.follow, fx: x - this.x, fy: y - this.y, target, child };
+    const p: Pool = { x, y, r, r0: r, born: this.t, dmg, until: this.t + dur, tick: 0.15, w, every: def.wildfire ? 0.5 : 0.25, style: def.heatwave ? 'heat' : 'rain', follow: def.follow, fx: x - this.x, fy: y - this.y, target, child };
     this.pools.push(p);
+    // Smoldering Ground: burning ground stays behind for 8 s
+    if (def.smolder) this.pools.push({ x, y, r, r0: r, born: this.t, dmg, until: this.t + 8, tick: 0.2, w, every: 0.5, style: 'fire', lit: new Set() });
     if (def.opener) {
       this.fx.push({ kind: 'zap', x, y, t: 0, dur: 0.35, r, color: def.color, text: 'arrows' });
       this.forEnemiesIn(x, y, r, (e) => this.hitEnemy(e, dmg * def.opener!, w, true, 200, x, y));

@@ -239,6 +239,47 @@ const ARCHER_TREES: Record<string, () => PathNode[]> = {
   },
 };
 
+// ---------------------------------------------------------------- Hunter (test hero): Kelly's Rain of Fire tree
+// The only path the Hunter is offered (Arrow Rain), one tier per level for quick testing.
+export const HUNTER_TREE = (): PathNode[] => [
+  X('rainfire', 'Rain of Fire', '🔥', 'The rain turns to fire: all its damage is fire, and +10% damage.', {
+    color: '#ff7b2e', rename: 'Rain of Fire', mult: { dmg: 1.1 }, mod: () => ({ fire: true, color: '#ff7b2e' }),
+    next: () => [
+      X('wildfire', 'Wildfire', '🔥', 'The arrows no longer hit. Foes in the fire gain a stack of Ablaze every 0.5s (burning, up to 5 stacks).', {
+        mod: () => ({ wildfire: true }),
+        next: () => [
+          X('flashpoint', 'Flash Point', '💥', 'Reaching 5 Ablaze stacks consumes them and explodes: massive damage to that foe and 50% fire damage to foes around it.', { mod: () => ({ flashPoint: true }) }),
+          X('spreadash', 'Spread Ash', '🌫️', 'A foe that dies while Ablaze passes its stacks to the nearest foe, with the duration refreshed.', { mod: () => ({ spreadAsh: true }) }),
+        ],
+      }),
+      X('smolder', 'Smoldering Ground', '♨️', 'The rain lasts half as long, but leaves burning ground for 8s. Foes inside or walking in are set Ablaze.', {
+        mult: { duration: 0.5 }, mod: () => ({ smolder: true }),
+        next: () => [
+          X('spreadground', 'Spreading Ground', '🌋', 'The burning ground grows every second (for up to 10s), and every foe it sets ablaze adds 2s to it.', { mod: () => ({ spreadGround: true }) }),
+          X('eruption', 'Eruption', '🌋', 'Instead of fading, the burning ground explodes, setting foes around it (outside the zone too) ablaze.', { mod: () => ({ eruption: true }) }),
+        ],
+      }),
+      X('heatwave', 'Heatwave', '🌡️', 'The arrows become a heat cloud. Foes inside take 2x damage from your attacks and 4x from fire.', {
+        mod: () => ({ heatwave: true, color: '#ffb066' }),
+        next: () => [
+          X('vapor', 'Ignited Vapor', '🔥', 'Hitting a foe inside the cloud ignites it: a fast pulse of fire damage to everything inside.', { mod: () => ({ vapor: true }) }),
+          X('suffocate', 'Suffocation', '😵', 'Foes in the cloud are slowed, and stunned for 1s if they stay inside for 2s.', { mod: () => ({ suffocate: true }) }),
+        ],
+      }),
+    ],
+  }),
+];
+/** The next options in a fixed tree, given the ids picked so far. */
+export function treeNext(roots: PathNode[], chosen: string[]): PathNode[] {
+  let opts = roots;
+  for (const id of chosen) {
+    const n = opts.find((o) => o.id === id);
+    if (!n?.next) return [];
+    opts = n.next();
+  }
+  return opts;
+}
+
 // ---------------------------------------------------------------- job forms (tier 1, needs that job)
 /** Which base ability turns into which job ability. */
 export const JOB_FORMS: Record<string, Record<string, string>> = {

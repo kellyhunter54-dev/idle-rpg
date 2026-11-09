@@ -78,6 +78,25 @@ function showTitle() {
     portrait(card.querySelector('canvas')!, job);
     card.addEventListener('click', () => startRun(job));
     box.appendChild(card);
+    if (job === 'mage') {
+      // test hero after the 3 classes: Kelly's Rain of Fire tree on an Archer
+      const ah = HEROES.archer;
+      const archerAbil = [ah.basic, ...ah.abilities].map((id, i) => `<span class="hc-ab${i ? '' : ' start'}">${WEAPON[id].icon}${i ? `<b>${ABILITY_LEVELS[i - 1]}</b>` : ''}</span>`).join('');
+      const t = document.createElement('button');
+      t.className = 'hero-card test';
+      t.innerHTML = `
+        <canvas width="64" height="72"></canvas>
+        <div class="hc-name">Hunter <span class="hc-test">TEST</span></div>
+        <div class="hc-line">The Archer, with all 4 abilities</div>
+        <div class="hc-abs">${archerAbil}</div>
+        <div class="hc-pass">Only path: 🔥 Rain of Fire on Arrow Rain</div>
+        <div class="hc-core">Wildfire, Smoldering Ground or Heatwave, and their follow-ups</div>
+        <div class="hc-more">One path pick per level from Lv 2</div>
+        <div class="hc-best">Test runs don't save a best</div>`;
+      portrait(t.querySelector('canvas')!, 'archer');
+      t.addEventListener('click', () => startRun('archer', true));
+      box.appendChild(t);
+    }
   });
 }
 
@@ -140,12 +159,17 @@ const setWidth = (id: string, p: number) => {
   $(id).style.width = v;
 };
 
-function startRun(job: JobId) {
+function startRun(job: JobId, hunter = false) {
   $('title').classList.add('hidden');
   $('app').classList.remove('hidden');
   $('end').classList.add('hidden');
   $('pause').classList.add('hidden');
   run = new Run(job);
+  if (hunter) {
+    // test hero: an Archer whose only path is the Rain of Fire tree, one tier per level
+    run.hunter = true;
+    run.hero = { ...run.hero, name: 'Hunter' };
+  }
   // one input object for every run: the controls are wired to it once (a new run used to get a fresh one and never moved)
   Object.assign(sharedInput, { moveX: 0, moveY: 0, jump: false, interact: false });
   run.input = sharedInput;

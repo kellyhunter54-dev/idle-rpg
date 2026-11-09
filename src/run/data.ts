@@ -189,6 +189,25 @@ export interface WeaponDef {
   homing?: boolean;
   /** the last bounce explodes */
   bounceBlast?: boolean;
+  // ---- Hunter (test) Rain of Fire tree (paths.ts HUNTER_TREE) ----
+  /** Wildfire: the rain deals no hit damage; foes inside gain an Ablaze stack every 0.5 s (max 5) */
+  wildfire?: boolean;
+  /** Flash Point: reaching 5 Ablaze stacks consumes them and explodes */
+  flashPoint?: boolean;
+  /** Spread Ash: a foe dying with Ablaze passes its stacks to the nearest foe */
+  spreadAsh?: boolean;
+  /** Smoldering Ground: each rain leaves burning ground that sets foes Ablaze */
+  smolder?: boolean;
+  /** Spreading Ground: the burning ground grows, and each foe it sets ablaze adds 2 s */
+  spreadGround?: boolean;
+  /** Eruption: the burning ground explodes when it ends instead of fading */
+  eruption?: boolean;
+  /** Heatwave: the rain becomes a heat cloud; foes inside take 2x from attacks, 4x from fire */
+  heatwave?: boolean;
+  /** Ignited Vapor: hitting a foe in the cloud ignites the cloud */
+  vapor?: boolean;
+  /** Suffocation: foes in the cloud are slowed, and stunned for 1 s after 2 s inside */
+  suffocate?: boolean;
   /** a spinning glaive (drawn as a blade) */
   glaive?: boolean;
   /** sticky charge fuse in seconds */

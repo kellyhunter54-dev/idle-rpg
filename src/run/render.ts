@@ -304,6 +304,53 @@ export class RunRenderer {
         }
         continue;
       }
+      if (p.style === 'heat') {
+        // Heatwave: a shimmering haze with rising wavy lines
+        f.globalAlpha = 0.3 * left;
+        f.fillStyle = '#ff9a4a';
+        f.beginPath();
+        f.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+        f.fill();
+        f.globalAlpha = 0.85 * left;
+        f.strokeStyle = (p.igniteAt ?? 0) > run.t + 0.35 ? '#ff5a1f' : '#ffe2c0';
+        f.lineWidth = 3;
+        for (let k = 0; k < 5; k++) {
+          const ph = (time * 0.6 + k * 0.2) % 1;
+          const yy = p.y + p.r * 0.7 - ph * p.r * 1.4;
+          const half = Math.sqrt(Math.max(0, p.r * p.r - (yy - p.y) ** 2)) * 0.7;
+          f.beginPath();
+          for (let x = -half; x <= half; x += 12) {
+            const wy = yy + Math.sin((x + time * 90 + k * 40) * 0.08) * 5;
+            if (x === -half) f.moveTo(p.x + x, wy);
+            else f.lineTo(p.x + x, wy);
+          }
+          f.stroke();
+        }
+        continue;
+      }
+      if (p.style === 'fire') {
+        // burning ground: a dark scorch with flickering flames
+        f.globalAlpha = 0.22 * left;
+        f.fillStyle = '#5a1a08';
+        f.beginPath();
+        f.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+        f.fill();
+        f.globalAlpha = 0.45 * left;
+        f.strokeStyle = '#ff7b2e';
+        f.lineWidth = 3;
+        f.setLineDash([8, 10]);
+        f.stroke();
+        f.setLineDash([]);
+        for (let k = 0; k < 9; k++) {
+          const a = k * 2.4 + p.x * 0.01;
+          const rr = p.r * (0.2 + ((k * 0.29) % 0.75));
+          const fl = Math.floor(time * 8 + k) % 3;
+          f.globalAlpha = 0.85 * left;
+          f.fillStyle = fl === 0 ? '#ffd166' : fl === 1 ? '#ff7b2e' : '#ff4a1a';
+          f.fillRect(p.x + Math.cos(a) * rr - 4, p.y + Math.sin(a) * rr - 8, 8, 8 + fl * 4);
+        }
+        continue;
+      }
       f.globalAlpha = 0.07 * left;
       f.fillStyle = col;
       f.beginPath();
@@ -994,8 +1041,8 @@ export class RunRenderer {
       ctx.fillRect((ex + gap) * B, ey * B, B, eh * B);
     }
     // burning: embers rising off it
-    if (e.burnUntil > now) {
-      for (let k = 0; k < 3; k++) {
+    if (e.burnUntil > now || (e.ablazeUntil ?? 0) > now) {
+      for (let k = 0; k < 3 + Math.min(3, e.ablazeStacks ?? 0); k++) {
         const ph = (time * 1.4 + k * 0.37 + e.id * 0.13) % 1;
         const dx = Math.round(((k * 5 + e.id) % 7) - 3 + (k - 1) * r * 0.4);
         ctx.fillStyle = ph < 0.5 ? '#ffd166' : '#ff7b2e';
