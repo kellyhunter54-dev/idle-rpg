@@ -264,7 +264,7 @@ export const HUNTER_TREE = (): PathNode[] => [
           H('spreadash', 'Spreading Ash', '🌫️', 'Mobs dying with Burn spread 1 stack to a mob within 15 yards (one without a Burn), refreshing it.', {
             next: () => [
               H('creepingash', 'Creeping Ash', '🐌', 'A 5 stack Burn jumps to 1 target as 1 stack when it expires. A Burn about to expire below 5 stacks gains a stack and refreshes instead.', {
-                next: cap(H('everlastingash', 'Everlasting Ash', '♾️', 'A 5 stack Burn no longer expires.')),
+                next: cap(H('everlastingash', 'Everlasting Ash', '♾️', 'A 5 stack Burn no longer expires, and the stack cap is lifted. Every 5 stacks, 1 stack jumps to another mob (this one keeps its stacks).')),
               }),
               H('jumpingash', 'Jumping Ash', '🦘', 'Ash jumps to 2 targets, and the range is 40 yards.', {
                 next: cap(H('jumpingash2', 'Jumping Ash v2', '📈', 'Each jump increases the Burn damage by 2%.')),
@@ -279,7 +279,7 @@ export const HUNTER_TREE = (): PathNode[] => [
           H('spreadground', 'Spreading Ground', '🌋', 'Each mob inside adds 2s to the ground, up to 15s. Every 2s the ground grows 5%.', {
             next: () => [
               H('movingground', 'Moving Ground', '🏃', 'The ground lasts twice as long, and every 5s sends out a fire patch that chases the closest mob not Ablaze, setting it Ablaze on contact.', {
-                next: cap(H('scorchedearth', 'Scorched Earth', '🔥', 'Sends 3 fire patches, and they chase twice as fast.')),
+                next: cap(H('scorchedearth', 'Scorched Earth', '🔥', 'Sends 3 fire patches, each after a different mob, and they chase twice as fast.')),
               }),
               H('lethalground', 'Lethal Ground', '☠️', 'No longer sets Ablaze. The ground deals damage instead, +5% for each second added to its duration.', {
                 next: cap(H('everlastingground', 'Everlasting Ground', '♾️', 'Mobs that die on the ground feed it: +2s each. No cap.')),

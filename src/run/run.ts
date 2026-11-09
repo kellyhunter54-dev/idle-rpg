@@ -2415,13 +2415,20 @@ export class Run {
     if (e.dead || (e.bombUntil ?? 0) > this.t) return;
     const live = (e.hbUntil ?? 0) > this.t && (e.hbStacks ?? 0) > 0;
     const before = live ? e.hbStacks! : 0;
-    const stacks = Math.min(5, before + n);
+    // Everlasting Ash lifts the 5 stack cap
+    const everlasting = this.hn('everlastingash');
+    const stacks = everlasting ? before + n : Math.min(5, before + n);
     e.hbPer = Math.max(live ? e.hbPer ?? 0 : 0, per);
     e.hbGen = Math.max(live ? e.hbGen ?? 0 : 0, gen);
     e.hbUntil = this.t + this.burnDur();
     e.hbStacks = stacks;
     // Delayed Burn: every stack applied sets off a smaller Flash Point
     if (this.hn('delayedburn') && stacks > before && stacks < 5) this.flashPoint(e, 0.25 * (stacks / 5), 'mini');
+    // Everlasting + Creeping Ash: every 5 stacks reached, 1 stack jumps to another mob (this one keeps its stacks)
+    if (everlasting && this.hn('creepingash')) {
+      for (let m = Math.floor(before / 5) + 1; m <= Math.floor(stacks / 5); m++) this.jumpBurn(e, 1, 150);
+      return;
+    }
     if (stacks >= 5) {
       if (this.hn('livingbomb')) {
         e.hbStacks = 0;
@@ -2625,10 +2632,13 @@ export class Run {
       // a fire patch chases the closest mob that isn't Ablaze
       let tg = this.enemies.find((o) => o.id === p.chase && !o.dead && (o.abUntil ?? 0) <= t);
       if (!tg) {
+        // each patch takes a mob no other patch is already chasing
+        const claimed = new Set<number>();
+        for (const q of this.pools) if (q !== p && q.patch && q.until > t && q.chase) claimed.add(q.chase);
         let bd = 600 * 600;
         tg = undefined;
         for (const o of this.enemies) {
-          if (o.dead || (o.abUntil ?? 0) > t) continue;
+          if (o.dead || (o.abUntil ?? 0) > t || claimed.has(o.id)) continue;
           const d = dist2(o.x, o.y, p.x, p.y);
           if (d < bd) {
             bd = d;
